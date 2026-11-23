@@ -1,0 +1,126 @@
+/* Saltify Web — Clinical Design System Tokens
+ * Curated HSL palette with Light and Dark themes (neutral slate + clinical cobalt + terracotta).
+ */
+
+:root {
+  --font-sans: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', Menlo, Monaco, Consolas, monospace;
+
+  /* Light Theme Surfaces */
+  --bg-canvas: hsl(218 28% 97%);
+  --bg-surface: hsl(0 0% 100%);
+  --bg-surface-subtle: hsl(218 24% 95%);
+  --bg-surface-hover: hsl(218 26% 92%);
+  --bg-sidebar: hsl(220 26% 98%);
+  --bg-overlay: hsla(222 36% 10% / 0.48);
+
+  /* Ink & Typography */
+  --ink-primary: hsl(222 36% 14%);
+  --ink-secondary: hsl(220 16% 38%);
+  --ink-muted: hsl(220 12% 52%);
+  --ink-inverse: hsl(0 0% 100%);
+
+  /* Hairlines & Elevation */
+  --border-subtle: hsl(218 20% 89%);
+  --border-strong: hsl(218 18% 79%);
+  --shadow-sm: 0 1px 2px hsla(222 36% 14% / 0.05);
+  --shadow-md: 0 4px 14px hsla(222 36% 14% / 0.07), 0 1px 3px hsla(222 36% 14% / 0.04);
+  --shadow-lg: 0 16px 40px hsla(222 36% 14% / 0.14), 0 4px 12px hsla(222 36% 14% / 0.08);
+
+  /* Brand & Clinical Semantic Accents */
+  --accent-primary: hsl(214 82% 46%);
+  --accent-primary-hover: hsl(214 84% 40%);
+  --accent-primary-soft: hsl(214 90% 95%);
+  --accent-primary-ink: hsl(214 84% 34%);
+
+  /* Speaker Colors (High Contrast, Color-Vision-Safe Pair) */
+  --speaker1-color: hsl(204 92% 38%);
+  --speaker1-soft: hsl(204 90% 94%);
+  --speaker2-color: hsl(14 78% 46%);
+  --speaker2-soft: hsl(14 90% 94%);
+
+  /* SALT Code Highlights */
+  --salt-morpheme: hsl(160 72% 30%);
+  --salt-morpheme-bg: hsl(160 65% 93%);
+  --salt-error: hsl(348 76% 44%);
+  --salt-error-bg: hsl(348 85% 95%);
+  --salt-maze: hsl(32 82% 38%);
+  --salt-maze-bg: hsl(36 92% 93%);
+
+  /* Status Tones */
+  --status-success: hsl(156 68% 36%);
+  --status-success-soft: hsl(156 64% 93%);
+  --status-warning: hsl(35 90% 44%);
+  --status-warning-soft: hsl(38 96% 93%);
+  --status-danger: hsl(354 78% 48%);
+  --status-danger-hover: hsl(354 80% 42%);
+  --status-danger-soft: hsl(354 88% 95%);
+
+  /* Waveform */
+  --wave-unplayed: hsl(218 18% 82%);
+  --wave-played: hsl(214 82% 48%);
+  --wave-cursor: hsl(14 82% 50%);
+
+  /* Radii & Spacing */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-pill: 999px;
+
+  --sidebar-width: 276px;
+  --header-height: 58px;
+  --touch-min: 40px;
+
+  color-scheme: light;
+}
+
+[data-theme='dark'] {
+  --bg-canvas: hsl(222 24% 10%);
+  --bg-surface: hsl(222 22% 14%);
+  --bg-surface-subtle: hsl(222 20% 18%);
+  --bg-surface-hover: hsl(222 19% 22%);
+  --bg-sidebar: hsl(222 25% 12%);
+  --bg-overlay: hsla(222 40% 4% / 0.68);
+
+  --ink-primary: hsl(216 28% 94%);
+  --ink-secondary: hsl(216 16% 74%);
+  --ink-muted: hsl(216 12% 56%);
+  --ink-inverse: hsl(222 26% 10%);
+
+  --border-subtle: hsl(222 18% 23%);
+  --border-strong: hsl(222 16% 32%);
+  --shadow-sm: 0 1px 2px hsla(0 0% 0% / 0.25);
+  --shadow-md: 0 6px 18px hsla(0 0% 0% / 0.34);
+  --shadow-lg: 0 20px 48px hsla(0 0% 0% / 0.52);
+
+  --accent-primary: hsl(212 92% 58%);
+  --accent-primary-hover: hsl(212 92% 65%);
+  --accent-primary-soft: hsla(212 88% 54% / 0.18);
+  --accent-primary-ink: hsl(212 95% 76%);
+
+  --speaker1-color: hsl(200 94% 64%);
+  --speaker1-soft: hsla(200 94% 58% / 0.16);
+  --speaker2-color: hsl(16 90% 66%);
+  --speaker2-soft: hsla(16 90% 60% / 0.16);
+
+  --salt-morpheme: hsl(158 68% 62%);
+  --salt-morpheme-bg: hsla(158 68% 45% / 0.18);
+  --salt-error: hsl(352 90% 70%);
+  --salt-error-bg: hsla(352 84% 54% / 0.2);
+  --salt-maze: hsl(38 92% 66%);
+  --salt-maze-bg: hsla(38 86% 52% / 0.18);
+
+  --status-success: hsl(156 64% 52%);
+  --status-success-soft: hsla(156 64% 44% / 0.18);
+  --status-warning: hsl(38 92% 60%);
+  --status-warning-soft: hsla(38 92% 50% / 0.18);
+  --status-danger: hsl(354 84% 62%);
+  --status-danger-hover: hsl(354 84% 68%);
+  --status-danger-soft: hsla(354 84% 54% / 0.2);
+
+  --wave-unplayed: hsl(220 16% 32%);
+  --wave-played: hsl(212 92% 58%);
+  --wave-cursor: hsl(16 92% 64%);
+
+  color-scheme: dark;
+}
