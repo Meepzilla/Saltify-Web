@@ -580,7 +580,24 @@ export function addInflectionalMorphemesToLine(
 
     // Normal word: pull saltified morpheme form from correctedWords
     if (corrIdx < correctedWords.length) {
-      finalWords.push(correctedWords[corrIdx]);
+      let nextWord = correctedWords[corrIdx];
+      // If a following standalone bracket code (e.g. "[SI-1].", "[EU].") carried the sentence's
+      // terminal punctuation, removeErrorCoding temporarily moved that punctuation onto this word.
+      if (!/[.!?]+$/.test(origWord) && /[.!?]+$/.test(nextWord)) {
+        let lookahead = origIdx + 1;
+        while (
+          lookahead < originalWords.length &&
+          originalWords[lookahead].includes('[') &&
+          !originalWords[lookahead].includes(':')
+        ) {
+          if (/^\[[^\]]+\][.!?]+$/.test(originalWords[lookahead])) {
+            nextWord = nextWord.replace(/[.!?]+$/, '');
+            break;
+          }
+          lookahead += 1;
+        }
+      }
+      finalWords.push(nextWord);
     } else {
       finalWords.push(origWord);
     }

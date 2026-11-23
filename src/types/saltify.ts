@@ -114,6 +114,16 @@ export interface UtteranceLine {
   body: string;
 }
 
+export type InlineClauseTag = 'MC' | 'SC' | 'RC' | 'AC' | 'NC' | 'CL';
+
+export interface SiDistribution {
+  si0: number;
+  si1: number;
+  si2: number;
+  si3Plus: number;
+  siX: number;
+}
+
 export interface SpeakerMetrics {
   speaker: string;
   totalUtterances: number;
@@ -131,6 +141,13 @@ export interface SpeakerMetrics {
   errorCount: number;
   omissionCount: number;
   wordsPerMinute: number | null;
+  totalClauses: number;
+  clauseScoredUtterances: number;
+  clauseExcludedUtterances: number;
+  clausalDensity: number | null;
+  complexUtterances: number;
+  complexUtterancePercent: number;
+  siDistribution: SiDistribution;
 }
 
 export interface TranscriptMetrics {
@@ -138,6 +155,7 @@ export interface TranscriptMetrics {
   speaker1: SpeakerMetrics;
   speaker2: SpeakerMetrics;
   unlabeledUtterances: number;
+  durationSeconds: number | null;
 }
 
 export interface GrammarCheckOptions {

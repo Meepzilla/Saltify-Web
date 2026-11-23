@@ -195,4 +195,22 @@ describe('addInflectionalMorphemes idempotency (repeated Add Morphemes presses)'
     expect(result).toBe("[0:00] C I/'m run/ing to John/z dog/s.");
     expect(addInflectionalMorphemes(result, ['C', 'E'])).toBe(result);
   });
+
+  it('preserves SALT clause codes ([SI-N]., [SI-X], [MC], [RC]) without duplicating terminal punctuation', () => {
+    const input = [
+      '[0:04] C [MC] It was a little boy [RC] that was going to the store [SI-2].',
+      '[0:09] C He looked at[EW] [SI-1].',
+      '[0:14] C Yes [SI-X].',
+    ].join('\n');
+
+    const pass1 = addInflectionalMorphemes(input, ['C', 'E']);
+    expect(pass1).toBe(
+      [
+        '[0:04] C [MC] It was a little boy [RC] that was go/ing to the store [SI-2].',
+        '[0:09] C He look/ed at[EW] [SI-1].',
+        '[0:14] C Yes [SI-X].',
+      ].join('\n')
+    );
+    expect(addInflectionalMorphemes(pass1, ['C', 'E'])).toBe(pass1);
+  });
 });
