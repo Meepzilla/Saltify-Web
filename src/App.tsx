@@ -552,11 +552,13 @@ export function App() {
     });
 
     const targetSessionId = activeSession.id;
+    const targetAliases = activeSession.speakerAliases;
 
     try {
-      const transcript = await getTranscriptionService().transcribeBlob(
+      const result = await getTranscriptionService().transcribeBlob(
         activeAudioBlob,
         whisperModel,
+        targetAliases,
         {
           onProgress: (stage, progress) => {
             setProcessing({
@@ -571,7 +573,7 @@ export function App() {
 
       setProcessing({ kind: null, stage: '', progress: 0, cancellable: false });
 
-      if (!transcript.trim()) {
+      if (!result.transcript.trim()) {
         notify(
           'info',
           'No speech was detected in this recording. Check the audio volume or try a larger Whisper model.'
@@ -581,10 +583,17 @@ export function App() {
 
       updateSession(targetSessionId, (s) => ({
         ...s,
-        transcriptionText: transcript,
+        transcriptionText: result.transcript,
         transcriptionLocked: true,
       }));
-      notify('success', 'On-device transcription complete. Click any [m:ss] timestamp to jump playback.');
+      const s1 = targetAliases.speaker1 || 'C';
+      const s2 = targetAliases.speaker2 || 'E';
+      notify(
+        'success',
+        result.speakerCount === 2
+          ? `On-device transcription complete with speakers auto-assigned (${s1} / ${s2}). Click any [m:ss] timestamp to jump playback, or open Label Speakers to refine or swap.`
+          : `On-device transcription complete with speaker auto-assigned (${s1}). Click any [m:ss] timestamp to jump playback, or open Label Speakers to refine.`
+      );
     } catch (err) {
       setProcessing({ kind: null, stage: '', progress: 0, cancellable: false });
       if (err instanceof DOMException && err.name === 'AbortError') {
@@ -689,7 +698,8 @@ export function App() {
   // ==================== SALT INFLECTIONAL MORPHEMES ====================
   const handleAddMorphemes = () => {
     if (!activeSession) return;
-    const source = activeSession.conventionText.trim()
+    const hasExistingConvention = Boolean(activeSession.conventionText.trim());
+    const source = hasExistingConvention
       ? activeSession.conventionText
       : activeSession.transcriptionText;
 
@@ -702,6 +712,16 @@ export function App() {
       activeSession.speakerAliases.speaker1,
       activeSession.speakerAliases.speaker2,
     ]);
+
+    if (hasExistingConvention && coded.trim() === activeSession.conventionText.trim()) {
+      updateSession(activeSession.id, (s) => ({
+        ...s,
+        conventionLocked: true,
+        morphemesAdded: true,
+      }));
+      notify('info', 'SALT inflectional morphemes are already applied to this transcript.');
+      return;
+    }
 
     updateSession(activeSession.id, (s) => ({
       ...s,
@@ -937,7 +957,11 @@ export function App() {
                   updateSession(activeSession.id, (s) => ({ ...s, transcriptionText: value }))
                 }
                 onChangeConvention={(value) =>
-                  updateSession(activeSession.id, (s) => ({ ...s, conventionText: value }))
+                  updateSession(activeSession.id, (s) => ({
+                    ...s,
+                    conventionText: value,
+                    morphemesAdded: false,
+                  }))
                 }
                 onToggleTranscriptionLock={() =>
                   updateSession(activeSession.id, (s) => ({
@@ -990,6 +1014,7 @@ export function App() {
         <LabelSpeakersModal
           transcriptText={activeSession.transcriptionText}
           aliases={activeSession.speakerAliases}
+          audioBlob={activeAudioBlob}
           onApply={(updated) =>
             updateSession(activeSession.id, (s) => ({ ...s, transcriptionText: updated }))
           }

@@ -137,17 +137,38 @@ export function saveThemePreference(theme: ThemePreference): void {
   }
 }
 
-export function detectRecommendedWhisperModel(): WhisperModelId {
-  if (typeof navigator === 'undefined') return 'Xenova/whisper-base.en';
+export function isAppleTouchDevice(): boolean {
+  if (typeof navigator === 'undefined') return false;
   const ua = navigator.userAgent || '';
-  const isTouchMobile =
-    /iPad|iPhone|iPod|Android/i.test(ua) ||
-    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  return (
+    /iPad|iPhone|iPod/i.test(ua) ||
+    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
+  );
+}
+
+export function isMemoryConstrainedDevice(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  const ua = navigator.userAgent || '';
+  const isTouchMobile = /iPad|iPhone|iPod|Android/i.test(ua) || isAppleTouchDevice();
   const deviceMemory = (navigator as unknown as { deviceMemory?: number }).deviceMemory;
-  if (isTouchMobile || (deviceMemory !== undefined && deviceMemory <= 4)) {
+  return isTouchMobile || (deviceMemory !== undefined && deviceMemory <= 4);
+}
+
+export function detectRecommendedWhisperModel(): WhisperModelId {
+  if (isMemoryConstrainedDevice()) {
     return 'Xenova/whisper-tiny.en';
   }
   return 'Xenova/whisper-base.en';
+}
+
+export function resolveSafeWhisperModel(model: WhisperModelId): WhisperModelId {
+  // Full 12-layer Whisper Small (~240 MB weights, ~1.5-2.2 GB peak WASM RAM) triggers
+  // iOS/iPadOS Safari Jetsam tab reloads. Route automatically to Distil-Whisper Small
+  // (same 12-layer Small encoder + 4-layer distilled decoder, ~165 MB, 2.5-3x faster).
+  if (model === 'Xenova/whisper-small.en' && isAppleTouchDevice()) {
+    return 'onnx-community/distil-small.en';
+  }
+  return model;
 }
 
 export function loadWhisperModelPreference(): WhisperModelId {
@@ -156,9 +177,14 @@ export function loadWhisperModelPreference(): WhisperModelId {
     if (
       saved === 'Xenova/whisper-tiny.en' ||
       saved === 'Xenova/whisper-base.en' ||
+      saved === 'onnx-community/distil-small.en' ||
       saved === 'Xenova/whisper-small.en'
     ) {
-      return saved;
+      const safe = resolveSafeWhisperModel(saved);
+      if (safe !== saved) {
+        saveWhisperModelPreference(safe);
+      }
+      return safe;
     }
   } catch {
     // Ignore
@@ -168,7 +194,7 @@ export function loadWhisperModelPreference(): WhisperModelId {
 
 export function saveWhisperModelPreference(model: WhisperModelId): void {
   try {
-    localStorage.setItem(MODEL_KEY, model);
+    localStorage.setItem(MODEL_KEY, resolveSafeWhisperModel(model));
   } catch {
     // Ignore
   }

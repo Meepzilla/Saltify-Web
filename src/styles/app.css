@@ -725,7 +725,7 @@ textarea:focus-visible {
   font-size: 12px;
   font-weight: 600;
   color: var(--ink-secondary);
-  max-width: 220px;
+  max-width: min(275px, 100%);
 }
 
 .progress-strip {

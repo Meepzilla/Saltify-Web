@@ -138,3 +138,27 @@ export function renameSpeakerAliasesInText(
     })
     .join('\n');
 }
+
+/**
+ * Swap Speaker 1 and Speaker 2 labels across all labeled utterances in a transcript.
+ */
+export function swapSpeakersInText(text: string, aliases: SpeakerAliases): string {
+  if (!text.trim()) return text;
+  const parsed = parseTranscriptLines(text, aliases);
+  const s1 = aliases.speaker1.trim() || 'C';
+  const s2 = aliases.speaker2.trim() || 'E';
+
+  return parsed
+    .map((line) => {
+      if (!line.raw.trim()) return line.raw;
+      if (line.speakerRole === 'speaker1') {
+        return [line.timestampLabel, s2, line.content].filter(Boolean).join(' ');
+      }
+      if (line.speakerRole === 'speaker2') {
+        return [line.timestampLabel, s1, line.content].filter(Boolean).join(' ');
+      }
+      return line.raw;
+    })
+    .join('\n');
+}
+

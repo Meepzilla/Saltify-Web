@@ -3,6 +3,7 @@ export type ThemePreference = 'light' | 'dark' | 'system';
 export type WhisperModelId =
   | 'Xenova/whisper-tiny.en'
   | 'Xenova/whisper-base.en'
+  | 'onnx-community/distil-small.en'
   | 'Xenova/whisper-small.en';
 
 export interface WhisperModelInfo {
@@ -10,6 +11,8 @@ export interface WhisperModelInfo {
   label: string;
   sizeLabel: string;
   recommendedFor: string;
+  /** True when peak WASM RAM exceeds iOS/iPadOS Safari per-tab Jetsam limits. */
+  desktopOnly?: boolean;
 }
 
 export const WHISPER_MODELS: readonly WhisperModelInfo[] = [
@@ -17,19 +20,26 @@ export const WHISPER_MODELS: readonly WhisperModelInfo[] = [
     id: 'Xenova/whisper-tiny.en',
     label: 'Whisper Tiny (English)',
     sizeLabel: '~40 MB',
-    recommendedFor: 'Fastest — best for iPads & Android phones',
+    recommendedFor: 'Fastest — great for older iPads & Android phones',
   },
   {
     id: 'Xenova/whisper-base.en',
     label: 'Whisper Base (English)',
     sizeLabel: '~75 MB',
-    recommendedFor: 'Balanced accuracy — modern iPads & laptops',
+    recommendedFor: 'Balanced speed & accuracy — iPads, tablets & laptops',
+  },
+  {
+    id: 'onnx-community/distil-small.en',
+    label: 'Whisper Small · Fast (English)',
+    sizeLabel: '~165 MB',
+    recommendedFor: 'High accuracy & iPad memory-safe (distilled Small)',
   },
   {
     id: 'Xenova/whisper-small.en',
-    label: 'Whisper Small (English)',
+    label: 'Whisper Small · Full (English)',
     sizeLabel: '~240 MB',
-    recommendedFor: 'Highest accuracy — matches Saltify desktop on Windows/Mac',
+    recommendedFor: 'Highest accuracy — desktop browsers (Windows/Mac)',
+    desktopOnly: true,
   },
 ] as const;
 

@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import {
   CheckCircle2,
   Cpu,
@@ -8,6 +9,7 @@ import {
   Wand2,
 } from 'lucide-react';
 import { WHISPER_MODELS, type ProcessingState, type WhisperModelId } from '../types/session';
+import { isAppleTouchDevice, resolveSafeWhisperModel } from '../lib/storage/sessionStore';
 
 interface TranscriptionToolbarProps {
   hasAudio: boolean;
@@ -43,6 +45,13 @@ export function TranscriptionToolbar({
   const isTranscribing = processing.kind === 'transcription';
   const isBusy = processing.kind !== null || isRecording;
 
+  const availableModels = useMemo(() => {
+    const appleTouch = isAppleTouchDevice();
+    return WHISPER_MODELS.filter((m) => !(appleTouch && m.desktopOnly));
+  }, []);
+
+  const selectedModel = resolveSafeWhisperModel(whisperModel);
+
   return (
     <section className="card workflow-bar" aria-label="Transcription and SALT analysis tools">
       <div className="workflow-controls">
@@ -70,13 +79,13 @@ export function TranscriptionToolbar({
           <select
             id="select-whisper-model"
             className="model-picker"
-            value={whisperModel}
+            value={selectedModel}
             disabled={isBusy}
             onChange={(e) => onChangeWhisperModel(e.target.value as WhisperModelId)}
             aria-label="On-device Whisper speech model"
             title="Select on-device Whisper model (cached locally after first download)"
           >
-            {WHISPER_MODELS.map((m) => (
+            {availableModels.map((m) => (
               <option key={m.id} value={m.id}>
                 {m.label} ({m.sizeLabel})
               </option>

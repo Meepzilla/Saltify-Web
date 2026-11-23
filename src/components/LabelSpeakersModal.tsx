@@ -1,11 +1,18 @@
 import { useMemo, useState } from 'react';
-import { Users, X } from 'lucide-react';
+import { ArrowLeftRight, Sparkles, Users, X } from 'lucide-react';
 import type { SpeakerAliases } from '../types/session';
-import { applySpeakerLabelsToLines, parseTranscriptLines } from '../lib/salt/speakers';
+import {
+  applySpeakerLabelsToLines,
+  parseTranscriptLines,
+  swapSpeakersInText,
+} from '../lib/salt/speakers';
+import { decodeAudioBlob, prepareWhisperAudio } from '../lib/audio/wavEncoder';
+import { autoAssignSpeakersInTranscript } from '../lib/audio/speakerDiarizer';
 
 interface LabelSpeakersModalProps {
   transcriptText: string;
   aliases: SpeakerAliases;
+  audioBlob?: Blob | null;
   onApply: (updatedTranscript: string) => void;
   onClose: () => void;
 }
@@ -13,11 +20,14 @@ interface LabelSpeakersModalProps {
 export function LabelSpeakersModal({
   transcriptText,
   aliases,
+  audioBlob,
   onApply,
   onClose,
 }: LabelSpeakersModalProps) {
   const [workingText, setWorkingText] = useState(transcriptText);
   const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [isAutoAssigning, setIsAutoAssigning] = useState(false);
+  const [statusMessage, setStatusMessage] = useState<string | null>(null);
 
   const lines = useMemo(
     () => parseTranscriptLines(workingText, aliases).filter((l) => l.raw.trim()),
@@ -47,7 +57,55 @@ export function LabelSpeakersModal({
     setWorkingText(updated);
     onApply(updated);
     setSelected(new Set());
+    setStatusMessage(null);
   };
+
+  const handleAutoAssign = async () => {
+    if (lines.length === 0 || isAutoAssigning) return;
+    setIsAutoAssigning(true);
+    setStatusMessage(null);
+
+    try {
+      let audio16k: Float32Array | null = null;
+      if (audioBlob) {
+        try {
+          const decoded = await decodeAudioBlob(audioBlob);
+          audio16k = await prepareWhisperAudio(decoded);
+        } catch {
+          // Fall back cleanly to conversational/clinical cues if audio decode fails
+          audio16k = null;
+        }
+      }
+
+      const result = autoAssignSpeakersInTranscript(workingText, aliases, audio16k);
+      setWorkingText(result.transcript);
+      onApply(result.transcript);
+      setSelected(new Set());
+
+      const methodLabel =
+        result.method === 'acoustic'
+          ? 'voice & conversational analysis'
+          : 'conversational & clinical cues';
+      setStatusMessage(
+        result.speakerCount === 2
+          ? `Auto-assigned 2 speakers (${aliases.speaker1 || 'C'} / ${aliases.speaker2 || 'E'}) using ${methodLabel}.`
+          : `Detected 1 primary speaker (${aliases.speaker1 || 'C'}) using ${methodLabel}.`
+      );
+    } finally {
+      setIsAutoAssigning(false);
+    }
+  };
+
+  const handleSwapSpeakers = () => {
+    const swapped = swapSpeakersInText(workingText, aliases);
+    setWorkingText(swapped);
+    onApply(swapped);
+    setStatusMessage(
+      `Swapped ${aliases.speaker1 || 'C'} ↔ ${aliases.speaker2 || 'E'} across all labeled lines.`
+    );
+  };
+
+  const hasLabeledLines = lines.some((l) => l.speakerRole !== 'none');
 
   return (
     <div className="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="modal-label-speakers-title">
@@ -64,10 +122,32 @@ export function LabelSpeakersModal({
 
         <div className="modal-body">
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-            <span style={{ fontSize: 12.5, color: 'var(--ink-secondary)' }}>
-              Select utterance lines below and assign them to a speaker ({selected.size} selected).
-            </span>
-            <div style={{ display: 'flex', gap: 6 }}>
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+              <button
+                id="btn-auto-assign-speakers"
+                type="button"
+                className="btn btn-sm btn-primary"
+                disabled={lines.length === 0 || isAutoAssigning}
+                onClick={handleAutoAssign}
+                title="Automatically assign Child and Examiner speakers using on-device voice analysis and conversational cues"
+              >
+                <Sparkles size={13} aria-hidden="true" />
+                {isAutoAssigning ? 'Analyzing...' : 'Auto-Assign Speakers'}
+              </button>
+              <button
+                id="btn-swap-speakers"
+                type="button"
+                className="btn btn-sm"
+                disabled={!hasLabeledLines || isAutoAssigning}
+                onClick={handleSwapSpeakers}
+                title={`Swap ${aliases.speaker1 || 'C'} and ${aliases.speaker2 || 'E'} across all labeled utterances`}
+              >
+                <ArrowLeftRight size={13} aria-hidden="true" />
+                Swap {aliases.speaker1 || 'C'} ↔ {aliases.speaker2 || 'E'}
+              </button>
+            </div>
+
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
               <button type="button" className="btn btn-sm" onClick={selectUnlabeled}>
                 Select Unlabeled
               </button>
@@ -83,6 +163,11 @@ export function LabelSpeakersModal({
               </button>
             </div>
           </div>
+
+          <span style={{ fontSize: 12.5, color: 'var(--ink-secondary)' }}>
+            {statusMessage ??
+              `Select utterance lines below to refine speaker labels manually (${selected.size} selected).`}
+          </span>
 
           <div className="speaker-list">
             {lines.map((line) => {

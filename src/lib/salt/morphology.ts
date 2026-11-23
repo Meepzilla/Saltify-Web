@@ -317,20 +317,26 @@ export function tokenizeForSalt(sentence: string): string[] {
     // Normalize curly apostrophes to straight apostrophe
     token = token.replace(/’/g, "'");
 
-    // Split English contractions cleanly (matching NLTK word_tokenize)
-    const lower = token.toLowerCase();
-    if (lower === "can't") {
-      tokens.push(token[0] === 'C' ? 'Ca' : 'ca', "n't");
-    } else if (lower === "won't") {
-      tokens.push(token[0] === 'W' ? 'Wo' : 'wo', "n't");
-    } else if (lower.endsWith("n't") && token.length > 3) {
-      tokens.push(token.slice(0, -3), "n't");
-    } else if (/'(ll|re|ve)$/i.test(token) && token.length > 3) {
-      tokens.push(token.slice(0, -3), token.slice(-3).toLowerCase());
-    } else if (/'(s|m|d|t)$/i.test(token) && token.length > 2) {
-      tokens.push(token.slice(0, -2), token.slice(-2).toLowerCase());
-    } else if (token) {
+    // Already SALT-coded token (e.g., I/'m, can/'t, did/n't, dog/s, walk/ed, John/z, walk/*3s):
+    // keep intact so repeated "Add Morphemes" passes never re-split or duplicate slashes.
+    if (token.includes('/')) {
       tokens.push(token);
+    } else {
+      // Split English contractions cleanly (matching NLTK word_tokenize)
+      const lower = token.toLowerCase();
+      if (lower === "can't") {
+        tokens.push(token[0] === 'C' ? 'Ca' : 'ca', "n't");
+      } else if (lower === "won't") {
+        tokens.push(token[0] === 'W' ? 'Wo' : 'wo', "n't");
+      } else if (lower.endsWith("n't") && token.length > 3) {
+        tokens.push(token.slice(0, -3), "n't");
+      } else if (/'(ll|re|ve)$/i.test(token) && token.length > 3) {
+        tokens.push(token.slice(0, -3), token.slice(-3).toLowerCase());
+      } else if (/'(s|m|d|t)$/i.test(token) && token.length > 2) {
+        tokens.push(token.slice(0, -2), token.slice(-2).toLowerCase());
+      } else if (token) {
+        tokens.push(token);
+      }
     }
 
     for (const p of trailingPunct) {
@@ -358,6 +364,28 @@ export function posTagTokens(tokens: string[]): TaggedToken[] {
     // Punctuation
     if (/^[.,?!;:"“”‘’]+$/.test(word)) {
       tagged.push({ word, tag: 'PUNCT' });
+      continue;
+    }
+
+    // Already SALT-coded token (preserve accurate contextual POS for neighboring tokens)
+    if (word.includes('/')) {
+      if (/\/z$/i.test(lower)) {
+        tagged.push({ word, tag: 'POS' });
+      } else if (/\/s$/i.test(lower)) {
+        tagged.push({ word, tag: 'NNS' });
+      } else if (/\/ed$/i.test(lower)) {
+        tagged.push({ word, tag: 'VBD' });
+      } else if (/\/3s$/i.test(lower) || /\/'s$/i.test(lower)) {
+        tagged.push({ word, tag: 'VBZ' });
+      } else if (/\/ing$/i.test(lower)) {
+        tagged.push({ word, tag: 'VBG' });
+      } else if (/\/(?:'m|'re)$/i.test(lower)) {
+        tagged.push({ word, tag: 'VBP' });
+      } else if (/\/(?:'ll|'d)$/i.test(lower)) {
+        tagged.push({ word, tag: 'MD' });
+      } else {
+        tagged.push({ word, tag: 'OTHER' });
+      }
       continue;
     }
 

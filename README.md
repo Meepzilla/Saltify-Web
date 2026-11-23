@@ -22,12 +22,12 @@ Child speech samples are sensitive clinical and educational records (FERPA / HIP
   - Live microphone recording with a real-time acoustic input level meter (automatically negotiates MP4/AAC on iPad Safari and WebM/Opus on Android/Windows, exporting clean 16-bit PCM `.wav`).
   - Upload `.wav`, `.mp3`, `.m4a` (iPad Voice Memos), `.webm`, `.ogg`, or `.aac` recordings.
   - Touch-friendly interactive waveform with tap/drag scrubbing, Restart, ±5s skip, and SLP playback speed controls (`0.65×`–`1.5×`).
-- **On-Device Whisper Transcription**
-  - Runs OpenAI Whisper (`Xenova/whisper-tiny.en`, `base.en`, `small.en`) locally in a dedicated Web Worker via `@huggingface/transformers` (quantized WASM).
-  - Supports mid-run **Cancel**, live model download/transcription progress, and clickable `[m:ss]` timestamps that jump playback directly to the utterance.
-  - Defaults to `Whisper Tiny (~40 MB)` on iPads/Android devices for fast, memory-safe operation and `Whisper Base` on desktops.
+- **On-Device Whisper Transcription & Automatic Speaker Assignment**
+  - Runs OpenAI Whisper (`Xenova/whisper-tiny.en`, `base.en`, `onnx-community/distil-small.en`, and desktop `Xenova/whisper-small.en`) locally in a dedicated Web Worker via `@huggingface/transformers` (quantized WASM) using silence-aware chunk-by-chunk decoding for iPad memory safety.
+  - Supports mid-run **Cancel**, live download & per-segment transcription progress, Screen Wake Lock on iPads/tablets, and clickable `[m:ss]` timestamps that jump playback directly to the utterance.
+  - Automatically assigns **C** (Child) and **E** (Examiner) speaker labels on-device using acoustic voice analysis (YIN pitch, spectral centroid, MFCC clustering) combined with clinical conversational cues.
 - **Speaker Labeling & Custom Aliases**
-  - Batch-assign utterances to **C** (Child) and **E** (Examiner) with high-contrast color coding, or customize speaker aliases and re-tag transcripts in-place.
+  - Auto-assign speakers on demand, one-tap **Swap C ↔ E**, batch-assign utterances with high-contrast color coding, or customize speaker aliases and re-tag transcripts in-place.
 - **SALT Grammar Check & Inflectional Morphemes**
   - Step-by-step interactive review highlighting child-speech patterns:
     - Repeated-word mazes: `(I I) I`

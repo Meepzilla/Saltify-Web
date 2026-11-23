@@ -65,7 +65,7 @@ const hash = crypto
 
 const swContent = `/* Saltify Web Service Worker — Auto-generated for offline PWA support */
 const APP_CACHE = 'saltify-app-${hash}';
-const MODEL_CACHE = 'saltify-whisper-models-v1';
+const LEGACY_MODEL_CACHE = 'saltify-whisper-models-v1';
 const FONT_CACHE = 'saltify-fonts-v1';
 
 const PRECACHE_URLS = ${JSON.stringify(urlList, null, 2)};
@@ -81,7 +81,11 @@ self.addEventListener('activate', (event) => {
     caches.keys().then((keys) =>
       Promise.all(
         keys
-          .filter((key) => key.startsWith('saltify-app-') && key !== APP_CACHE)
+          .filter(
+            (key) =>
+              (key.startsWith('saltify-app-') && key !== APP_CACHE) ||
+              key === LEGACY_MODEL_CACHE
+          )
           .map((key) => caches.delete(key))
       )
     ).then(() => self.clients.claim())
@@ -94,23 +98,15 @@ self.addEventListener('fetch', (event) => {
 
   const url = new URL(req.url);
 
-  // Cache-first for Whisper ONNX models & tokenizer assets from Hugging Face / CDN
+  // Do NOT intercept Hugging Face / ONNX CDN requests in the Service Worker:
+  // @huggingface/transformers caches models & WASM binaries natively in 'transformers-cache'.
+  // Intercepting 150-240 MB streams with response.clone() doubles RAM & storage usage and
+  // causes Safari Service Worker timeouts / Jetsam reloads on iPads.
   if (
     url.hostname.includes('huggingface.co') ||
     url.hostname.includes('hf.co') ||
     url.hostname.includes('cdn.jsdelivr.net')
   ) {
-    event.respondWith(
-      caches.open(MODEL_CACHE).then(async (cache) => {
-        const cached = await cache.match(req);
-        if (cached) return cached;
-        const response = await fetch(req);
-        if (response.ok) {
-          cache.put(req, response.clone()).catch(() => {});
-        }
-        return response;
-      })
-    );
     return;
   }
 

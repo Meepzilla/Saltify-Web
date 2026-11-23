@@ -104,20 +104,39 @@ export function addInflectionalMorphemesToSentence(
   const tokens = posTagTokens(tokenizeForSalt(sentence));
   let converted = '';
   let mostRecentVerbIsToBe = false;
+  let inDoubleQuote = false;
 
   for (let i = 0; i < tokens.length; i++) {
     const { word, tag } = tokens[i];
     const lower = word.toLowerCase();
 
-    // Already SALT-coded word (e.g. walk/ed or dog/s): leave untouched
+    // Already SALT-coded word (e.g. walk/ed, dog/s, I/'m, can/'t, did/n't): leave untouched
     if (word.includes('/')) {
       converted += `${word} `;
+      const root = lower.split('/')[0];
+      if (/\/(?:'m|'s|'re)$/i.test(lower) || isToBeVerb(root)) {
+        mostRecentVerbIsToBe = true;
+      } else if (/\/(?:ed|3s|ing)$/i.test(lower)) {
+        mostRecentVerbIsToBe = false;
+      }
       continue;
     }
 
     // Speaker label prefix (e.g., C or E at utterance start)
     if (i === 0 && speakerSet.has(word)) {
       converted += `${word} `;
+      continue;
+    }
+
+    if (word === '“' || word === '‘' || (word === '"' && !inDoubleQuote)) {
+      converted += word;
+      if (word === '"') inDoubleQuote = true;
+      continue;
+    }
+
+    if (word === '”' || word === '’' || (word === '"' && inDoubleQuote)) {
+      converted = `${converted.trimEnd()}${word} `;
+      if (word === '"') inDoubleQuote = false;
       continue;
     }
 
@@ -156,11 +175,7 @@ export function addInflectionalMorphemesToSentence(
     } else if (word === "'ve") {
       converted = `${converted.trimEnd()}/'ve `;
     } else if (word === ',' || word === '.' || word === '?' || word === '!' || word === ';') {
-      if (word !== ',' && word !== ';') {
-        converted = `${converted.trimEnd()}${word} `;
-      } else {
-        converted = `${converted.trimEnd()}${word} `;
-      }
+      converted = `${converted.trimEnd()}${word} `;
     } else {
       converted += `${word} `;
     }

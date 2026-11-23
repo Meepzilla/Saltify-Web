@@ -5,6 +5,7 @@ import {
   parseTimestampSeconds,
   renameSpeakerAliasesInText,
   stripTimestamps,
+  swapSpeakersInText,
 } from '../lib/salt/speakers';
 import { buildSaltFileContent } from '../lib/export/exporters';
 import { createDefaultClientInfo, createDefaultSpeakerAliases } from '../types/session';
@@ -56,6 +57,12 @@ describe('Speaker labeling, aliases, and timestamps', () => {
       { speaker1: 'Child', speaker2: 'SLP' }
     );
     expect(renamed).toBe('[0:00] Child Hello.\n[0:04] SLP How are you?');
+  });
+
+  it('swaps speaker 1 and speaker 2 labels while keeping unlabeled lines untouched', () => {
+    const input = '[0:00] C Hello.\n[0:04] E How are you?\n[0:08] Unlabeled line.';
+    const swapped = swapSpeakersInText(input, { speaker1: 'C', speaker2: 'E' });
+    expect(swapped).toBe('[0:00] E Hello.\n[0:04] C How are you?\n[0:08] Unlabeled line.');
   });
 });
 

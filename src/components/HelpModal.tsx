@@ -32,9 +32,9 @@ export function HelpModal({ onClose }: HelpModalProps) {
             <h3>Recommended Clinical Workflow</h3>
             <ol style={{ margin: 0, paddingLeft: 20, fontSize: 13, color: 'var(--ink-secondary)', display: 'flex', flexDirection: 'column', gap: 4 }}>
               <li><strong>Record or Upload Audio</strong> (supports WAV, MP3, iPad Voice Memos M4A, WebM, OGG).</li>
-              <li>Click <strong>Transcribe Audio</strong> (choose <em>Whisper Tiny</em> on iPads/Android phones for fastest performance, or <em>Base/Small</em> on Windows).</li>
+              <li>Click <strong>Transcribe Audio</strong> (choose <em>Whisper Tiny</em>, <em>Base</em>, or iPad-safe <em>Whisper Small · Fast</em> on tablets, or <em>Small · Full</em> on desktop). Utterances are automatically labeled for <strong>C</strong> (Child) and <strong>E</strong> (Examiner).</li>
               <li>Click any <strong>[m:ss]</strong> timestamp in the Transcription Box to jump playback and verify child speech errors. Unlock the box to edit manually.</li>
-              <li>Use <strong>Label Speakers</strong> to assign utterances to <strong>C</strong> (Child) and <strong>E</strong> (Examiner).</li>
+              <li>Open <strong>Label Speakers</strong> anytime to re-run <em>Auto-Assign Speakers</em>, one-tap <em>Swap C ↔ E</em>, or manually refine individual utterances.</li>
               <li>Run <strong>Grammar Check</strong> to step through flagged utterances and approve/edit SALT error coding.</li>
               <li>Click <strong>Add Morphemes</strong> to tag bound inflectional morphemes while preserving all SALT error codes.</li>
               <li>Click <strong>Export</strong> to download <strong>.slt</strong> (SALT Software), <strong>.docx</strong> (Word), <strong>.wav</strong> audio, or Print/PDF.</li>
