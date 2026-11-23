@@ -230,5 +230,195 @@ export function computeSaltMetrics(
     speaker1: analyzeUtteranceSet(s1Label, s1Lines, durationSeconds),
     speaker2: analyzeUtteranceSet(s2Label, s2Lines, durationSeconds),
     unlabeledUtterances: unlabeled.length,
+    durationSeconds: durationSeconds && durationSeconds > 0 ? durationSeconds : null,
   };
+}
+
+export type MetricCalculationKey =
+  | 'mluMorphemes'
+  | 'mluWords'
+  | 'typeTokenRatio'
+  | 'totalWords'
+  | 'uniqueWords'
+  | 'boundMorphemes'
+  | 'mazeWordPercent'
+  | 'errorAndOmissionCount'
+  | 'wordsPerMinute'
+  | 'clausalDensity'
+  | 'totalClauses'
+  | 'clauseScoredUtterances'
+  | 'complexUtterancePercent';
+
+export interface MetricCalculationBreakdown {
+  key: MetricCalculationKey;
+  title: string;
+  formula: string;
+  calculation: string;
+  note: string;
+}
+
+/**
+ * Generates an exact, human-readable calculation breakdown (formula + live substituted values
+ * + clinical SALT rule note) for any speaker metric cell or KPI card.
+ */
+export function describeMetricCalculation(
+  key: MetricCalculationKey,
+  stats: SpeakerMetrics,
+  durationSeconds: number | null = null
+): MetricCalculationBreakdown {
+  const usesCiDenom = stats.completeIntelligibleUtterances > 0;
+  const denomUtt = usesCiDenom ? stats.completeIntelligibleUtterances : stats.totalUtterances;
+  const denomLabel = usesCiDenom ? 'C&I utterances' : 'utterances';
+  const totalSpokenWithMazes = stats.totalWords + stats.mazeWords;
+
+  switch (key) {
+    case 'mluMorphemes':
+      return {
+        key,
+        title: 'MLUm — Mean Length of Utterance (Morphemes)',
+        formula: '(Total Spoken Words + Bound Morphemes) ÷ C&I Utterances',
+        calculation:
+          denomUtt > 0
+            ? `(${stats.totalWords} words + ${stats.boundMorphemes} bound = ${stats.totalMorphemes}) ÷ ${denomUtt} ${denomLabel} = ${stats.mluMorphemes.toFixed(2)}`
+            : 'No utterances to compute MLUm yet.',
+        note: 'Excludes mazes (…), bracket codes […], and omitted words (*word). Uses Complete & Intelligible utterances (excludes >, ^, XXX) when present.',
+      };
+
+    case 'mluWords':
+      return {
+        key,
+        title: 'MLUw — Mean Length of Utterance (Words)',
+        formula: 'Total Spoken Words ÷ C&I Utterances',
+        calculation:
+          denomUtt > 0
+            ? `${stats.totalWords} words ÷ ${denomUtt} ${denomLabel} = ${stats.mluWords.toFixed(2)}`
+            : 'No utterances to compute MLUw yet.',
+        note: 'Counts spoken root words outside mazes divided by Complete & Intelligible utterances.',
+      };
+
+    case 'typeTokenRatio':
+      return {
+        key,
+        title: 'TTR — Type-Token Ratio',
+        formula: 'Unique Root Words (NDW) ÷ Total Spoken Words (TNW)',
+        calculation:
+          stats.totalWords > 0
+            ? `${stats.uniqueWords} unique ÷ ${stats.totalWords} total = ${stats.typeTokenRatio.toFixed(2)}`
+            : 'No spoken words to compute TTR yet.',
+        note: 'Lexical diversity ratio (0.00–1.00) using case-insensitive root words before bound morpheme slashes.',
+      };
+
+    case 'totalWords':
+      return {
+        key,
+        title: 'TNW — Total Number of Words',
+        formula: 'Count of spoken root words outside mazes',
+        calculation:
+          stats.mazeWords > 0
+            ? `${stats.totalWords} spoken words across ${stats.totalUtterances} utterances (${stats.mazeWords} maze words excluded)`
+            : `${stats.totalWords} spoken words across ${stats.totalUtterances} utterances`,
+        note: 'Excludes parenthetical mazes (…), bracketed SALT codes […], and omitted words (*word).',
+      };
+
+    case 'uniqueWords':
+      return {
+        key,
+        title: 'NDW — Number of Different Words',
+        formula: 'Count of distinct spoken root words (case-insensitive)',
+        calculation: `${stats.uniqueWords} unique root words out of ${stats.totalWords} total spoken words`,
+        note: 'Bound morpheme inflections sharing a root (e.g., walk and walk/ed) count as 1 unique root word.',
+      };
+
+    case 'boundMorphemes':
+      return {
+        key,
+        title: 'Bound Inflectional Morphemes (/m)',
+        formula: 'Count of SALT slash morphemes outside mazes',
+        calculation: `${stats.boundMorphemes} bound morphemes + ${stats.totalWords} root words = ${stats.totalMorphemes} total morphemes`,
+        note: "Counts /s, /z, /ed, /3s, /ing, and contracted suffixes (/n't, /'t, /'s, /'m, /'re, /'ll, /'d, /'ve).",
+      };
+
+    case 'mazeWordPercent':
+      return {
+        key,
+        title: 'Mazes & Maze Word Percentage',
+        formula: 'Maze Words ÷ (Spoken Words + Maze Words) × 100',
+        calculation:
+          totalSpokenWithMazes > 0
+            ? `${stats.mazeWords} maze words ÷ (${stats.totalWords} + ${stats.mazeWords} = ${totalSpokenWithMazes}) × 100 = ${stats.mazeWordPercent}% (${stats.mazeCount} ${stats.mazeCount === 1 ? 'maze' : 'mazes'})`
+            : '0 mazes recorded.',
+        note: 'Counts parenthetical fillers, repetitions, and revisions enclosed in (…).',
+      };
+
+    case 'errorAndOmissionCount':
+      return {
+        key,
+        title: 'SALT Error & Omission Codes',
+        formula: 'Bracketed Error Codes + Omitted Words & Morphemes',
+        calculation: `${stats.errorCount} error codes + ${stats.omissionCount} omissions = ${stats.errorCount + stats.omissionCount} total codes`,
+        note: 'Counts [EW], [EO], [EP], [EU] tags plus omitted words (*word) and omitted morphemes (/*3s, /*ed, /*s). Clause [SI-*] tags are not counted as errors.',
+      };
+
+    case 'wordsPerMinute': {
+      const validDuration = durationSeconds && durationSeconds > 0 ? durationSeconds : null;
+      const mins = validDuration ? validDuration / 60 : null;
+      return {
+        key,
+        title: 'WPM — Speaking Rate (Words Per Minute)',
+        formula: 'Total Spoken Words ÷ (Audio Duration in Seconds ÷ 60)',
+        calculation:
+          validDuration && mins && stats.wordsPerMinute !== null
+            ? `${stats.totalWords} words ÷ (${validDuration.toFixed(1)}s ÷ 60 = ${mins.toFixed(2)} min) = ${stats.wordsPerMinute} WPM`
+            : 'Requires audio duration and spoken words to calculate WPM.',
+        note: 'Uses total spoken words outside mazes divided by total session audio length in minutes.',
+      };
+    }
+
+    case 'clausalDensity': {
+      const { si0, si1, si2, si3Plus, siX } = stats.siDistribution;
+      return {
+        key,
+        title: 'Clausal Density (SALT Subordination Index)',
+        formula: 'Total Clauses ÷ Clause-Scored Utterances',
+        calculation:
+          stats.clausalDensity !== null
+            ? `${stats.totalClauses} clauses ÷ ${stats.clauseScoredUtterances} scored utterances = ${stats.clausalDensity.toFixed(2)} (SI-0: ${si0}, SI-1: ${si1}, SI-2: ${si2}, SI-3+: ${si3Plus}${siX > 0 ? `, ${siX} excluded [SI-X]` : ''})`
+            : 'No clause-scored utterances yet — open Mark Clauses to code [SI-0..N] or inline clauses.',
+        note: 'Unmarked utterances and [SI-X] excluded utterances are omitted from both numerator and denominator per SALT SI conventions.',
+      };
+    }
+
+    case 'totalClauses':
+      return {
+        key,
+        title: 'Total Clauses & Scored Utterances',
+        formula: 'Sum of clause counts across all scored utterances',
+        calculation:
+          stats.clauseScoredUtterances > 0 || stats.clauseExcludedUtterances > 0
+            ? `${stats.totalClauses} total clauses across ${stats.clauseScoredUtterances} scored of ${stats.totalUtterances} utterances${stats.clauseExcludedUtterances > 0 ? ` (${stats.clauseExcludedUtterances} excluded [SI-X])` : ''}`
+            : 'No utterances have been marked for clauses yet.',
+        note: 'Uses explicit [SI-N] when present, or falls back to inline clause markers ([MC], [SC], [RC], [AC], [NC], [CL]) without double-counting.',
+      };
+
+    case 'clauseScoredUtterances':
+      return {
+        key,
+        title: 'Clause-Scored Utterances (Denominator)',
+        formula: 'Count of utterances with [SI-0..N] or inline clause markers (excluding [SI-X])',
+        calculation: `${stats.clauseScoredUtterances} scored out of ${stats.totalUtterances} total utterances${stats.clauseExcludedUtterances > 0 ? ` · ${stats.clauseExcludedUtterances} excluded [SI-X]` : ''}${stats.totalUtterances - stats.clauseScoredUtterances - stats.clauseExcludedUtterances > 0 ? ` · ${stats.totalUtterances - stats.clauseScoredUtterances - stats.clauseExcludedUtterances} unmarked` : ''}`,
+        note: 'Only scored utterances form the Clausal Density denominator; [SI-X] (abandoned, unintelligible, elliptical) and unmarked lines are excluded.',
+      };
+
+    case 'complexUtterancePercent':
+      return {
+        key,
+        title: 'Complex Utterances (2+ Clauses)',
+        formula: 'Utterances with ≥ 2 Clauses ÷ Scored Utterances × 100',
+        calculation:
+          stats.clauseScoredUtterances > 0
+            ? `${stats.complexUtterances} multi-clause utterances ÷ ${stats.clauseScoredUtterances} scored × 100 = ${stats.complexUtterancePercent}%`
+            : 'No clause-scored utterances yet.',
+        note: 'Percentage of scored utterances coded [SI-2], [SI-3], or higher (or containing 2+ inline clause markers).',
+      };
+  }
 }

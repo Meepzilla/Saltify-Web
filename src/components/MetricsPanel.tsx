@@ -1,6 +1,11 @@
 import { BarChart3, ChevronDown, ChevronUp, GitBranch } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import {
+  describeMetricCalculation,
+  type MetricCalculationKey,
+} from '../engine/saltMetrics';
 import type { SpeakerMetrics, TranscriptMetrics } from '../types/saltify';
+import { MetricCalculationTooltip } from './MetricCalculationTooltip';
 
 interface MetricsPanelProps {
   metrics: TranscriptMetrics;
@@ -9,15 +14,76 @@ interface MetricsPanelProps {
   onOpenClauseCoder?: () => void;
 }
 
+type MetricScope = 'primary' | 'speaker1' | 'speaker2' | 'overall';
+
+interface SelectedMetric {
+  scope: MetricScope;
+  key: MetricCalculationKey;
+}
+
 function SpeakerMetricsCard({
+  scope,
   stats,
   accentVar,
+  selectedMetric,
+  onSelectMetric,
 }: {
+  scope: 'speaker1' | 'speaker2' | 'overall';
   stats: SpeakerMetrics;
   accentVar?: string;
+  selectedMetric: SelectedMetric | null;
+  onSelectMetric: (scope: MetricScope, key: MetricCalculationKey) => void;
 }) {
   const hasClauseData =
     stats.clauseScoredUtterances > 0 || stats.clauseExcludedUtterances > 0;
+
+  const isSelected = (key: MetricCalculationKey) =>
+    selectedMetric?.scope === scope && selectedMetric.key === key;
+
+  const cells: Array<{
+    key: MetricCalculationKey;
+    value: string | number;
+    label: string;
+    highlightClause?: boolean;
+  }> = [
+    { key: 'mluMorphemes', value: stats.mluMorphemes.toFixed(2), label: 'MLUm' },
+    { key: 'mluWords', value: stats.mluWords.toFixed(2), label: 'MLUw' },
+    { key: 'typeTokenRatio', value: stats.typeTokenRatio.toFixed(2), label: 'TTR' },
+    { key: 'totalWords', value: stats.totalWords, label: 'TNW' },
+    { key: 'uniqueWords', value: stats.uniqueWords, label: 'NDW' },
+    { key: 'boundMorphemes', value: stats.boundMorphemes, label: 'Bound /m' },
+    {
+      key: 'mazeWordPercent',
+      value: `${stats.mazeCount} (${stats.mazeWordPercent}%)`,
+      label: 'Mazes',
+    },
+    {
+      key: 'errorAndOmissionCount',
+      value: stats.errorCount + stats.omissionCount,
+      label: 'Errors/Omit',
+    },
+    {
+      key: 'wordsPerMinute',
+      value: stats.wordsPerMinute !== null ? stats.wordsPerMinute : '—',
+      label: 'WPM',
+    },
+    {
+      key: 'clausalDensity',
+      value: stats.clausalDensity !== null ? stats.clausalDensity.toFixed(2) : '—',
+      label: 'Clausal Density',
+      highlightClause: stats.clausalDensity !== null,
+    },
+    {
+      key: 'totalClauses',
+      value: hasClauseData ? `${stats.totalClauses} (${stats.clauseScoredUtterances})` : '—',
+      label: 'Clauses (Utt)',
+    },
+    {
+      key: 'complexUtterancePercent',
+      value: stats.clauseScoredUtterances > 0 ? `${stats.complexUtterancePercent}%` : '—',
+      label: 'Complex (2+ Cl)',
+    },
+  ];
 
   return (
     <div className="metrics-speaker-card">
@@ -28,72 +94,27 @@ function SpeakerMetricsCard({
         </span>
       </div>
       <div className="metrics-grid">
-        <div className="metric-cell">
-          <span className="metric-cell-val">{stats.mluMorphemes.toFixed(2)}</span>
-          <span className="metric-cell-lbl">MLUm</span>
-        </div>
-        <div className="metric-cell">
-          <span className="metric-cell-val">{stats.mluWords.toFixed(2)}</span>
-          <span className="metric-cell-lbl">MLUw</span>
-        </div>
-        <div className="metric-cell">
-          <span className="metric-cell-val">{stats.typeTokenRatio.toFixed(2)}</span>
-          <span className="metric-cell-lbl">TTR</span>
-        </div>
-        <div className="metric-cell">
-          <span className="metric-cell-val">{stats.totalWords}</span>
-          <span className="metric-cell-lbl">TNW</span>
-        </div>
-        <div className="metric-cell">
-          <span className="metric-cell-val">{stats.uniqueWords}</span>
-          <span className="metric-cell-lbl">NDW</span>
-        </div>
-        <div className="metric-cell">
-          <span className="metric-cell-val">{stats.boundMorphemes}</span>
-          <span className="metric-cell-lbl">Bound /m</span>
-        </div>
-        <div className="metric-cell">
-          <span className="metric-cell-val">
-            {stats.mazeCount} ({stats.mazeWordPercent}%)
-          </span>
-          <span className="metric-cell-lbl">Mazes</span>
-        </div>
-        <div className="metric-cell">
-          <span className="metric-cell-val">
-            {stats.errorCount + stats.omissionCount}
-          </span>
-          <span className="metric-cell-lbl">Errors/Omit</span>
-        </div>
-        <div className="metric-cell">
-          <span className="metric-cell-val">
-            {stats.wordsPerMinute !== null ? stats.wordsPerMinute : '—'}
-          </span>
-          <span className="metric-cell-lbl">WPM</span>
-        </div>
-        <div
-          className="metric-cell"
-          title="Clausal Density (SALT Subordination Index) = Total Clauses ÷ Scored Utterances"
-        >
-          <span
-            className="metric-cell-val"
-            style={{ color: stats.clausalDensity !== null ? 'var(--salt-clause)' : undefined }}
-          >
-            {stats.clausalDensity !== null ? stats.clausalDensity.toFixed(2) : '—'}
-          </span>
-          <span className="metric-cell-lbl">Clausal Density</span>
-        </div>
-        <div className="metric-cell" title="Total Clauses across Scored Utterances">
-          <span className="metric-cell-val">
-            {hasClauseData ? `${stats.totalClauses} (${stats.clauseScoredUtterances})` : '—'}
-          </span>
-          <span className="metric-cell-lbl">Clauses (Utt)</span>
-        </div>
-        <div className="metric-cell" title="Percent of scored utterances containing 2 or more clauses">
-          <span className="metric-cell-val">
-            {stats.clauseScoredUtterances > 0 ? `${stats.complexUtterancePercent}%` : '—'}
-          </span>
-          <span className="metric-cell-lbl">Complex (2+ Cl)</span>
-        </div>
+        {cells.map((cell) => {
+          const active = isSelected(cell.key);
+          return (
+            <button
+              key={cell.key}
+              type="button"
+              className={`metric-cell metric-selectable ${active ? 'selected' : ''}`}
+              aria-pressed={active}
+              title={`Select to see how ${cell.label} was calculated`}
+              onClick={() => onSelectMetric(scope, cell.key)}
+            >
+              <span
+                className="metric-cell-val"
+                style={{ color: cell.highlightClause ? 'var(--salt-clause)' : undefined }}
+              >
+                {cell.value}
+              </span>
+              <span className="metric-cell-lbl">{cell.label}</span>
+            </button>
+          );
+        })}
       </div>
 
       {hasClauseData && (
@@ -116,11 +137,95 @@ export function MetricsPanel({
   onOpenClauseCoder,
 }: MetricsPanelProps) {
   const [expanded, setExpanded] = useState(alwaysExpanded);
+  const [selectedMetric, setSelectedMetric] = useState<SelectedMetric | null>(null);
   const isOpen = alwaysExpanded || expanded;
+
+  useEffect(() => {
+    if (!selectedMetric) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setSelectedMetric(null);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [selectedMetric]);
 
   // Prefer Child (speaker1) metrics in compact ribbon when labeled, else Overall
   const primary =
     metrics.speaker1.totalUtterances > 0 ? metrics.speaker1 : metrics.overall;
+
+  const toggleMetric = (scope: MetricScope, key: MetricCalculationKey) => {
+    setSelectedMetric((prev) =>
+      prev && prev.scope === scope && prev.key === key ? null : { scope, key }
+    );
+  };
+
+  const activeTooltipStats =
+    selectedMetric === null
+      ? null
+      : selectedMetric.scope === 'primary'
+      ? primary
+      : selectedMetric.scope === 'speaker1'
+      ? metrics.speaker1
+      : selectedMetric.scope === 'speaker2'
+      ? metrics.speaker2
+      : metrics.overall;
+
+  const activeTooltipAccent =
+    selectedMetric?.scope === 'speaker1'
+      ? 'var(--speaker1)'
+      : selectedMetric?.scope === 'speaker2'
+      ? 'var(--speaker2)'
+      : selectedMetric?.scope === 'primary' && metrics.speaker1.totalUtterances > 0
+      ? 'var(--speaker1)'
+      : undefined;
+
+  const activeBreakdown =
+    selectedMetric && activeTooltipStats
+      ? describeMetricCalculation(
+          selectedMetric.key,
+          activeTooltipStats,
+          metrics.durationSeconds
+        )
+      : null;
+
+  const ribbonPills: Array<{
+    key: MetricCalculationKey;
+    value: string | number;
+    label: string;
+    valueId?: string;
+    highlightClause?: boolean;
+  }> = [
+    { key: 'mluMorphemes', value: primary.mluMorphemes.toFixed(2), label: 'MLUm' },
+    { key: 'mluWords', value: primary.mluWords.toFixed(2), label: 'MLUw' },
+    { key: 'totalWords', value: primary.totalWords, label: 'TNW' },
+    { key: 'uniqueWords', value: primary.uniqueWords, label: 'NDW' },
+    { key: 'typeTokenRatio', value: primary.typeTokenRatio.toFixed(2), label: 'TTR' },
+    {
+      key: 'clausalDensity',
+      value: primary.clausalDensity !== null ? primary.clausalDensity.toFixed(2) : '—',
+      label: 'CD (SI)',
+      valueId: 'metrics-bar-clausal-density',
+      highlightClause: primary.clausalDensity !== null,
+    },
+    ...(primary.clauseScoredUtterances > 0
+      ? [
+          {
+            key: 'totalClauses' as const,
+            value: primary.totalClauses,
+            label: 'Clauses',
+            valueId: 'metrics-bar-total-clauses',
+          },
+        ]
+      : []),
+    { key: 'mazeWordPercent', value: `${primary.mazeWordPercent}%`, label: 'Maze' },
+    {
+      key: 'errorAndOmissionCount',
+      value: primary.errorCount + primary.omissionCount,
+      label: 'Codes',
+    },
+  ];
 
   return (
     <section className="metrics-bar" aria-label="SALT language sample analysis metrics">
@@ -155,54 +260,33 @@ export function MetricsPanel({
           </span>
 
           <div className="metrics-summary-pills">
-            <span className="metric-inline">
-              <strong>{primary.mluMorphemes.toFixed(2)}</strong>
-              <span>MLUm</span>
-            </span>
-            <span className="metric-inline">
-              <strong>{primary.mluWords.toFixed(2)}</strong>
-              <span>MLUw</span>
-            </span>
-            <span className="metric-inline">
-              <strong>{primary.totalWords}</strong>
-              <span>TNW</span>
-            </span>
-            <span className="metric-inline">
-              <strong>{primary.uniqueWords}</strong>
-              <span>NDW</span>
-            </span>
-            <span className="metric-inline">
-              <strong>{primary.typeTokenRatio.toFixed(2)}</strong>
-              <span>TTR</span>
-            </span>
-            <span
-              className="metric-inline"
-              title="Clausal Density (SALT Subordination Index) = Total Clauses ÷ Scored Utterances"
-            >
-              <strong
-                id="metrics-bar-clausal-density"
-                style={{
-                  color: primary.clausalDensity !== null ? 'var(--salt-clause)' : undefined,
-                }}
-              >
-                {primary.clausalDensity !== null ? primary.clausalDensity.toFixed(2) : '—'}
-              </strong>
-              <span>CD (SI)</span>
-            </span>
-            {primary.clauseScoredUtterances > 0 && (
-              <span className="metric-inline" title="Total scored clauses">
-                <strong id="metrics-bar-total-clauses">{primary.totalClauses}</strong>
-                <span>Clauses</span>
-              </span>
-            )}
-            <span className="metric-inline">
-              <strong>{primary.mazeWordPercent}%</strong>
-              <span>Maze</span>
-            </span>
-            <span className="metric-inline">
-              <strong>{primary.errorCount + primary.omissionCount}</strong>
-              <span>Codes</span>
-            </span>
+            {ribbonPills.map((pill) => {
+              const active =
+                selectedMetric?.scope === 'primary' && selectedMetric.key === pill.key;
+              return (
+                <button
+                  key={pill.key}
+                  type="button"
+                  className={`metric-inline metric-inline-btn ${active ? 'selected' : ''}`}
+                  aria-pressed={active}
+                  title={`Click to see how ${pill.label} was calculated`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    toggleMetric('primary', pill.key);
+                  }}
+                >
+                  <strong
+                    id={pill.valueId}
+                    style={{
+                      color: pill.highlightClause ? 'var(--salt-clause)' : undefined,
+                    }}
+                  >
+                    {pill.value}
+                  </strong>
+                  <span>{pill.label}</span>
+                </button>
+              );
+            })}
           </div>
         </div>
 
@@ -222,18 +306,57 @@ export function MetricsPanel({
             </button>
           )}
           {!alwaysExpanded && (
-            <span style={{ color: 'var(--text-muted)', display: 'inline-flex' }}>
+            <button
+              id="metrics-toggle-expand-btn"
+              type="button"
+              className="btn btn-ghost btn-icon"
+              style={{ width: 28, height: 28, minWidth: 28, minHeight: 28 }}
+              aria-label={isOpen ? 'Collapse detailed speaker metrics' : 'Expand detailed speaker metrics'}
+              aria-expanded={isOpen}
+              onClick={(e) => {
+                e.stopPropagation();
+                setExpanded((v) => !v);
+              }}
+            >
               {isOpen ? <ChevronDown size={16} /> : <ChevronUp size={16} />}
-            </span>
+            </button>
           )}
         </div>
       </div>
 
+      {activeBreakdown && activeTooltipStats && (
+        <div className="metrics-tooltip-slot">
+          <MetricCalculationTooltip
+            breakdown={activeBreakdown}
+            speakerLabel={activeTooltipStats.speaker}
+            accentVar={activeTooltipAccent}
+            onClose={() => setSelectedMetric(null)}
+          />
+        </div>
+      )}
+
       {isOpen && (
         <div className="metrics-expanded">
-          <SpeakerMetricsCard stats={metrics.speaker1} accentVar="var(--speaker1)" />
-          <SpeakerMetricsCard stats={metrics.speaker2} accentVar="var(--speaker2)" />
-          <SpeakerMetricsCard stats={metrics.overall} />
+          <SpeakerMetricsCard
+            scope="speaker1"
+            stats={metrics.speaker1}
+            accentVar="var(--speaker1)"
+            selectedMetric={selectedMetric}
+            onSelectMetric={toggleMetric}
+          />
+          <SpeakerMetricsCard
+            scope="speaker2"
+            stats={metrics.speaker2}
+            accentVar="var(--speaker2)"
+            selectedMetric={selectedMetric}
+            onSelectMetric={toggleMetric}
+          />
+          <SpeakerMetricsCard
+            scope="overall"
+            stats={metrics.overall}
+            selectedMetric={selectedMetric}
+            onSelectMetric={toggleMetric}
+          />
         </div>
       )}
     </section>

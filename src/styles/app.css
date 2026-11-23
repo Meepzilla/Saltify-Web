@@ -1268,6 +1268,152 @@
   color: var(--text-secondary);
 }
 
+/* Interactive Calculation Breakdown Tooltips */
+.metric-inline-btn {
+  padding: 2px 7px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  background: transparent;
+  cursor: pointer;
+  transition: background-color 110ms ease, border-color 110ms ease;
+}
+
+.metric-inline-btn:hover {
+  background: var(--bg-surface-hover);
+  border-color: var(--border-subtle);
+}
+
+.metric-inline-btn.selected {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+
+.metric-selectable {
+  text-align: left;
+  padding: 5px 7px;
+  border-radius: 7px;
+  border: 1px solid transparent;
+  background: transparent;
+  cursor: pointer;
+  transition: background-color 110ms ease, border-color 110ms ease;
+}
+
+.metric-selectable:hover {
+  background: var(--bg-surface-subtle);
+  border-color: var(--border-subtle);
+}
+
+.metric-selectable.selected {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+
+.metrics-tooltip-slot {
+  padding: 8px 14px;
+  border-top: 1px solid var(--border-subtle);
+  background: var(--bg-surface-subtle);
+}
+
+.calc-tooltip {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius-sm);
+  padding: 9px 12px;
+  box-shadow: var(--shadow-sm);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.calc-tooltip-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.calc-tooltip-title-group {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.calc-tooltip-icon {
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.calc-tooltip-speaker {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-surface-subtle);
+  color: var(--text-primary);
+}
+
+.calc-tooltip-title {
+  font-size: 0.82rem;
+  color: var(--text-primary);
+}
+
+.calc-tooltip-close {
+  width: 24px;
+  height: 24px;
+  min-width: 24px;
+  min-height: 24px;
+}
+
+.calc-tooltip-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.calc-tooltip-row {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  font-size: 0.79rem;
+}
+
+.calc-tooltip-k {
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  min-width: 76px;
+}
+
+.calc-tooltip-formula {
+  font-family: var(--font-mono);
+  font-size: 0.77rem;
+  color: var(--text-secondary);
+}
+
+.calc-tooltip-math {
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--accent-soft-text);
+  background: var(--accent-soft);
+  padding: 2px 7px;
+  border-radius: 5px;
+}
+
+.calc-tooltip-note {
+  margin: 0;
+  font-size: 0.75rem;
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+
 /* Clause & Clausal Density Coder Modal */
 .modal-card.clause-modal {
   max-width: 860px;
@@ -1307,6 +1453,21 @@
 .clause-kpi.primary {
   border-color: var(--salt-clause);
   background: var(--salt-clause-bg);
+}
+
+.clause-kpi-btn {
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 110ms ease, box-shadow 110ms ease, background-color 110ms ease;
+}
+
+.clause-kpi-btn:hover {
+  border-color: var(--accent);
+}
+
+.clause-kpi-btn.selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
 }
 
 .clause-kpi-val {

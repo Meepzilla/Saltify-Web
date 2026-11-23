@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { computeSaltMetrics } from '../saltMetrics';
+import { computeSaltMetrics, describeMetricCalculation } from '../saltMetrics';
 
 describe('computeSaltMetrics', () => {
   it('computes TNW, NDW, TTR, MLUw, MLUm, mazes, and errors per speaker', () => {
@@ -30,6 +30,7 @@ describe('computeSaltMetrics', () => {
     expect(metrics.speaker2.totalWords).toBe(4);
     expect(metrics.speaker2.mluMorphemes).toBe(5);
     expect(metrics.speaker1.clausalDensity).toBeNull();
+    expect(metrics.durationSeconds).toBe(60);
   });
 
   it('computes clausal density (SALT SI), total clauses, complex %, and SI distribution without inflating words or errors', () => {
@@ -69,5 +70,38 @@ describe('computeSaltMetrics', () => {
     expect(metrics.speaker2.clausalDensity).toBe(2);
     expect(metrics.speaker2.totalClauses).toBe(2);
     expect(metrics.speaker2.complexUtterancePercent).toBe(100);
+  });
+
+  it('describes live formula and substituted calculation for every SALT metric', () => {
+    const transcript = [
+      '[0:04] C (I I) I walk/ed the dog/s [SI-1].',
+      '[0:09] C He telled[EW:told] *a story that I like/ed [SI-2].',
+      '[0:15] C Yes [SI-X].',
+    ].join('\n');
+
+    const metrics = computeSaltMetrics(transcript, { speaker1: 'C', speaker2: 'E' }, 90);
+    const s = metrics.speaker1;
+
+    const mlum = describeMetricCalculation('mluMorphemes', s, metrics.durationSeconds);
+    expect(mlum.formula).toContain('Bound Morphemes');
+    expect(mlum.calculation).toContain(`${s.totalWords} words + ${s.boundMorphemes} bound`);
+    expect(mlum.calculation).toContain(s.mluMorphemes.toFixed(2));
+
+    const cd = describeMetricCalculation('clausalDensity', s, metrics.durationSeconds);
+    expect(cd.formula).toBe('Total Clauses ÷ Clause-Scored Utterances');
+    expect(cd.calculation).toContain('3 clauses ÷ 2 scored utterances = 1.50');
+    expect(cd.calculation).toContain('1 excluded [SI-X]');
+
+    const complex = describeMetricCalculation('complexUtterancePercent', s);
+    expect(complex.calculation).toContain('1 multi-clause utterances ÷ 2 scored × 100 = 50%');
+
+    const wpm = describeMetricCalculation('wordsPerMinute', s, 90);
+    expect(wpm.calculation).toContain('90.0s ÷ 60 = 1.50 min');
+
+    const mazes = describeMetricCalculation('mazeWordPercent', s);
+    expect(mazes.calculation).toContain('2 maze words');
+
+    const codes = describeMetricCalculation('errorAndOmissionCount', s);
+    expect(codes.calculation).toBe('1 error codes + 1 omissions = 2 total codes');
   });
 });

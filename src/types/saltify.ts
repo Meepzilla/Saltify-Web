@@ -155,6 +155,7 @@ export interface TranscriptMetrics {
   speaker1: SpeakerMetrics;
   speaker2: SpeakerMetrics;
   unlabeledUtterances: number;
+  durationSeconds: number | null;
 }
 
 export interface GrammarCheckOptions {

@@ -17,9 +17,14 @@ import {
   setUtteranceSiCode,
   stripAllClauseCodes,
 } from '../engine/clauseAnalysis';
-import { computeSaltMetrics } from '../engine/saltMetrics';
+import {
+  computeSaltMetrics,
+  describeMetricCalculation,
+  type MetricCalculationKey,
+} from '../engine/saltMetrics';
 import { parseUtteranceLines } from '../engine/transcriptFormat';
 import type { InlineClauseTag, SpeakerAliases } from '../types/saltify';
+import { MetricCalculationTooltip } from './MetricCalculationTooltip';
 
 interface ClauseCoderModalProps {
   open: boolean;
@@ -49,6 +54,7 @@ export function ClauseCoderModal({
   const [boundaryMode, setBoundaryMode] = useState(false);
   const [activeInlineTag, setActiveInlineTag] = useState<InlineClauseTag>('MC');
   const [activeLineIndex, setActiveLineIndex] = useState<number>(0);
+  const [selectedKpi, setSelectedKpi] = useState<MetricCalculationKey | null>(null);
 
   const rowRefs = useRef<Map<number, HTMLDivElement>>(new Map());
 
@@ -187,7 +193,11 @@ export function ClauseCoderModal({
 
       if (e.key === 'Escape') {
         e.preventDefault();
-        onClose();
+        if (selectedKpi) {
+          setSelectedKpi(null);
+        } else {
+          onClose();
+        }
         return;
       }
 
@@ -234,7 +244,7 @@ export function ClauseCoderModal({
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [open, visibleLines, activeLineIndex, handleSetLineSi, onClose]);
+  }, [open, visibleLines, activeLineIndex, selectedKpi, handleSetLineSi, onClose]);
 
   if (!open) return null;
 
@@ -273,7 +283,19 @@ export function ClauseCoderModal({
         {/* Live Clausal Density Dashboard */}
         <div className="clause-summary-bar" aria-live="polite">
           <div className="clause-summary-kpis">
-            <div className="clause-kpi primary">
+            <button
+              type="button"
+              className={`clause-kpi primary clause-kpi-btn ${
+                selectedKpi === 'clausalDensity' ? 'selected' : ''
+              }`}
+              aria-pressed={selectedKpi === 'clausalDensity'}
+              title="Select to see how Clausal Density was calculated"
+              onClick={() =>
+                setSelectedKpi((prev) =>
+                  prev === 'clausalDensity' ? null : 'clausalDensity'
+                )
+              }
+            >
               <span className="clause-kpi-val" id="clause-modal-cd-value">
                 {summaryStats.clausalDensity !== null
                   ? summaryStats.clausalDensity.toFixed(2)
@@ -282,28 +304,79 @@ export function ClauseCoderModal({
               <span className="clause-kpi-lbl">
                 Clausal Density ({summaryStats.speaker})
               </span>
-            </div>
-            <div className="clause-kpi">
+            </button>
+            <button
+              type="button"
+              className={`clause-kpi clause-kpi-btn ${
+                selectedKpi === 'totalClauses' ? 'selected' : ''
+              }`}
+              aria-pressed={selectedKpi === 'totalClauses'}
+              title="Select to see how Total Clauses was calculated"
+              onClick={() =>
+                setSelectedKpi((prev) =>
+                  prev === 'totalClauses' ? null : 'totalClauses'
+                )
+              }
+            >
               <span className="clause-kpi-val" id="clause-modal-total-clauses">
                 {summaryStats.totalClauses}
               </span>
               <span className="clause-kpi-lbl">Total Clauses</span>
-            </div>
-            <div className="clause-kpi">
+            </button>
+            <button
+              type="button"
+              className={`clause-kpi clause-kpi-btn ${
+                selectedKpi === 'clauseScoredUtterances' ? 'selected' : ''
+              }`}
+              aria-pressed={selectedKpi === 'clauseScoredUtterances'}
+              title="Select to see how Scored Utterances was calculated"
+              onClick={() =>
+                setSelectedKpi((prev) =>
+                  prev === 'clauseScoredUtterances' ? null : 'clauseScoredUtterances'
+                )
+              }
+            >
               <span className="clause-kpi-val">
                 {summaryStats.clauseScoredUtterances} / {summaryStats.totalUtterances}
               </span>
               <span className="clause-kpi-lbl">Scored Utt</span>
-            </div>
-            <div className="clause-kpi">
+            </button>
+            <button
+              type="button"
+              className={`clause-kpi clause-kpi-btn ${
+                selectedKpi === 'complexUtterancePercent' ? 'selected' : ''
+              }`}
+              aria-pressed={selectedKpi === 'complexUtterancePercent'}
+              title="Select to see how Complex Utterance % was calculated"
+              onClick={() =>
+                setSelectedKpi((prev) =>
+                  prev === 'complexUtterancePercent' ? null : 'complexUtterancePercent'
+                )
+              }
+            >
               <span className="clause-kpi-val">
                 {summaryStats.clauseScoredUtterances > 0
                   ? `${summaryStats.complexUtterancePercent}%`
                   : '—'}
               </span>
               <span className="clause-kpi-lbl">Complex (2+ Cl)</span>
-            </div>
+            </button>
           </div>
+
+          {selectedKpi && (
+            <MetricCalculationTooltip
+              breakdown={describeMetricCalculation(selectedKpi, summaryStats)}
+              speakerLabel={summaryStats.speaker}
+              accentVar={
+                speakerFilter === 'speaker2'
+                  ? 'var(--speaker2)'
+                  : speakerFilter === 'speaker1' || liveMetrics.speaker1.totalUtterances > 0
+                  ? 'var(--speaker1)'
+                  : undefined
+              }
+              onClose={() => setSelectedKpi(null)}
+            />
+          )}
 
           <div className="clause-si-dist-row">
             <span className="clause-dist-pill">SI-0: {summaryStats.siDistribution.si0}</span>

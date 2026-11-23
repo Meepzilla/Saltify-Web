@@ -23,7 +23,7 @@ Every step of the clinical workflow executes **100% locally in the browser** —
 | **Speaker Labeling & Aliases** | Bulk Label Speakers modal + `C` / `E` aliases & color coding | Bulk Label Speakers modal + 1-tap speaker badges per utterance + customizable aliases & color coding |
 | **SALT Grammar Check** | LanguageTool (Java) step-by-step review | On-device child-language grammar engine (repetitions/mazes, overregularizations `[EW:]`/`[EO:]`, `/*3s`, pronoun case, copula omissions, `a`/`an`) + step-by-step workbench with touch SALT code chips & batch auto-apply |
 | **Inflectional Morphemes** | NLTK + WordNet (`/s`, `/z`, `/ed`, `/3s`, `/ing`, contractions) | `wink-pos-tagger` + `wink-lemmatizer` passing all ported `SpeechTranscription` unit tests while preserving SALT error codes & timestamps |
-| **Clinical SALT Metrics** | — | Real-time Child vs Examiner **MLUm, MLUw, TNW, NDW, TTR, Bound Morphemes, Mazes %, Error/Omission counts, WPM** |
+| **Clinical SALT Metrics & Clauses** | — | Real-time Child vs Examiner **MLUm, MLUw, TNW, NDW, TTR, Clausal Density (SALT SI), Total Clauses, Complex %, Bound Morphemes, Mazes %, Error/Omission counts, WPM** — with interactive **Mark Clauses** coder (`[SI-0..4+]`, `[SI-X]`, inline `[MC]`/`[SC]`/`[RC]`/`[AC]`/`[NC]`) and click-to-inspect live formula & calculation tooltips on every metric |
 | **Session & Client Metadata** | Multi-session tabs + Client Info fields | Persistent IndexedDB multi-session manager (rename, delete, `.saltify.json` import/export) + Client Info modal with live SALT header preview |
 | **Export & Print** | `.docx` Word export + WAV download | `.docx`, native SALT `.slt`, `.txt`, `.wav`, Copy to Clipboard, Print view, and `.saltify.json` backup |
 
