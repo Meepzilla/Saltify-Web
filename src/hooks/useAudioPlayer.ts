@@ -1,10 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+export const MAX_PLAYBACK_BOOST = 4.0; // 400% (+12 dB) with soft limiter
+export const VOLUME_BOOST_PRESETS = [1.0, 1.5, 2.0, 3.0, 4.0] as const;
+
 export interface AudioPlayerState {
   isPlaying: boolean;
   currentTime: number;
   duration: number;
   playbackRate: number;
+  volume: number; // 0.0 .. 4.0 (1.0 = 100%, 4.0 = 400% / +12 dB)
+  muted: boolean;
   ready: boolean;
   togglePlayPause: () => Promise<void>;
   play: () => Promise<void>;
@@ -13,19 +18,36 @@ export interface AudioPlayerState {
   skip: (deltaSeconds: number) => void;
   restart: () => void;
   setPlaybackRate: (rate: number) => void;
+  setVolume: (gain: number) => void;
+  toggleMute: () => void;
+  cycleBoost: () => void;
+}
+
+interface WebAudioBoostGraph {
+  ctx: AudioContext;
+  source: MediaElementAudioSourceNode;
+  gain: GainNode;
+  limiter: DynamicsCompressorNode;
 }
 
 /**
- * Reliable cross-platform audio player backed by HTMLAudioElement + WAV Blob URL.
- * Works consistently across Android Chrome, Windows Edge/Chrome, and iPadOS Safari
- * with smooth requestAnimationFrame playhead tracking and playback speed control.
+ * Reliable cross-platform audio player backed by HTMLAudioElement + Web Audio API
+ * GainNode + soft DynamicsCompressorNode limiter.
+ *
+ * Unlike native <audio>.volume (capped at 100% and read-only on iPadOS Safari),
+ * routing through a lazily initialized Web Audio GainNode allows clean 0%–400%
+ * (+12 dB) output volume boosting on Android, Windows, AND iPadOS Safari while
+ * soft-limiting sudden spikes to prevent clipping.
  */
 export function useAudioPlayer(
   audioBlob: Blob | null,
   fallbackDuration = 0,
+  initialVolume = 1.5,
+  onVolumeChange?: (volume: number) => void,
   onError?: (message: string) => void
 ): AudioPlayerState {
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const graphRef = useRef<WebAudioBoostGraph | null>(null);
   const urlRef = useRef<string | null>(null);
   const rafRef = useRef<number | null>(null);
 
@@ -33,7 +55,16 @@ export function useAudioPlayer(
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(fallbackDuration);
   const [playbackRate, setPlaybackRateState] = useState(1);
+  const [volume, setVolumeState] = useState(() =>
+    Math.max(0, Math.min(MAX_PLAYBACK_BOOST, Number.isFinite(initialVolume) ? initialVolume : 1.5))
+  );
+  const [muted, setMuted] = useState(false);
   const [ready, setReady] = useState(false);
+
+  const volumeRef = useRef(volume);
+  const mutedRef = useRef(muted);
+  volumeRef.current = volume;
+  mutedRef.current = muted;
 
   const stopRaf = useCallback(() => {
     if (rafRef.current !== null) {
@@ -56,12 +87,96 @@ export function useAudioPlayer(
     rafRef.current = requestAnimationFrame(tick);
   }, [stopRaf]);
 
+  const teardownGraph = useCallback(() => {
+    const graph = graphRef.current;
+    if (!graph) return;
+    graphRef.current = null;
+    try {
+      graph.source.disconnect();
+      graph.gain.disconnect();
+      graph.limiter.disconnect();
+    } catch {
+      // ignore disconnect errors
+    }
+    graph.ctx.close().catch(() => {});
+  }, []);
+
+  const applyEffectiveGain = useCallback((gainVal: number, isMuted: boolean) => {
+    const effective = isMuted ? 0 : Math.max(0, Math.min(MAX_PLAYBACK_BOOST, gainVal));
+    const graph = graphRef.current;
+    if (graph) {
+      try {
+        graph.gain.gain.setTargetAtTime(effective, graph.ctx.currentTime, 0.015);
+      } catch {
+        graph.gain.gain.value = effective;
+      }
+      if (audioRef.current) {
+        audioRef.current.volume = 1;
+        audioRef.current.muted = false;
+      }
+    } else if (audioRef.current) {
+      audioRef.current.muted = isMuted;
+      audioRef.current.volume = Math.min(1, effective);
+    }
+  }, []);
+
+  /**
+   * Lazily initializes & resumes the Web Audio boost + soft-limiter chain inside
+   * a user gesture so iPadOS Safari never suspends or silences playback.
+   */
+  const ensureBoostGraph = useCallback(async () => {
+    const el = audioRef.current;
+    if (!el) return;
+
+    if (!graphRef.current) {
+      const AudioCtx =
+        window.AudioContext ||
+        (window as unknown as { webkitAudioContext?: typeof AudioContext })
+          .webkitAudioContext;
+      if (!AudioCtx) return;
+
+      try {
+        const ctx = new AudioCtx();
+        const source = ctx.createMediaElementSource(el);
+        const gain = ctx.createGain();
+        const limiter = ctx.createDynamicsCompressor();
+
+        // Gentle broadcast soft-limiter protects ears when boosting soft child voices up to +12 dB
+        limiter.threshold.value = -5;
+        limiter.knee.value = 12;
+        limiter.ratio.value = 12;
+        limiter.attack.value = 0.003;
+        limiter.release.value = 0.15;
+
+        const effective = mutedRef.current ? 0 : volumeRef.current;
+        gain.gain.value = effective;
+        el.volume = 1;
+        el.muted = false;
+
+        source.connect(gain);
+        gain.connect(limiter);
+        limiter.connect(ctx.destination);
+
+        graphRef.current = { ctx, source, gain, limiter };
+      } catch {
+        // Fallback cleanly to native <audio> if Web Audio graph creation fails
+        return;
+      }
+    }
+
+    if (graphRef.current.ctx.state === 'suspended') {
+      await graphRef.current.ctx.resume().catch(() => {});
+    }
+    applyEffectiveGain(volumeRef.current, mutedRef.current);
+  }, [applyEffectiveGain]);
+
   useEffect(() => {
     setDuration(fallbackDuration);
   }, [fallbackDuration]);
 
   useEffect(() => {
     stopRaf();
+    teardownGraph();
     if (audioRef.current) {
       audioRef.current.pause();
       audioRef.current.src = '';
@@ -87,6 +202,8 @@ export function useAudioPlayer(
     audio.preload = 'metadata';
     audio.src = url;
     audio.playbackRate = playbackRate;
+    audio.volume = Math.min(1, mutedRef.current ? 0 : volumeRef.current);
+    audio.muted = mutedRef.current;
     // Enable inline playback on iOS/iPadOS Safari
     audio.setAttribute('playsinline', 'true');
     audioRef.current = audio;
@@ -140,6 +257,7 @@ export function useAudioPlayer(
       audio.removeEventListener('timeupdate', onTimeUpdate);
       audio.removeEventListener('error', onAudioError);
       audio.src = '';
+      teardownGraph();
       if (urlRef.current === url) {
         URL.revokeObjectURL(url);
         urlRef.current = null;
@@ -152,6 +270,7 @@ export function useAudioPlayer(
     const el = audioRef.current;
     if (!el) return;
     try {
+      await ensureBoostGraph();
       await el.play();
     } catch (err) {
       onError?.(
@@ -160,7 +279,7 @@ export function useAudioPlayer(
           : 'Audio playback was blocked by the browser.'
       );
     }
-  }, [onError]);
+  }, [ensureBoostGraph, onError]);
 
   const pause = useCallback(() => {
     audioRef.current?.pause();
@@ -211,11 +330,48 @@ export function useAudioPlayer(
     }
   }, []);
 
+  const setVolume = useCallback(
+    (gain: number) => {
+      const clamped = Math.max(0, Math.min(MAX_PLAYBACK_BOOST, Number(gain.toFixed(2))));
+      setVolumeState(clamped);
+      const nextMuted = clamped === 0;
+      setMuted(nextMuted);
+      volumeRef.current = clamped;
+      mutedRef.current = nextMuted;
+      applyEffectiveGain(clamped, nextMuted);
+      onVolumeChange?.(clamped);
+    },
+    [applyEffectiveGain, onVolumeChange]
+  );
+
+  const toggleMute = useCallback(() => {
+    const nextMuted = !mutedRef.current;
+    setMuted(nextMuted);
+    mutedRef.current = nextMuted;
+    // If unmuting from 0, restore to 100%
+    if (!nextMuted && volumeRef.current === 0) {
+      setVolumeState(1.0);
+      volumeRef.current = 1.0;
+      onVolumeChange?.(1.0);
+    }
+    applyEffectiveGain(volumeRef.current, nextMuted);
+  }, [applyEffectiveGain, onVolumeChange]);
+
+  const cycleBoost = useCallback(() => {
+    const current = mutedRef.current ? 0 : volumeRef.current;
+    const next =
+      VOLUME_BOOST_PRESETS.find((preset) => preset > current + 0.05) ??
+      VOLUME_BOOST_PRESETS[0];
+    setVolume(next);
+  }, [setVolume]);
+
   return {
     isPlaying,
     currentTime,
     duration,
     playbackRate,
+    volume,
+    muted,
     ready,
     togglePlayPause,
     play,
@@ -224,5 +380,8 @@ export function useAudioPlayer(
     skip,
     restart,
     setPlaybackRate,
+    setVolume,
+    toggleMute,
+    cycleBoost,
   };
 }

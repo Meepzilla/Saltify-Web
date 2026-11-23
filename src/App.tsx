@@ -25,7 +25,11 @@ import { LabelSpeakersModal, SpeakerAliasesModal } from './components/SpeakerMod
 import { ToastStack } from './components/Toast';
 import { TranscriptionPane } from './components/TranscriptionPane';
 import { WaveformModal } from './components/WaveformCanvas';
-import { decodeAudioBlob } from './engine/audioProcessing';
+import {
+  applySoftLimitedGain,
+  decodeAudioBlob,
+  encodeWavBlob,
+} from './engine/audioProcessing';
 import { CrossPlatformAudioRecorder } from './engine/audioRecorder';
 import { downloadSessionAudio } from './engine/exporter';
 import { GrammarCheckerSession } from './engine/grammarSession';
@@ -222,12 +226,6 @@ export default function App() {
     };
   }, [hydrated, activeId, activeHasAudio]);
 
-  const player = useAudioPlayer(
-    activeAudioBlob,
-    activeSession.audioMeta?.duration ?? 0,
-    useCallback((msg: string) => pushToast('error', 'Playback Error', msg), [pushToast])
-  );
-
   const updateSettings = useCallback((partial: Partial<AppSettings>) => {
     setSettings((prev) => {
       const next = { ...prev, ...partial };
@@ -235,6 +233,21 @@ export default function App() {
       return next;
     });
   }, []);
+
+  const handleVolumeChange = useCallback(
+    (playbackVolume: number) => {
+      updateSettings({ playbackVolume });
+    },
+    [updateSettings]
+  );
+
+  const player = useAudioPlayer(
+    activeAudioBlob,
+    activeSession.audioMeta?.duration ?? 0,
+    settings.playbackVolume,
+    handleVolumeChange,
+    useCallback((msg: string) => pushToast('error', 'Playback Error', msg), [pushToast])
+  );
 
   const updateActiveSession = useCallback(
     (updater: (session: SessionRecord) => SessionRecord) => {
@@ -484,14 +497,38 @@ export default function App() {
     }
   }, [ingestAudioBlob, pushToast]);
 
-  const handleDownloadAudio = useCallback(() => {
+  const handleDownloadAudio = useCallback(async () => {
     if (!activeAudioBlob || !activeSession) return;
+    let blobToSave = activeAudioBlob;
+    const gain = player.muted ? 1 : player.volume;
+
+    if (gain > 1.05) {
+      try {
+        let mono16k = mono16kCacheRef.current.get(activeId);
+        if (!mono16k) {
+          const decoded = await decodeAudioBlob(activeAudioBlob);
+          mono16k = decoded.mono16k;
+          mono16kCacheRef.current.set(activeId, mono16k);
+        }
+        const boosted = applySoftLimitedGain(mono16k, gain);
+        blobToSave = encodeWavBlob(boosted, 16000);
+      } catch {
+        blobToSave = activeAudioBlob;
+      }
+    }
+
     const saved = downloadSessionAudio(
-      activeAudioBlob,
+      blobToSave,
       activeSession.audioMeta?.fileName || activeSession.name
     );
-    pushToast('success', 'WAV Audio Downloaded', saved);
-  }, [activeAudioBlob, activeSession, pushToast]);
+    pushToast(
+      'success',
+      'WAV Audio Downloaded',
+      gain > 1.05
+        ? `${saved} (exported with ${Math.round(gain * 100)}% loudness boost)`
+        : saved
+    );
+  }, [activeAudioBlob, activeId, activeSession, player.muted, player.volume, pushToast]);
 
   // On-Device Whisper Transcription
   const startTranscriptionRef = useRef<() => Promise<void>>(async () => {});
@@ -1019,10 +1056,20 @@ export default function App() {
                 {activeSession.audioMeta?.fileName || 'Recording'}
               </span>
             </div>
-            <span className="transport-time">
-              {formatDurationPadded(player.currentTime)} /{' '}
-              {formatDurationPadded(player.duration)}
-            </span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+              <button
+                type="button"
+                className={`boost-pill ${!player.muted && player.volume > 1.05 ? 'boosted' : ''}`}
+                onClick={player.cycleBoost}
+                title="Cycle output volume boost"
+              >
+                {player.muted ? 'Mute' : `${Math.round(player.volume * 100)}%`}
+              </button>
+              <span className="transport-time">
+                {formatDurationPadded(player.currentTime)} /{' '}
+                {formatDurationPadded(player.duration)}
+              </span>
+            </div>
           </div>
         )}
 
@@ -1049,7 +1096,7 @@ export default function App() {
               onStartRecording={() => void handleStartRecording()}
               onTogglePauseRecording={handleTogglePauseRecording}
               onStopRecording={() => void handleStopRecording()}
-              onDownloadAudio={handleDownloadAudio}
+              onDownloadAudio={() => void handleDownloadAudio()}
               onToggleTranscribe={handleToggleTranscribe}
               onOpenModelManager={() => setShowModelModal(true)}
               onExpandWaveform={() => setShowWaveformModal(true)}

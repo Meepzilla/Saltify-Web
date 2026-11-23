@@ -543,6 +543,53 @@
   color: var(--text-primary);
 }
 
+.volume-control-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-top: 2px;
+}
+
+.volume-slider {
+  flex: 1;
+  min-width: 72px;
+  height: 6px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.volume-slider.boosted {
+  accent-color: var(--warning);
+}
+
+.volume-slider:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.boost-pill {
+  min-height: 26px;
+  min-width: 52px;
+  padding: 0 8px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-surface-subtle);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 0.74rem;
+  font-weight: 700;
+  transition: background-color 140ms ease, color 140ms ease;
+}
+
+.boost-pill:hover:not(:disabled) {
+  background: var(--bg-surface-hover);
+  color: var(--text-primary);
+}
+
+.boost-pill.boosted {
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+
 /* Transcribe CTA Block */
 .transcribe-cta-block {
   display: flex;

@@ -159,6 +159,7 @@ export interface AppSettings {
   device: ComputeDevice;
   modelSource: ModelSource;
   customModelBaseUrl: string;
+  playbackVolume: number; // Gain multiplier: 0.0 to 4.0 (1.0 = 100%, 4.0 = 400% / +12 dB)
   codeFillerMazes: boolean;
   useOverregularizationTag: boolean;
   includeSaltHeadersOnExport: boolean;
@@ -171,6 +172,7 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   device: 'auto',
   modelSource: 'auto',
   customModelBaseUrl: '',
+  playbackVolume: 1.5,
   codeFillerMazes: true,
   useOverregularizationTag: false,
   includeSaltHeadersOnExport: true,

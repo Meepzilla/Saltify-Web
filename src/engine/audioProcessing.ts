@@ -41,6 +41,93 @@ export function normalizeFloat32Audio(
 }
 
 /**
+ * Smooth soft-knee peak limiter. Transparent below `threshold`, smoothly
+ * compresses peaks asymptotically toward `ceiling` (< 1.0) so loud coughs or
+ * mic bumps never cause harsh digital clipping when boosting quiet child speech.
+ */
+export function softLimitSample(
+  sample: number,
+  threshold = 0.78,
+  ceiling = 0.97
+): number {
+  const abs = Math.abs(sample);
+  if (abs <= threshold) return sample;
+  const headroom = Math.max(0.01, ceiling - threshold);
+  const limited = threshold + headroom * Math.tanh((abs - threshold) / headroom);
+  return sample < 0 ? -limited : limited;
+}
+
+/**
+ * Applies a linear gain multiplier with smooth soft-knee limiting so boosted
+ * audio stays loud and clear without harsh clipping.
+ */
+export function applySoftLimitedGain(
+  samples: Float32Array,
+  gain: number
+): Float32Array {
+  const output = new Float32Array(samples.length);
+  if (gain <= 0) return output;
+  for (let i = 0; i < samples.length; i++) {
+    output[i] = softLimitSample(samples[i] * gain);
+  }
+  return output;
+}
+
+/**
+ * Clinical speech-loudness normalizer using active-frame RMS leveling + soft limiter.
+ * Unlike peak-only normalization (where a single table bump or plosive leaves a
+ * soft-spoken child barely audible), this measures active speech energy across
+ * 50 ms frames, lifts typical speech to ~ -13 dBFS (targetRms = 0.22), and
+ * gently soft-limits transient spikes.
+ */
+export function normalizeSpeechLoudness(
+  samples: Float32Array,
+  sampleRate = 16000,
+  targetRms = 0.22,
+  maxGain = 16
+): Float32Array {
+  if (samples.length === 0) return new Float32Array(0);
+
+  const frameSize = Math.max(1, Math.floor(sampleRate * 0.05)); // 50ms frames
+  const frameRms: number[] = [];
+  let maxFrameRms = 0;
+
+  for (let start = 0; start < samples.length; start += frameSize) {
+    const end = Math.min(samples.length, start + frameSize);
+    let sumSq = 0;
+    for (let i = start; i < end; i++) {
+      const s = samples[i];
+      sumSq += s * s;
+    }
+    const rms = Math.sqrt(sumSq / (end - start));
+    frameRms.push(rms);
+    if (rms > maxFrameRms) maxFrameRms = rms;
+  }
+
+  if (maxFrameRms < 1e-5) {
+    return new Float32Array(samples);
+  }
+
+  // Keep non-silent speech frames (> 12% of loudest frame and above noise floor)
+  const activityFloor = Math.max(1e-4, maxFrameRms * 0.12);
+  const activeFrames = frameRms.filter((r) => r >= activityFloor).sort((a, b) => a - b);
+
+  // Use 65th-percentile active frame RMS so neither silence nor isolated clicks dominate
+  const referenceRms =
+    activeFrames.length > 0
+      ? activeFrames[Math.min(activeFrames.length - 1, Math.floor(activeFrames.length * 0.65))]
+      : maxFrameRms;
+
+  if (referenceRms < 1e-5) {
+    return new Float32Array(samples);
+  }
+
+  const rawGain = targetRms / referenceRms;
+  const clampedGain = Math.max(0.25, Math.min(maxGain, rawGain));
+  return applySoftLimitedGain(samples, clampedGain);
+}
+
+/**
  * Extracts downsampled peak amplitudes (0..1) for smooth high-DPI canvas rendering.
  */
 export function extractWaveformPeaks(
@@ -215,9 +302,9 @@ export async function decodeAudioBlob(blob: Blob): Promise<DecodedAudioResult> {
     }
 
     const monoOriginal = mixToMono(audioBuffer);
-    const waveformPeaks = extractWaveformPeaks(monoOriginal, 280);
     const mono16kRaw = await resampleMono(monoOriginal, audioBuffer.sampleRate, 16000);
-    const mono16k = normalizeFloat32Audio(mono16kRaw, 0.92);
+    const mono16k = normalizeSpeechLoudness(mono16kRaw, 16000);
+    const waveformPeaks = extractWaveformPeaks(mono16k, 280);
     const wavBlob = encodeWavBlob(mono16k, 16000);
 
     return {

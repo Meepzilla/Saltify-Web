@@ -11,11 +11,17 @@ import {
   Sparkles,
   Square,
   Upload,
+  Volume1,
+  Volume2,
+  VolumeX,
   XCircle,
 } from 'lucide-react';
 import { useRef } from 'react';
 import { formatDurationPadded } from '../engine/transcriptFormat';
-import type { AudioPlayerState } from '../hooks/useAudioPlayer';
+import {
+  MAX_PLAYBACK_BOOST,
+  type AudioPlayerState,
+} from '../hooks/useAudioPlayer';
 import {
   WHISPER_MODELS,
   type AudioMetadata,
@@ -279,6 +285,52 @@ export function AudioStudio({
                 {hasAudio ? formatDurationPadded(player.duration) : '--:--'}
               </span>
             </div>
+          </div>
+
+          {/* Output Volume & Loudness Boost (0%–400% / up to +12 dB with soft limiter) */}
+          <div className="volume-control-row" aria-label="Output volume and boost">
+            <button
+              id="audio-mute-btn"
+              type="button"
+              className="btn btn-ghost btn-icon"
+              style={{ width: 28, height: 28, minWidth: 28, minHeight: 28 }}
+              title={player.muted || player.volume === 0 ? 'Unmute audio' : 'Mute audio'}
+              aria-label={player.muted || player.volume === 0 ? 'Unmute audio' : 'Mute audio'}
+              disabled={!hasAudio || isRecording}
+              onClick={player.toggleMute}
+            >
+              {player.muted || player.volume === 0 ? (
+                <VolumeX size={15} />
+              ) : player.volume <= 1 ? (
+                <Volume1 size={15} />
+              ) : (
+                <Volume2 size={15} style={{ color: 'var(--warning)' }} />
+              )}
+            </button>
+
+            <input
+              id="audio-volume-slider"
+              type="range"
+              className={`volume-slider ${!player.muted && player.volume > 1.05 ? 'boosted' : ''}`}
+              min={0}
+              max={MAX_PLAYBACK_BOOST}
+              step={0.1}
+              value={player.muted ? 0 : player.volume}
+              disabled={!hasAudio || isRecording}
+              aria-label="Output volume boost from 0% to 400%"
+              onChange={(e) => player.setVolume(parseFloat(e.target.value))}
+            />
+
+            <button
+              id="audio-boost-pill-btn"
+              type="button"
+              className={`boost-pill ${!player.muted && player.volume > 1.05 ? 'boosted' : ''}`}
+              disabled={!hasAudio || isRecording}
+              onClick={player.cycleBoost}
+              title="Tap to cycle output volume boost (100% / 150% / 200% / 300% / 400% with soft clipping protection)"
+            >
+              {player.muted ? 'Mute' : `${Math.round(player.volume * 100)}%`}
+            </button>
           </div>
         </div>
 
