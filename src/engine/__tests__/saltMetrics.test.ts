@@ -29,5 +29,45 @@ describe('computeSaltMetrics', () => {
     expect(metrics.speaker2.totalUtterances).toBe(1);
     expect(metrics.speaker2.totalWords).toBe(4);
     expect(metrics.speaker2.mluMorphemes).toBe(5);
+    expect(metrics.speaker1.clausalDensity).toBeNull();
+  });
+
+  it('computes clausal density (SALT SI), total clauses, complex %, and SI distribution without inflating words or errors', () => {
+    const transcript = [
+      '[0:00] E Tell me what happen/ed [SI-2].',
+      '[0:04] C He walk/ed home [SI-1].',
+      '[0:09] C [MC] It was a boy [RC] that like/ed dog/s [SI-2].',
+      '[0:15] C She ran because she was scared when it rain/ed [SI-3].',
+      '[0:21] C He *is happy [SI-0].',
+      '[0:25] C Yes [SI-X].',
+      '[0:30] C [MC] The cat jump/ed [AC] when I clap/ed.',
+    ].join('\n');
+
+    const metrics = computeSaltMetrics(transcript, { speaker1: 'C', speaker2: 'E' });
+
+    // Child scored utterances: SI-1 (1), SI-2 (2), SI-3 (3), SI-0 (0), inline [MC]+[AC] (2) -> 5 scored, 8 clauses, 1 excluded (SI-X)
+    expect(metrics.speaker1.clauseScoredUtterances).toBe(5);
+    expect(metrics.speaker1.clauseExcludedUtterances).toBe(1);
+    expect(metrics.speaker1.totalClauses).toBe(8);
+    expect(metrics.speaker1.clausalDensity).toBe(1.6); // 8 / 5
+    expect(metrics.speaker1.complexUtterances).toBe(3); // SI-2, SI-3, inline 2
+    expect(metrics.speaker1.complexUtterancePercent).toBe(60);
+    expect(metrics.speaker1.siDistribution).toEqual({
+      si0: 1,
+      si1: 1,
+      si2: 2,
+      si3Plus: 1,
+      siX: 1,
+    });
+    // Clause tags must never be counted as SALT errors
+    expect(metrics.speaker1.errorCount).toBe(0);
+    // "[0:04] C He walk/ed home [SI-1]." -> 3 words, "[0:09]..." -> 7 words, "[0:15]..." -> 9 words,
+    // "[0:21]..." -> 2 spoken words ("*is" omitted), "[0:25]..." -> 1 word, "[0:30]..." -> 6 words = 28 spoken words
+    expect(metrics.speaker1.totalWords).toBe(28);
+
+    // Examiner: 1 scored utterance with 2 clauses -> CD = 2.00
+    expect(metrics.speaker2.clausalDensity).toBe(2);
+    expect(metrics.speaker2.totalClauses).toBe(2);
+    expect(metrics.speaker2.complexUtterancePercent).toBe(100);
   });
 });

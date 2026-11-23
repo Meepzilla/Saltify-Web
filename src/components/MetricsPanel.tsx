@@ -1,10 +1,12 @@
-import { BarChart3, ChevronDown, ChevronUp } from 'lucide-react';
+import { BarChart3, ChevronDown, ChevronUp, GitBranch } from 'lucide-react';
 import { useState } from 'react';
 import type { SpeakerMetrics, TranscriptMetrics } from '../types/saltify';
 
 interface MetricsPanelProps {
   metrics: TranscriptMetrics;
   alwaysExpanded?: boolean;
+  canMarkClauses?: boolean;
+  onOpenClauseCoder?: () => void;
 }
 
 function SpeakerMetricsCard({
@@ -14,6 +16,9 @@ function SpeakerMetricsCard({
   stats: SpeakerMetrics;
   accentVar?: string;
 }) {
+  const hasClauseData =
+    stats.clauseScoredUtterances > 0 || stats.clauseExcludedUtterances > 0;
+
   return (
     <div className="metrics-speaker-card">
       <div className="metrics-speaker-title">
@@ -65,12 +70,51 @@ function SpeakerMetricsCard({
           </span>
           <span className="metric-cell-lbl">WPM</span>
         </div>
+        <div
+          className="metric-cell"
+          title="Clausal Density (SALT Subordination Index) = Total Clauses ÷ Scored Utterances"
+        >
+          <span
+            className="metric-cell-val"
+            style={{ color: stats.clausalDensity !== null ? 'var(--salt-clause)' : undefined }}
+          >
+            {stats.clausalDensity !== null ? stats.clausalDensity.toFixed(2) : '—'}
+          </span>
+          <span className="metric-cell-lbl">Clausal Density</span>
+        </div>
+        <div className="metric-cell" title="Total Clauses across Scored Utterances">
+          <span className="metric-cell-val">
+            {hasClauseData ? `${stats.totalClauses} (${stats.clauseScoredUtterances})` : '—'}
+          </span>
+          <span className="metric-cell-lbl">Clauses (Utt)</span>
+        </div>
+        <div className="metric-cell" title="Percent of scored utterances containing 2 or more clauses">
+          <span className="metric-cell-val">
+            {stats.clauseScoredUtterances > 0 ? `${stats.complexUtterancePercent}%` : '—'}
+          </span>
+          <span className="metric-cell-lbl">Complex (2+ Cl)</span>
+        </div>
       </div>
+
+      {hasClauseData && (
+        <div className="metrics-si-strip">
+          <span>SI-0: {stats.siDistribution.si0}</span>
+          <span>SI-1: {stats.siDistribution.si1}</span>
+          <span>SI-2: {stats.siDistribution.si2}</span>
+          <span>SI-3+: {stats.siDistribution.si3Plus}</span>
+          {stats.siDistribution.siX > 0 && <span>SI-X: {stats.siDistribution.siX}</span>}
+        </div>
+      )}
     </div>
   );
 }
 
-export function MetricsPanel({ metrics, alwaysExpanded = false }: MetricsPanelProps) {
+export function MetricsPanel({
+  metrics,
+  alwaysExpanded = false,
+  canMarkClauses = false,
+  onOpenClauseCoder,
+}: MetricsPanelProps) {
   const [expanded, setExpanded] = useState(alwaysExpanded);
   const isOpen = alwaysExpanded || expanded;
 
@@ -131,6 +175,26 @@ export function MetricsPanel({ metrics, alwaysExpanded = false }: MetricsPanelPr
               <strong>{primary.typeTokenRatio.toFixed(2)}</strong>
               <span>TTR</span>
             </span>
+            <span
+              className="metric-inline"
+              title="Clausal Density (SALT Subordination Index) = Total Clauses ÷ Scored Utterances"
+            >
+              <strong
+                id="metrics-bar-clausal-density"
+                style={{
+                  color: primary.clausalDensity !== null ? 'var(--salt-clause)' : undefined,
+                }}
+              >
+                {primary.clausalDensity !== null ? primary.clausalDensity.toFixed(2) : '—'}
+              </strong>
+              <span>CD (SI)</span>
+            </span>
+            {primary.clauseScoredUtterances > 0 && (
+              <span className="metric-inline" title="Total scored clauses">
+                <strong id="metrics-bar-total-clauses">{primary.totalClauses}</strong>
+                <span>Clauses</span>
+              </span>
+            )}
             <span className="metric-inline">
               <strong>{primary.mazeWordPercent}%</strong>
               <span>Maze</span>
@@ -142,11 +206,27 @@ export function MetricsPanel({ metrics, alwaysExpanded = false }: MetricsPanelPr
           </div>
         </div>
 
-        {!alwaysExpanded && (
-          <span style={{ color: 'var(--text-muted)', display: 'inline-flex' }}>
-            {isOpen ? <ChevronDown size={16} /> : <ChevronUp size={16} />}
-          </span>
-        )}
+        <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+          {canMarkClauses && onOpenClauseCoder && (
+            <button
+              type="button"
+              className="btn btn-subtle btn-sm"
+              onClick={(e) => {
+                e.stopPropagation();
+                onOpenClauseCoder();
+              }}
+              title="Open SALT Clause & Clausal Density Coder"
+            >
+              <GitBranch size={13} />
+              <span>{primary.clauseScoredUtterances > 0 ? 'Edit Clauses' : 'Mark Clauses'}</span>
+            </button>
+          )}
+          {!alwaysExpanded && (
+            <span style={{ color: 'var(--text-muted)', display: 'inline-flex' }}>
+              {isOpen ? <ChevronDown size={16} /> : <ChevronUp size={16} />}
+            </span>
+          )}
+        </div>
       </div>
 
       {isOpen && (

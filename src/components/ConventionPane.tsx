@@ -4,6 +4,7 @@ import {
   CheckCheck,
   Eye,
   FastForward,
+  GitBranch,
   Lock,
   SpellCheck,
   SplitSquareHorizontal,
@@ -12,6 +13,7 @@ import {
   XCircle,
 } from 'lucide-react';
 import { useMemo, useRef, useState } from 'react';
+import { parseUtteranceClauseCoding } from '../engine/clauseAnalysis';
 import { parseUtteranceLines } from '../engine/transcriptFormat';
 import type { SpeakerAliases } from '../types/saltify';
 
@@ -36,6 +38,8 @@ interface ConventionPaneProps {
   onSkipCorrection: () => void;
   onAutoApplyAllRemaining: () => void;
   onAddMorphemes: () => void;
+  onOpenClauseCoder: () => void;
+  onQuickCycleLineSi: (lineIndex: number) => void;
   onSeekToTime?: (seconds: number) => void;
 }
 
@@ -51,17 +55,25 @@ const SALT_TOUCH_CHIPS = [
   { label: '*', insert: '*', title: 'Omitted word marker (*word)' },
   { label: '( )', insert: '()', title: 'Maze / repetition parentheses' },
   { label: '>', insert: '>', title: 'Abandoned utterance' },
+  { label: '[SI-1]', insert: ' [SI-1]', title: 'Subordination Index: 1 clause' },
+  { label: '[SI-2]', insert: ' [SI-2]', title: 'Subordination Index: 2 clauses' },
+  { label: '[SI-3]', insert: ' [SI-3]', title: 'Subordination Index: 3 clauses' },
+  { label: '[SI-0]', insert: ' [SI-0]', title: 'Subordination Index: 0 clauses' },
+  { label: '[SI-X]', insert: ' [SI-X]', title: 'Excluded from clausal density' },
+  { label: '[MC]', insert: '[MC] ', title: 'Main / independent clause boundary' },
+  { label: '[SC]', insert: '[SC] ', title: 'Subordinate / dependent clause boundary' },
 ] as const;
 
 /**
  * Splits a SALT-coded utterance into highlighted inline spans:
  * - Mazes `( ... )`
+ * - Clause & Subordination Index codes `[SI-0]..[SI-N]`, `[SI-X]`, `[MC]`, `[SC]`, `[RC]`, `[AC]`, `[NC]`, `[CL]`
  * - Error codes `[EW...]`, `[EO...]`, `[EP...]`, `[EU]`, `/*3s`, `*word`
  * - Bound morphemes `walk/ed`, `dog/s`, `I/'m`
  */
 function renderSaltTokens(body: string) {
   const tokenRegex =
-    /(\([^)]*\)|[A-Za-z']*\[[^\]]+\][.,!?;:]*|\*[A-Za-z']+|[A-Za-z']+\/\*[A-Za-z0-9']+|[A-Za-z']+\/(?:s|z|ed|3s|ing|n't|'t|'s|'m|'re|'ll|'d|'ve)\b)/g;
+    /(\([^)]*\)|\[SI-(?:\d+|X)\]|\[(?:MC|SC|RC|AC|NC|CL)\]|[A-Za-z']*\[[^\]]+\][.,!?;:]*|\*[A-Za-z']+|[A-Za-z']+\/\*[A-Za-z0-9']+|[A-Za-z']+\/(?:s|z|ed|3s|ing|n't|'t|'s|'m|'re|'ll|'d|'ve)\b)/gi;
 
   const parts = body.split(tokenRegex);
   return parts.map((part, idx) => {
@@ -69,6 +81,20 @@ function renderSaltTokens(body: string) {
     if (part.startsWith('(') && part.endsWith(')')) {
       return (
         <span key={idx} className="salt-tok-maze">
+          {part}
+        </span>
+      );
+    }
+    if (/^\[SI-X\]$/i.test(part)) {
+      return (
+        <span key={idx} className="salt-tok-clause excluded">
+          {part}
+        </span>
+      );
+    }
+    if (/^\[(?:SI-\d+|MC|SC|RC|AC|NC|CL)\]$/i.test(part)) {
+      return (
+        <span key={idx} className="salt-tok-clause">
           {part}
         </span>
       );
@@ -114,6 +140,8 @@ export function ConventionPane({
   onSkipCorrection,
   onAutoApplyAllRemaining,
   onAddMorphemes,
+  onOpenClauseCoder,
+  onQuickCycleLineSi,
   onSeekToTime,
 }: ConventionPaneProps) {
   const [locked, setLocked] = useState(true);
@@ -212,7 +240,7 @@ export function ConventionPane({
         </div>
       </div>
 
-      {/* Primary SALT Workflow Bar: Grammar Check -> Add Morphemes */}
+      {/* Primary SALT Workflow Bar: Grammar Check -> Add Morphemes -> Mark Clauses */}
       <div className="pane-subtoolbar">
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
           <button
@@ -250,6 +278,22 @@ export function ConventionPane({
             <SplitSquareHorizontal size={14} />
             <span>{morphemesApplied ? 'Re-Apply Morphemes' : 'Add Morphemes'}</span>
           </button>
+
+          <button
+            id="mark-clauses-btn"
+            type="button"
+            className="btn btn-secondary btn-sm"
+            disabled={
+              grammarActive ||
+              disabled ||
+              (!text.trim() && !hasTranscript)
+            }
+            onClick={onOpenClauseCoder}
+            title="Mark SALT clauses ([SI-0]..[SI-4+], [SI-X] & inline [MC]/[SC]/[RC]/[AC]/[NC]) and compute Clausal Density"
+          >
+            <GitBranch size={14} />
+            <span>Mark Clauses</span>
+          </button>
         </div>
 
         <label
@@ -273,9 +317,10 @@ export function ConventionPane({
             <h3>Ready for SALT coding</h3>
             <p>
               Run <strong>Grammar Check</strong> to code child language errors, mazes,
-              and omissions step by step — then click <strong>Add Morphemes</strong> to
-              tag bound inflectional morphemes (<code>/s</code>, <code>/ed</code>,{' '}
-              <code>/ing</code>, <code>/3s</code>, <code>/z</code>).
+              and omissions, click <strong>Add Morphemes</strong> for bound inflectional
+              morphemes (<code>/s</code>, <code>/ed</code>, <code>/ing</code>), and use{' '}
+              <strong>Mark Clauses</strong> to score SALT Subordination Index (
+              <code>[SI-1]</code>, <code>[SI-2]</code>) and Clausal Density.
             </p>
           </div>
         ) : viewMode === 'raw' ? (
@@ -290,31 +335,64 @@ export function ConventionPane({
           />
         ) : (
           <div className="utterance-list">
-            {lines.map((line) => (
-              <div key={line.index} className={`utterance-row ${line.speakerSlot ?? ''}`}>
-                {line.timestampStr && (
+            {lines.map((line) => {
+              const clauseCoding = parseUtteranceClauseCoding(line.body);
+              const siLabel = clauseCoding.isExcluded
+                ? 'SI-X'
+                : clauseCoding.clauseCount !== null
+                ? `SI-${clauseCoding.clauseCount}`
+                : '+SI';
+
+              return (
+                <div key={line.index} className={`utterance-row ${line.speakerSlot ?? ''}`}>
+                  {line.timestampStr && (
+                    <button
+                      type="button"
+                      className="utterance-ts-btn"
+                      onClick={() => {
+                        if (line.timestampSec !== null) {
+                          onSeekToTime?.(line.timestampSec);
+                        }
+                      }}
+                    >
+                      {line.timestampStr}
+                    </button>
+                  )}
+
+                  {line.speaker && (
+                    <span className={`speaker-pill-btn ${line.speakerSlot ?? ''}`}>
+                      {line.speaker}
+                    </span>
+                  )}
+
+                  <span className="utterance-text">{renderSaltTokens(line.body)}</span>
+
                   <button
                     type="button"
-                    className="utterance-ts-btn"
-                    onClick={() => {
-                      if (line.timestampSec !== null) {
-                        onSeekToTime?.(line.timestampSec);
-                      }
-                    }}
+                    className={`utterance-si-pill ${
+                      clauseCoding.isExcluded
+                        ? 'excluded'
+                        : clauseCoding.clauseCount !== null
+                        ? 'scored'
+                        : 'unmarked'
+                    }`}
+                    disabled={disabled || grammarActive}
+                    onClick={() => onQuickCycleLineSi(line.index)}
+                    title={
+                      clauseCoding.isExcluded
+                        ? 'Excluded from clausal density ([SI-X]) — click to cycle'
+                        : clauseCoding.clauseCount !== null
+                        ? `${clauseCoding.clauseCount} ${
+                            clauseCoding.clauseCount === 1 ? 'clause' : 'clauses'
+                          } — click to cycle SI count`
+                        : 'Click to mark clause count ([SI-1], [SI-2], ...)'
+                    }
                   >
-                    {line.timestampStr}
+                    {siLabel}
                   </button>
-                )}
-
-                {line.speaker && (
-                  <span className={`speaker-pill-btn ${line.speakerSlot ?? ''}`}>
-                    {line.speaker}
-                  </span>
-                )}
-
-                <span className="utterance-text">{renderSaltTokens(line.body)}</span>
-              </div>
-            ))}
+                </div>
+              );
+            })}
           </div>
         )}
       </div>

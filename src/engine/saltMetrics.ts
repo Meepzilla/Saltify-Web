@@ -1,14 +1,26 @@
 import type {
+  SiDistribution,
   SpeakerAliases,
   SpeakerMetrics,
   TranscriptMetrics,
   UtteranceLine,
 } from '../types/saltify';
+import { parseUtteranceClauseCoding } from './clauseAnalysis';
 import { parseUtteranceLines } from './transcriptFormat';
 
 const BOUND_MORPHEME_RE = /\/(?:s|z|ed|3s|ing|n't|'t|'s|'m|'re|'ll|'d|'ve)\b/gi;
 const ERROR_CODE_RE = /\[(?:EW|EO|EP|EU|E[A-Z]*)(?::[^\]]+)?\]/gi;
 const OMISSION_RE = /(?:\/\*[a-z0-9']+|\*[a-zA-Z]+|[a-zA-Z]+\*)/g;
+
+function createEmptySiDistribution(): SiDistribution {
+  return {
+    si0: 0,
+    si1: 0,
+    si2: 0,
+    si3Plus: 0,
+    siX: 0,
+  };
+}
 
 function createEmptySpeakerMetrics(speaker: string): SpeakerMetrics {
   return {
@@ -28,6 +40,13 @@ function createEmptySpeakerMetrics(speaker: string): SpeakerMetrics {
     errorCount: 0,
     omissionCount: 0,
     wordsPerMinute: null,
+    totalClauses: 0,
+    clauseScoredUtterances: 0,
+    clauseExcludedUtterances: 0,
+    clausalDensity: null,
+    complexUtterances: 0,
+    complexUtterancePercent: 0,
+    siDistribution: createEmptySiDistribution(),
   };
 }
 
@@ -49,10 +68,38 @@ function analyzeUtteranceSet(
   let mazeWords = 0;
   let errorCount = 0;
   let omissionCount = 0;
+  let totalClauses = 0;
+  let clauseScoredUtterances = 0;
+  let clauseExcludedUtterances = 0;
+  let complexUtterances = 0;
+  const siDistribution = createEmptySiDistribution();
   const vocab = new Set<string>();
 
   for (const u of nonEmpty) {
     let body = u.body.trim();
+
+    // Parse clause / SALT Subordination Index coding before stripping brackets
+    const clauseCoding = parseUtteranceClauseCoding(body);
+    if (clauseCoding.isExcluded) {
+      clauseExcludedUtterances += 1;
+      siDistribution.siX += 1;
+    } else if (clauseCoding.isScored && clauseCoding.clauseCount !== null) {
+      const count = clauseCoding.clauseCount;
+      clauseScoredUtterances += 1;
+      totalClauses += count;
+      if (count >= 2) {
+        complexUtterances += 1;
+      }
+      if (count === 0) {
+        siDistribution.si0 += 1;
+      } else if (count === 1) {
+        siDistribution.si1 += 1;
+      } else if (count === 2) {
+        siDistribution.si2 += 1;
+      } else {
+        siDistribution.si3Plus += 1;
+      }
+    }
 
     // Count errors & omissions on the utterance
     const errorMatches = body.match(ERROR_CODE_RE);
@@ -118,6 +165,14 @@ function analyzeUtteranceSet(
   const totalSpokenWithMazes = totalWords + mazeWords;
   const durationMinutes =
     durationSeconds && durationSeconds > 0 ? durationSeconds / 60 : null;
+  const clausalDensity =
+    clauseScoredUtterances > 0
+      ? Number((totalClauses / clauseScoredUtterances).toFixed(2))
+      : null;
+  const complexUtterancePercent =
+    clauseScoredUtterances > 0
+      ? Number(((complexUtterances / clauseScoredUtterances) * 100).toFixed(1))
+      : 0;
 
   return {
     speaker: label,
@@ -143,6 +198,13 @@ function analyzeUtteranceSet(
       durationMinutes && totalWords > 0
         ? Math.round(totalWords / durationMinutes)
         : null,
+    totalClauses,
+    clauseScoredUtterances,
+    clauseExcludedUtterances,
+    clausalDensity,
+    complexUtterances,
+    complexUtterancePercent,
+    siDistribution,
   };
 }
 

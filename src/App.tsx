@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AudioStudio } from './components/AudioStudio';
+import { ClauseCoderModal } from './components/ClauseCoderModal';
 import { ClientInfoModal } from './components/ClientInfoModal';
 import { ConventionPane } from './components/ConventionPane';
 import { ExportModal } from './components/ExportModal';
@@ -31,6 +32,10 @@ import {
   encodeWavBlob,
 } from './engine/audioProcessing';
 import { CrossPlatformAudioRecorder } from './engine/audioRecorder';
+import {
+  parseUtteranceClauseCoding,
+  setUtteranceSiCode,
+} from './engine/clauseAnalysis';
 import { downloadSessionAudio } from './engine/exporter';
 import { GrammarCheckerSession } from './engine/grammarSession';
 import {
@@ -137,6 +142,7 @@ export default function App() {
   const [showHelpModal, setShowHelpModal] = useState(false);
   const [showLabelSpeakersModal, setShowLabelSpeakersModal] = useState(false);
   const [showAliasesModal, setShowAliasesModal] = useState(false);
+  const [showClauseModal, setShowClauseModal] = useState(false);
   const [showWaveformModal, setShowWaveformModal] = useState(false);
 
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
@@ -851,6 +857,72 @@ export default function App() {
     );
   }, [activeSession, updateActiveSession, pushToast]);
 
+  // SALT Clause Marking & Clausal Density (Subordination Index)
+  const handleApplyClauseText = useCallback(
+    (nextText: string) => {
+      if (!activeSession) return;
+      updateActiveSession((s) => ({
+        ...s,
+        conventionText: nextText,
+      }));
+      setMobileTab('salt');
+      const updated = computeSaltMetrics(
+        nextText,
+        activeSession.speakerAliases,
+        activeSession.audioMeta?.duration ?? null
+      );
+      const primary =
+        updated.speaker1.totalUtterances > 0 ? updated.speaker1 : updated.overall;
+      pushToast(
+        'success',
+        'Clause marks updated',
+        primary.clausalDensity !== null
+          ? `${primary.speaker} Clausal Density: ${primary.clausalDensity.toFixed(2)} (${primary.totalClauses} clauses / ${primary.clauseScoredUtterances} utterances)`
+          : 'Clause codes cleared.'
+      );
+    },
+    [activeSession, updateActiveSession, pushToast]
+  );
+
+  const handleQuickCycleLineSi = useCallback(
+    (lineIndex: number) => {
+      if (!activeSession) return;
+      const sourceText =
+        activeSession.conventionText.trim() || activeSession.transcriptionText.trim();
+      if (!sourceText) return;
+      const rawLines = sourceText.split(/\r?\n/);
+      if (lineIndex < 0 || lineIndex >= rawLines.length) return;
+
+      const parsed = parseUtteranceLines(rawLines[lineIndex], activeSession.speakerAliases)[0];
+      const coding = parseUtteranceClauseCoding(parsed?.body ?? rawLines[lineIndex]);
+
+      // Quick tap cycle: unmarked -> SI-1 -> SI-2 -> SI-3 -> SI-0 -> SI-X -> unmarked
+      let nextSi: number | 'X' | null;
+      if (coding.isExcluded) {
+        nextSi = null;
+      } else if (coding.clauseCount === null) {
+        nextSi = 1;
+      } else if (coding.clauseCount === 1) {
+        nextSi = 2;
+      } else if (coding.clauseCount === 2) {
+        nextSi = 3;
+      } else if (coding.clauseCount === 3) {
+        nextSi = 0;
+      } else if (coding.clauseCount === 0) {
+        nextSi = 'X';
+      } else {
+        nextSi = null;
+      }
+
+      rawLines[lineIndex] = setUtteranceSiCode(rawLines[lineIndex], nextSi);
+      updateActiveSession((s) => ({
+        ...s,
+        conventionText: rawLines.join('\n'),
+      }));
+    },
+    [activeSession, updateActiveSession]
+  );
+
   // Speaker Aliases Update
   const handleSaveAliases = useCallback(
     (nextAliases: SpeakerAliases) => {
@@ -1204,13 +1276,24 @@ export default function App() {
                 onSkipCorrection={handleSkipCorrection}
                 onAutoApplyAllRemaining={handleAutoApplyAllRemaining}
                 onAddMorphemes={handleAddMorphemes}
+                onOpenClauseCoder={() => setShowClauseModal(true)}
+                onQuickCycleLineSi={handleQuickCycleLineSi}
                 onSeekToTime={(sec) => player.seek(sec, player.isPlaying)}
               />
             </div>
           </div>
 
           <div className={mobileTab !== 'metrics' ? 'mobile-hidden' : 'mobile-scroll-slot'}>
-            <MetricsPanel metrics={metrics} alwaysExpanded={mobileTab === 'metrics'} />
+            <MetricsPanel
+              metrics={metrics}
+              alwaysExpanded={mobileTab === 'metrics'}
+              canMarkClauses={
+                !grammarActive &&
+                processing === null &&
+                Boolean(activeSession.conventionText.trim() || activeSession.transcriptionText.trim())
+              }
+              onOpenClauseCoder={() => setShowClauseModal(true)}
+            />
           </div>
         </main>
 
@@ -1302,6 +1385,18 @@ export default function App() {
           aliases={activeSession.speakerAliases}
           onSave={handleSaveAliases}
           onClose={() => setShowAliasesModal(false)}
+        />
+      )}
+
+      {showClauseModal && (
+        <ClauseCoderModal
+          open
+          text={metricsSourceText}
+          aliases={activeSession.speakerAliases}
+          hasAudio={Boolean(activeAudioBlob)}
+          onApplyText={handleApplyClauseText}
+          onSeekToTime={(sec) => player.seek(sec, player.isPlaying)}
+          onClose={() => setShowClauseModal(false)}
         />
       )}
 

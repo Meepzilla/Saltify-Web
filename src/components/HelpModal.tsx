@@ -72,15 +72,18 @@ export function HelpModal({ open, onClose }: HelpModalProps) {
                 <strong>Aliases</strong> to customize labels.
               </li>
               <li>
-                <strong>Grammar Check &amp; Morphemes:</strong> Run{' '}
+                <strong>Grammar Check, Morphemes &amp; Clauses:</strong> Run{' '}
                 <strong>Grammar Check</strong> to review SALT error codes and mazes step by
-                step (with quick touch chips), then click <strong>Add Morphemes</strong> to
-                apply bound inflectional morphemes.
+                step, click <strong>Add Morphemes</strong> for bound inflectional morphemes,
+                and open <strong>Mark Clauses</strong> to score SALT Subordination Index
+                (<code>[SI-0]</code>–<code>[SI-4+]</code>, <code>[SI-X]</code>) or tap inline
+                clause boundaries (<code>[MC]</code>, <code>[SC]</code>, <code>[RC]</code>,{' '}
+                <code>[AC]</code>, <code>[NC]</code>).
               </li>
               <li>
                 <strong>Analyze &amp; Export:</strong> Inspect real-time MLUm, MLUw, TNW,
-                NDW, TTR, and Maze % per speaker, then export directly to{' '}
-                <code>.docx</code>, <code>.slt</code> (SALT Software), <code>.txt</code>,{' '}
+                NDW, TTR, Clausal Density (SI), and Maze % per speaker, then export directly
+                to <code>.docx</code>, <code>.slt</code> (SALT Software), <code>.txt</code>,{' '}
                 <code>.wav</code>, or Print.
               </li>
             </ol>
@@ -93,7 +96,7 @@ export function HelpModal({ open, onClose }: HelpModalProps) {
             <div
               style={{
                 display: 'grid',
-                gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+                gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))',
                 gap: 8,
               }}
             >
@@ -117,6 +120,17 @@ export function HelpModal({ open, onClose }: HelpModalProps) {
                   at[EW] · extraneous word<br />
                   walk/*3s · omitted morpheme<br />
                   *is, *to · omitted word
+                </div>
+              </div>
+              <div className="metrics-speaker-card">
+                <strong>Clauses &amp; Clausal Density (SI)</strong>
+                <div className="mono" style={{ fontSize: '0.79rem', color: 'var(--text-secondary)' }}>
+                  [SI-0] · 0 clauses (no finite verb)<br />
+                  [SI-1] · 1 clause (simple)<br />
+                  [SI-2] · 2 clauses (complex)<br />
+                  [SI-X] · excluded (abandoned/ellip.)<br />
+                  [MC] [SC] [RC] [AC] [NC] · boundaries<br />
+                  CD = Total Clauses ÷ Scored Utt
                 </div>
               </div>
             </div>
