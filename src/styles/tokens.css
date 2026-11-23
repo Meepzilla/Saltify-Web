@@ -1,126 +1,126 @@
-/* Saltify Web — Clinical Design System Tokens
- * Curated HSL palette with Light and Dark themes (neutral slate + clinical cobalt + terracotta).
- */
+/* Saltify Web — Clinical Design System Tokens */
 
 :root {
-  --font-sans: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  --font-mono: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', Menlo, Monaco, Consolas, monospace;
+  /* Typography — Native system fonts for instant offline load and zero third-party calls */
+  --font-sans: 'Segoe UI Variable', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', 'Cascadia Code', Consolas, Menlo, Monaco, monospace;
 
-  /* Light Theme Surfaces */
-  --bg-canvas: hsl(218 28% 97%);
-  --bg-surface: hsl(0 0% 100%);
-  --bg-surface-subtle: hsl(218 24% 95%);
-  --bg-surface-hover: hsl(218 26% 92%);
-  --bg-sidebar: hsl(220 26% 98%);
-  --bg-overlay: hsla(222 36% 10% / 0.48);
+  /* Light Theme — Warm Clinical Alabaster & Deep Slate */
+  --bg-canvas: hsl(216, 22%, 96%);
+  --bg-surface: hsl(0, 0%, 100%);
+  --bg-surface-subtle: hsl(216, 24%, 93%);
+  --bg-surface-hover: hsl(216, 22%, 90%);
+  --bg-elevated: hsl(0, 0%, 100%);
+  --bg-sidebar: hsl(215, 25%, 97%);
 
-  /* Ink & Typography */
-  --ink-primary: hsl(222 36% 14%);
-  --ink-secondary: hsl(220 16% 38%);
-  --ink-muted: hsl(220 12% 52%);
-  --ink-inverse: hsl(0 0% 100%);
+  --text-primary: hsl(219, 36%, 13%);
+  --text-secondary: hsl(217, 18%, 38%);
+  --text-muted: hsl(216, 14%, 52%);
+  --text-inverse: hsl(0, 0%, 100%);
 
-  /* Hairlines & Elevation */
-  --border-subtle: hsl(218 20% 89%);
-  --border-strong: hsl(218 18% 79%);
-  --shadow-sm: 0 1px 2px hsla(222 36% 14% / 0.05);
-  --shadow-md: 0 4px 14px hsla(222 36% 14% / 0.07), 0 1px 3px hsla(222 36% 14% / 0.04);
-  --shadow-lg: 0 16px 40px hsla(222 36% 14% / 0.14), 0 4px 12px hsla(222 36% 14% / 0.08);
+  --border-subtle: hsl(216, 20%, 88%);
+  --border-strong: hsl(216, 18%, 78%);
 
-  /* Brand & Clinical Semantic Accents */
-  --accent-primary: hsl(214 82% 46%);
-  --accent-primary-hover: hsl(214 84% 40%);
-  --accent-primary-soft: hsl(214 90% 95%);
-  --accent-primary-ink: hsl(214 84% 34%);
+  /* Brand Primary — Calm Clinical Teal */
+  --accent: hsl(194, 83%, 30%);
+  --accent-hover: hsl(194, 85%, 24%);
+  --accent-soft: hsl(194, 72%, 93%);
+  --accent-soft-text: hsl(194, 83%, 24%);
 
-  /* Speaker Colors (High Contrast, Color-Vision-Safe Pair) */
-  --speaker1-color: hsl(204 92% 38%);
-  --speaker1-soft: hsl(204 90% 94%);
-  --speaker2-color: hsl(14 78% 46%);
-  --speaker2-soft: hsl(14 90% 94%);
+  /* Semantic Status */
+  --danger: hsl(0, 72%, 51%);
+  --danger-hover: hsl(0, 76%, 43%);
+  --danger-soft: hsl(0, 82%, 95%);
+  --success: hsl(158, 66%, 32%);
+  --success-soft: hsl(156, 62%, 93%);
+  --warning: hsl(34, 88%, 38%);
+  --warning-soft: hsl(40, 96%, 93%);
 
-  /* SALT Code Highlights */
-  --salt-morpheme: hsl(160 72% 30%);
-  --salt-morpheme-bg: hsl(160 65% 93%);
-  --salt-error: hsl(348 76% 44%);
-  --salt-error-bg: hsl(348 85% 95%);
-  --salt-maze: hsl(32 82% 38%);
-  --salt-maze-bg: hsl(36 92% 93%);
+  /* Speaker Identity (matching desktop Saltify Blue/Coral distinction with clinical contrast) */
+  --speaker1: hsl(201, 90%, 38%);
+  --speaker1-soft: hsla(201, 90%, 38%, 0.11);
+  --speaker2: hsl(13, 78%, 48%);
+  --speaker2-soft: hsla(13, 78%, 48%, 0.11);
 
-  /* Status Tones */
-  --status-success: hsl(156 68% 36%);
-  --status-success-soft: hsl(156 64% 93%);
-  --status-warning: hsl(35 90% 44%);
-  --status-warning-soft: hsl(38 96% 93%);
-  --status-danger: hsl(354 78% 48%);
-  --status-danger-hover: hsl(354 80% 42%);
-  --status-danger-soft: hsl(354 88% 95%);
+  /* SALT Code Syntax Highlighting */
+  --salt-morpheme: hsl(172, 74%, 28%);
+  --salt-morpheme-bg: hsla(172, 74%, 28%, 0.10);
+  --salt-error: hsl(28, 86%, 38%);
+  --salt-error-bg: hsla(32, 92%, 48%, 0.14);
+  --salt-maze-text: hsl(216, 16%, 42%);
+  --salt-maze-bg: hsla(216, 20%, 50%, 0.12);
 
   /* Waveform */
-  --wave-unplayed: hsl(218 18% 82%);
-  --wave-played: hsl(214 82% 48%);
-  --wave-cursor: hsl(14 82% 50%);
+  --wave-unplayed: hsl(214, 20%, 78%);
+  --wave-played: hsl(194, 83%, 34%);
+  --wave-cursor: hsl(13, 82%, 52%);
+
+  /* Elevation */
+  --shadow-xs: 0 1px 2px hsla(219, 36%, 12%, 0.05);
+  --shadow-sm: 0 2px 8px hsla(219, 36%, 12%, 0.06), 0 1px 2px hsla(219, 36%, 12%, 0.04);
+  --shadow-md: 0 10px 28px hsla(219, 36%, 12%, 0.10), 0 2px 6px hsla(219, 36%, 12%, 0.05);
+  --shadow-lg: 0 20px 50px hsla(219, 36%, 12%, 0.18);
 
   /* Radii & Spacing */
-  --radius-sm: 6px;
-  --radius-md: 10px;
-  --radius-lg: 14px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
   --radius-pill: 999px;
 
-  --sidebar-width: 276px;
-  --header-height: 58px;
-  --touch-min: 40px;
-
-  color-scheme: light;
+  --sidebar-width: 280px;
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
 }
 
-[data-theme='dark'] {
-  --bg-canvas: hsl(222 24% 10%);
-  --bg-surface: hsl(222 22% 14%);
-  --bg-surface-subtle: hsl(222 20% 18%);
-  --bg-surface-hover: hsl(222 19% 22%);
-  --bg-sidebar: hsl(222 25% 12%);
-  --bg-overlay: hsla(222 40% 4% / 0.68);
+:root[data-theme='dark'] {
+  --bg-canvas: hsl(218, 36%, 9%);
+  --bg-surface: hsl(218, 32%, 13%);
+  --bg-surface-subtle: hsl(218, 28%, 17%);
+  --bg-surface-hover: hsl(218, 26%, 22%);
+  --bg-elevated: hsl(218, 30%, 16%);
+  --bg-sidebar: hsl(218, 36%, 11%);
 
-  --ink-primary: hsl(216 28% 94%);
-  --ink-secondary: hsl(216 16% 74%);
-  --ink-muted: hsl(216 12% 56%);
-  --ink-inverse: hsl(222 26% 10%);
+  --text-primary: hsl(214, 32%, 94%);
+  --text-secondary: hsl(215, 18%, 72%);
+  --text-muted: hsl(215, 14%, 54%);
+  --text-inverse: hsl(219, 36%, 10%);
 
-  --border-subtle: hsl(222 18% 23%);
-  --border-strong: hsl(222 16% 32%);
-  --shadow-sm: 0 1px 2px hsla(0 0% 0% / 0.25);
-  --shadow-md: 0 6px 18px hsla(0 0% 0% / 0.34);
-  --shadow-lg: 0 20px 48px hsla(0 0% 0% / 0.52);
+  --border-subtle: hsl(218, 22%, 22%);
+  --border-strong: hsl(218, 20%, 30%);
 
-  --accent-primary: hsl(212 92% 58%);
-  --accent-primary-hover: hsl(212 92% 65%);
-  --accent-primary-soft: hsla(212 88% 54% / 0.18);
-  --accent-primary-ink: hsl(212 95% 76%);
+  --accent: hsl(193, 76%, 48%);
+  --accent-hover: hsl(193, 82%, 56%);
+  --accent-soft: hsla(193, 76%, 48%, 0.16);
+  --accent-soft-text: hsl(193, 84%, 72%);
 
-  --speaker1-color: hsl(200 94% 64%);
-  --speaker1-soft: hsla(200 94% 58% / 0.16);
-  --speaker2-color: hsl(16 90% 66%);
-  --speaker2-soft: hsla(16 90% 60% / 0.16);
+  --danger: hsl(0, 76%, 60%);
+  --danger-hover: hsl(0, 82%, 66%);
+  --danger-soft: hsla(0, 76%, 56%, 0.18);
+  --success: hsl(156, 62%, 48%);
+  --success-soft: hsla(156, 62%, 46%, 0.16);
+  --warning: hsl(38, 92%, 58%);
+  --warning-soft: hsla(38, 92%, 54%, 0.16);
 
-  --salt-morpheme: hsl(158 68% 62%);
-  --salt-morpheme-bg: hsla(158 68% 45% / 0.18);
-  --salt-error: hsl(352 90% 70%);
-  --salt-error-bg: hsla(352 84% 54% / 0.2);
-  --salt-maze: hsl(38 92% 66%);
-  --salt-maze-bg: hsla(38 86% 52% / 0.18);
+  --speaker1: hsl(199, 92%, 62%);
+  --speaker1-soft: hsla(199, 92%, 62%, 0.16);
+  --speaker2: hsl(15, 88%, 64%);
+  --speaker2-soft: hsla(15, 88%, 64%, 0.16);
 
-  --status-success: hsl(156 64% 52%);
-  --status-success-soft: hsla(156 64% 44% / 0.18);
-  --status-warning: hsl(38 92% 60%);
-  --status-warning-soft: hsla(38 92% 50% / 0.18);
-  --status-danger: hsl(354 84% 62%);
-  --status-danger-hover: hsl(354 84% 68%);
-  --status-danger-soft: hsla(354 84% 54% / 0.2);
+  --salt-morpheme: hsl(170, 72%, 58%);
+  --salt-morpheme-bg: hsla(170, 72%, 58%, 0.14);
+  --salt-error: hsl(38, 95%, 64%);
+  --salt-error-bg: hsla(38, 95%, 64%, 0.16);
+  --salt-maze-text: hsl(215, 20%, 72%);
+  --salt-maze-bg: hsla(215, 24%, 60%, 0.16);
 
-  --wave-unplayed: hsl(220 16% 32%);
-  --wave-played: hsl(212 92% 58%);
-  --wave-cursor: hsl(16 92% 64%);
+  --wave-unplayed: hsl(217, 22%, 34%);
+  --wave-played: hsl(193, 76%, 52%);
+  --wave-cursor: hsl(15, 92%, 64%);
 
-  color-scheme: dark;
+  --shadow-xs: 0 1px 2px hsla(0, 0%, 0%, 0.25);
+  --shadow-sm: 0 2px 10px hsla(0, 0%, 0%, 0.28);
+  --shadow-md: 0 12px 30px hsla(0, 0%, 0%, 0.42);
+  --shadow-lg: 0 24px 60px hsla(0, 0%, 0%, 0.56);
 }

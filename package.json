@@ -2,24 +2,27 @@
   "name": "saltify-web",
   "private": true,
   "version": "1.0.0",
-  "description": "Privacy-focused, 100% on-device Progressive Web App for recording, transcribing, and analyzing child language samples with SALT conventions.",
-  "license": "GPL-3.0-or-later",
   "type": "module",
   "scripts": {
+    "predev": "node scripts/copy-ort-wasm.mjs",
     "dev": "vite",
-    "build": "tsc -b && vite build && node scripts/generate-sw.mjs",
-    "typecheck": "tsc -b --noEmit",
+    "prebuild": "node scripts/copy-ort-wasm.mjs",
+    "build": "tsc -b && vite build",
+    "lint": "oxlint",
+    "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
-    "lint": "oxlint",
-    "preview": "vite preview"
+    "models:download": "node scripts/download-models.mjs",
+    "ort:copy": "node scripts/copy-ort-wasm.mjs"
   },
   "dependencies": {
     "@huggingface/transformers": "^4.3.2",
     "docx": "^9.16.0",
     "lucide-react": "^1.77.0",
     "react": "^19.3.1",
-    "react-dom": "^19.3.1"
+    "react-dom": "^19.3.1",
+    "wink-lemmatizer": "^3.0.4",
+    "wink-pos-tagger": "^2.2.2"
   },
   "devDependencies": {
     "@types/node": "^24.19.2",
@@ -29,6 +32,7 @@
     "oxlint": "^1.90.0",
     "typescript": "~7.0.2",
     "vite": "^8.3.6",
+    "vite-plugin-pwa": "^2.0.0",
     "vitest": "^5.1.1"
   }
 }

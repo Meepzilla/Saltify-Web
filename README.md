@@ -1,83 +1,72 @@
 # Saltify Web
 
-A privacy-focused, **100% on-device Progressive Web App (PWA)** for Speech-Language Pathologists (SLPs), educators, and researchers to record, transcribe, code SALT conventions, and analyze child language samples across **iPad (iPadOS Safari)**, **Android (Chrome)**, and **Windows (Edge/Chrome/Firefox)**.
+**Privacy-focused, 100% on-device Progressive Web App (PWA) for recording, transcribing, coding, and analyzing child language samples with SALT conventions** — built for **Android, Windows, and iPad**, inspired by and maintaining parity with [`oss-slu/SpeechTranscription`](https://github.com/oss-slu/SpeechTranscription).
 
-> Based on [**Saltify (`oss-slu/SpeechTranscription`)**](https://github.com/oss-slu/SpeechTranscription) by Open Source with SLU, ported from a Python desktop app into an offline-capable cross-platform web application under the **GNU General Public License v3.0 (GPLv3)**.
+## Privacy Guarantee
 
----
+Every step of the clinical workflow executes **100% locally in the browser** — no audio recordings, transcripts, or client metadata are ever sent to an external server:
 
-## Why 100% On-Device?
-
-Child speech samples are sensitive clinical and educational records (FERPA / HIPAA contexts). In Saltify Web:
-
-- **Zero audio or transcript uploads**: Audio recording, loudness normalization, Whisper speech-to-text, SALT grammar coding, inflectional morpheme tagging, and `.docx` / `.slt` exports all execute locally inside the browser.
-- **Offline-capable PWA**: Installable directly to the Home Screen on iPads and Android tablets, or as a desktop app on Windows. Once a Whisper speech model is downloaded the first time, it is cached locally in the browser for offline transcription.
-- **Local persistence with quick wipe**: Sessions and audio blobs persist locally in `IndexedDB` across reloads, with a one-click **Clear All Local Data** button for shared school iPads or clinic devices.
+- **Audio Recording & Processing:** Captured via Web Audio / MediaRecorder (adaptive MP4/AAC for iPadOS Safari, WebM/Opus for Android/Windows, with raw PCM WAV fallback), normalized locally, and stored in IndexedDB.
+- **On-Device Speech Recognition:** Powered by OpenAI Whisper (`whisper-tiny.en`, `whisper-base.en`, `whisper-small.en`) via [`@huggingface/transformers`](https://huggingface.co/docs/transformers.js) in a dedicated Web Worker (WebGPU acceleration with automatic universal WASM fallback). Model weights download once and remain cached in browser Cache Storage for **fully offline use**.
+- **SALT Grammar & Bound Morpheme Engine:** Pure TypeScript NLP (`wink-pos-tagger` + `wink-lemmatizer` + pediatric SLP rule engine) with zero Java/LanguageTool/Python server dependencies.
+- **Client-Side Exports:** Generates Microsoft Word (`.docx`), SALT Software (`.slt`), plain text (`.txt`), 16-bit PCM audio (`.wav`), Print sheets, and portable `.saltify.json` session backups entirely on-device.
 
 ---
 
-## Features
+## Features & Parity with `oss-slu/SpeechTranscription`
 
-- **Cross-Platform Audio Capture & Upload**
-  - Live microphone recording with a real-time acoustic input level meter (automatically negotiates MP4/AAC on iPad Safari and WebM/Opus on Android/Windows, exporting clean 16-bit PCM `.wav`).
-  - Upload `.wav`, `.mp3`, `.m4a` (iPad Voice Memos), `.webm`, `.ogg`, or `.aac` recordings.
-  - Touch-friendly interactive waveform with tap/drag scrubbing, Restart, ±5s skip, and SLP playback speed controls (`0.65×`–`1.5×`).
-- **On-Device Whisper Transcription & Automatic Speaker Assignment**
-  - Runs OpenAI Whisper (`Xenova/whisper-tiny.en`, `base.en`, `onnx-community/distil-small.en`, and desktop `Xenova/whisper-small.en`) locally in a dedicated Web Worker via `@huggingface/transformers` (quantized WASM) using silence-aware chunk-by-chunk decoding for iPad memory safety.
-  - Supports mid-run **Cancel**, live download & per-segment transcription progress, Screen Wake Lock on iPads/tablets, and clickable `[m:ss]` timestamps that jump playback directly to the utterance.
-  - Automatically assigns **C** (Child) and **E** (Examiner) speaker labels on-device using acoustic voice analysis (YIN pitch, spectral centroid, MFCC clustering) combined with clinical conversational cues.
-- **Speaker Labeling & Custom Aliases**
-  - Auto-assign speakers on demand, one-tap **Swap C ↔ E**, batch-assign utterances with high-contrast color coding, or customize speaker aliases and re-tag transcripts in-place.
-- **SALT Grammar Check & Inflectional Morphemes**
-  - Step-by-step interactive review highlighting child-speech patterns:
-    - Repeated-word mazes: `(I I) I`
-    - Overgeneralized irregular past tense & plurals: `telled[EW:told]`, `goed[EW:went]`, `foots[EW:feet]`
-    - Omitted 3rd-person singular `-s`: `He walk/*3s to school.`
-    - Subject-verb agreement & omitted auxiliaries: `are[EW:is]`, `was[EW:were]`, `He is* running`
-    - Pronoun case errors & article mismatches: `Me[EP:I]`, `a[EW:an] elephant`
-  - Quick-insert SALT code buttons (`[EW:]`, `[EP:]`, `[EO:]`, `[EW]`, `/*3s`, `[EU]`, `XXX`).
-  - Bound inflectional morpheme tagging (`/s`, `/z`, `/ed`, `/3s`, `/ing`, contractions `/'m`, `/'s`, `can/'t`, `don't`) while preserving existing SALT error codes and timestamps.
-- **Live Clinical SALT Metrics**
-  - Real-time Utterances, **TNW**, **NDW**, **TTR**, **MLU-w**, **MLU-m**, Mazes, and Error Codes with speaker filtering (`All`, `C`, `E`).
-- **Clinical Exports & Sharing**
-  - **SALT Software (`.slt`)** with `$ Child, Examiner`, `+ Name/CA/DOB/DOE/Examiner/Context`, and `- 0:00` headers.
-  - **Word Document (`.docx`)** generated client-side with timestamps stripped.
-  - **PCM WAV Audio (`.wav`)**, **Print / AirPrint / Save PDF**, and native iPad/Android Web Share Sheet.
+| Capability | Desktop Saltify (`oss-slu/SpeechTranscription`) | Saltify Web PWA (Android / Windows / iPad) |
+|---|---|---|
+| **Audio Capture & Upload** | PyAudio / MP3 & WAV upload + loudness normalization | Live mic with VU meter, Pause/Resume, Screen Wake Lock + drag-and-drop WAV/MP3/M4A/MP4/WebM/OGG + peak normalization |
+| **Waveform & Playback** | Matplotlib popup + Play/Pause/±5s/Restart/Scrub | Interactive high-DPI Canvas waveform (inline + expandable modal), ±5s, Restart, Scrubbing, `0.5x–1.5x` speed, click `[M:SS]` to seek |
+| **Speech Transcription** | Local Whisper `small.en` subprocess w/ cancel | Local Whisper Web Worker (`Tiny`/`Base`/`Small .en`) with pause-aware low-RAM chunking (safe for iPadOS), progress streaming & instant cancel |
+| **Speaker Labeling & Aliases** | Bulk Label Speakers modal + `C` / `E` aliases & color coding | Bulk Label Speakers modal + 1-tap speaker badges per utterance + customizable aliases & color coding |
+| **SALT Grammar Check** | LanguageTool (Java) step-by-step review | On-device child-language grammar engine (repetitions/mazes, overregularizations `[EW:]`/`[EO:]`, `/*3s`, pronoun case, copula omissions, `a`/`an`) + step-by-step workbench with touch SALT code chips & batch auto-apply |
+| **Inflectional Morphemes** | NLTK + WordNet (`/s`, `/z`, `/ed`, `/3s`, `/ing`, contractions) | `wink-pos-tagger` + `wink-lemmatizer` passing all ported `SpeechTranscription` unit tests while preserving SALT error codes & timestamps |
+| **Clinical SALT Metrics** | — | Real-time Child vs Examiner **MLUm, MLUw, TNW, NDW, TTR, Bound Morphemes, Mazes %, Error/Omission counts, WPM** |
+| **Session & Client Metadata** | Multi-session tabs + Client Info fields | Persistent IndexedDB multi-session manager (rename, delete, `.saltify.json` import/export) + Client Info modal with live SALT header preview |
+| **Export & Print** | `.docx` Word export + WAV download | `.docx`, native SALT `.slt`, `.txt`, `.wav`, Copy to Clipboard, Print view, and `.saltify.json` backup |
 
 ---
 
-## Installing on iPad, Android & Windows
+## Installing on Android, Windows, and iPad
 
-Host the built `dist/` folder on any HTTPS static host (for example, enable **Settings → Pages → Source: GitHub Actions** in this repository to deploy automatically to GitHub Pages).
+1. **iPad (iPadOS Safari):** Open Saltify Web in Safari → tap **Share** → **Add to Home Screen**. Recommended model: **Whisper Tiny (.en)** or **Whisper Base (.en)** for optimal iPad Safari memory stability.
+2. **Android (Chrome / Edge):** Open Saltify Web → tap **Install Saltify App** in the sidebar (or browser menu → **Install app**).
+3. **Windows (Edge / Chrome):** Click the **Install** icon in the address bar (or **Install Saltify App** in the sidebar). Windows laptops/desktops comfortably run **Whisper Small (.en)** with WebGPU or WASM.
 
-- **iPad / iPhone (Safari)**: Open the HTTPS URL → tap the **Share** button → **Add to Home Screen**.
-- **Android (Chrome)**: Open the HTTPS URL → tap **Install App** in the top bar (or Chrome menu `⋮` → **Install app**).
-- **Windows (Edge / Chrome)**: Open the HTTPS URL → click **Install App** in the top bar or the address bar install icon.
-
-> Note: Microphone recording (`getUserMedia`) and PWA installation require **HTTPS** (or `http://localhost` during local development).
+To prepare for offline clinical sessions, open **AI Models** in the sidebar while connected to Wi-Fi and click **Download** on your preferred Whisper model.
 
 ---
 
-## Local Development
+## Self-Hosting (100% Air-Gapped / Zero External Calls)
+
+Saltify Web includes everything needed to self-host the entire PWA, ONNX Runtime Web WASM (`/ort/`), and Whisper models (`/models/`) on your own Windows PC, Linux server, Raspberry Pi, or clinic LAN with **zero outbound internet traffic** from client devices:
+
+```bash
+# 1. Download Whisper models onto your server (default: tiny + base; add --all for small too)
+npm run models:download
+
+# 2. Launch with Docker Compose + Caddy (or serve dist/ with nginx.conf)
+docker compose up -d --build
+```
+
+See [SELF_HOSTING.md](./SELF_HOSTING.md) for complete setup instructions — including HTTPS options for **iPad, Android, and Windows** (Tailscale HTTPS, Caddy Let's Encrypt, Cloudflare Tunnel, and air-gapped LAN CA).
+
+---
+
+## Development
 
 ```bash
 npm install
-npm run dev
+npm run models:download   # Optional: download self-hosted Whisper models into public/models/
+npm run dev               # Copies self-hosted ORT WASM into public/ort/ and starts Vite dev server
+npm test                  # Run Vitest suite (includes ported SpeechTranscription SALT tests)
+npm run build             # Type-check + build production PWA bundle with Workbox service worker
+npm run preview           # Preview production PWA build locally
+npm run lint              # Run oxlint checks
 ```
 
-### Scripts
+## License & Attribution
 
-| Command | Purpose |
-| --- | --- |
-| `npm run dev` | Start Vite development server |
-| `npm test` | Run Vitest unit tests (including ported upstream SALT test cases) |
-| `npm run typecheck` | Run strict TypeScript typecheck |
-| `npm run lint` | Run `oxlint` static analysis |
-| `npm run build` | Build production static bundle and generate offline Service Worker (`dist/sw.js`) |
-| `npm run preview` | Preview the production build locally |
-
----
-
-## Upstream Attribution & License
-
-This project is derived from [**oss-slu/SpeechTranscription** (Saltify)](https://github.com/oss-slu/SpeechTranscription), created by Open Source with SLU. Its SALT convention rules, test suites, and clinical workflow are adapted for browser execution and released under the **GNU General Public License v3.0** — see [LICENSE.md](./LICENSE.md).
+Inspired by and porting the SALT transcription conventions and test suite from [Saint Louis University Open Source Software — SpeechTranscription (Saltify)](https://github.com/oss-slu/SpeechTranscription) (GNU GPLv3).

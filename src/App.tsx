@@ -1,1063 +1,1350 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  AlertCircle,
-  CheckCircle2,
+  Activity,
+  BarChart3,
   Download,
-  DownloadCloud,
-  Info,
+  FileText,
   Menu,
-  ShieldCheck,
-  Sparkles,
+  Mic,
+  Pause,
+  Play,
+  Share,
+  SpellCheck,
   UserRound,
   X,
 } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { AudioStudio } from './components/AudioStudio';
+import { ClientInfoModal } from './components/ClientInfoModal';
+import { ConventionPane } from './components/ConventionPane';
+import { ExportModal } from './components/ExportModal';
+import { HelpModal } from './components/HelpModal';
+import { MetricsPanel } from './components/MetricsPanel';
+import { ModelManagerModal } from './components/ModelManagerModal';
+import { Sidebar } from './components/Sidebar';
+import { LabelSpeakersModal, SpeakerAliasesModal } from './components/SpeakerModals';
+import { ToastStack } from './components/Toast';
+import { TranscriptionPane } from './components/TranscriptionPane';
+import { WaveformModal } from './components/WaveformCanvas';
 import {
-  createDefaultClientInfo,
-  createDefaultSpeakerAliases,
+  applySoftLimitedGain,
+  decodeAudioBlob,
+  encodeWavBlob,
+} from './engine/audioProcessing';
+import { CrossPlatformAudioRecorder } from './engine/audioRecorder';
+import { downloadSessionAudio } from './engine/exporter';
+import { GrammarCheckerSession } from './engine/grammarSession';
+import {
+  addInflectionalMorphemes,
+  formatCorrectionForConventionBox,
+} from './engine/saltConventions';
+import { computeSaltMetrics } from './engine/saltMetrics';
+import { DEMO_CLIENT_INFO, DEMO_TRANSCRIPT } from './engine/sampleData';
+import { autoAssignSpeakersInTranscript } from './engine/speakerDiarizer';
+import {
+  deleteSessionRecord,
+  loadAllSessions,
+  loadAppSettings,
+  loadAudioBlob,
+  saveAppSettings,
+  saveAudioBlob,
+  saveSessionRecord,
+} from './engine/storage';
+import {
+  formatDurationPadded,
+  parseUtteranceLines,
+  remapSpeakerAliases,
+  swapSpeakersInTranscript,
+} from './engine/transcriptFormat';
+import { useAudioPlayer } from './hooks/useAudioPlayer';
+import { usePwaInstall } from './hooks/usePwaInstall';
+import { useTheme } from './hooks/useTheme';
+import {
+  DEFAULT_SPEAKER_ALIASES,
+  EMPTY_CLIENT_INFO,
+  type AppSettings,
   type ClientInfo,
-  type GrammarSessionState,
   type ProcessingState,
   type SessionRecord,
   type SpeakerAliases,
-  type ThemePreference,
+  type ToastMessage,
   type WhisperModelId,
-} from './types/session';
-import {
-  clearAllLocalData,
-  deleteSessionRecord,
-  loadAllSessions,
-  loadSessionAudio,
-  loadThemePreference,
-  loadWhisperModelPreference,
-  saveSessionAudio,
-  saveSessionRecord,
-  saveThemePreference,
-  saveWhisperModelPreference,
-} from './lib/storage/sessionStore';
-import {
-  decodeAudioBlob,
-  encodeWavFromAudioBuffer,
-  extractWaveformPeaks,
-} from './lib/audio/wavEncoder';
-import { BrowserAudioRecorder } from './lib/audio/recorder';
-import { TranscriptionService } from './lib/transcription/transcriptionService';
-import {
-  addInflectionalMorphemesToTranscript,
-  formatCorrectionForConventionBox,
-} from './lib/salt/conventions';
-import { GrammarChecker } from './lib/salt/grammarEngine';
-import { renameSpeakerAliasesInText } from './lib/salt/speakers';
-import { SAMPLE_TRANSCRIPT } from './lib/salt/sampleTranscript';
-import { Sidebar } from './components/Sidebar';
-import { AudioSection } from './components/AudioSection';
-import { TranscriptionToolbar } from './components/TranscriptionToolbar';
-import { DualTranscriptEditor } from './components/DualTranscriptEditor';
-import { MetricsBar } from './components/MetricsBar';
-import { LabelSpeakersModal } from './components/LabelSpeakersModal';
-import { SpeakerAliasesModal } from './components/SpeakerAliasesModal';
-import { ClientInfoModal } from './components/ClientInfoModal';
-import { ExportMenuModal } from './components/ExportMenuModal';
-import { HelpModal } from './components/HelpModal';
+} from './types/saltify';
+import { isCancelledError, whisperClient } from './workers/whisperClient';
 
-interface BeforeInstallPromptEvent extends Event {
-  prompt: () => Promise<void>;
-  userChoice: Promise<{ outcome: 'accepted' | 'dismissed' }>;
-}
+type MobileTab = 'audio' | 'transcript' | 'salt' | 'metrics';
 
-interface BannerAlert {
-  tone: 'error' | 'info' | 'success';
-  message: string;
-}
-
-const EMPTY_GRAMMAR_STATE: GrammarSessionState = {
-  active: false,
-  sentences: [],
-  currentIndex: 0,
-  totalSentences: 0,
-  currentSuggestion: '',
-  currentOriginal: '',
-  currentReasons: [],
-};
-
-function createNewSession(sessionNumber: number): SessionRecord {
-  const now = new Date();
-  const stamp = now.toLocaleString(undefined, {
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
-  const iso = now.toISOString();
-  const id =
-    typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
-      ? crypto.randomUUID()
-      : `session-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-
+function createFreshSession(number: number): SessionRecord {
+  const now = Date.now();
+  const stamp = new Date(now).toISOString().replace('T', ' ').slice(0, 19);
   return {
-    id,
-    name: `Session ${sessionNumber} · ${stamp}`,
-    createdAt: iso,
-    updatedAt: iso,
-    fileName: '',
-    audioDuration: 0,
-    hasAudio: false,
+    id: `sess_${now}_${Math.random().toString(36).slice(2, 7)}`,
+    name: `Session ${number} - ${stamp}`,
+    createdAt: now,
+    updatedAt: now,
+    clientInfo: { ...EMPTY_CLIENT_INFO, dateOfSample: stamp.slice(0, 10) },
+    speakerAliases: { ...DEFAULT_SPEAKER_ALIASES },
+    audioMeta: null,
+    hasAudioBlob: false,
     transcriptionText: '',
     conventionText: '',
-    transcriptionLocked: true,
-    conventionLocked: true,
     grammarCheckPerformed: false,
-    morphemesAdded: false,
-    speakerAliases: createDefaultSpeakerAliases(),
-    clientInfo: createDefaultClientInfo(),
+    morphemesApplied: false,
+    notes: '',
   };
 }
 
-export function App() {
-  const [sessions, setSessions] = useState<SessionRecord[]>([]);
+export default function App() {
+  const [settings, setSettings] = useState<AppSettings>(() => loadAppSettings());
+  useTheme(settings.theme);
+  const pwa = usePwaInstall();
+
+  const [sessions, setSessions] = useState<SessionRecord[]>(() => [createFreshSession(1)]);
   const [activeSessionId, setActiveSessionId] = useState<string>('');
-  const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [theme, setTheme] = useState<ThemePreference>(() => loadThemePreference());
-  const [whisperModel, setWhisperModel] = useState<WhisperModelId>(() =>
-    loadWhisperModelPreference()
-  );
+  const [hydrated, setHydrated] = useState(false);
 
-  // Audio playback & waveform state for active session
+  // Active session's in-memory audio blob & decoded 16kHz PCM cache
   const [activeAudioBlob, setActiveAudioBlob] = useState<Blob | null>(null);
-  const [audioPeaks, setAudioPeaks] = useState<number[]>([]);
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [currentTime, setCurrentTime] = useState(0);
-  const [duration, setDuration] = useState(0);
-  const [playbackRate, setPlaybackRate] = useState(1);
+  const mono16kCacheRef = useRef<Map<string, Float32Array>>(new Map());
 
-  // Live microphone recording state
+  // Recorder state
+  const recorderRef = useRef<CrossPlatformAudioRecorder | null>(null);
   const [isRecording, setIsRecording] = useState(false);
+  const [isRecordingPaused, setIsRecordingPaused] = useState(false);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
   const [recordingLevel, setRecordingLevel] = useState(0);
 
-  // Processing & step-by-step grammar check state
-  const [processing, setProcessing] = useState<ProcessingState>({
-    kind: null,
-    stage: '',
-    progress: 0,
-    cancellable: false,
-  });
-  const [grammarState, setGrammarState] = useState<GrammarSessionState>(EMPTY_GRAMMAR_STATE);
+  // Processing state (transcription / model download)
+  const [processing, setProcessing] = useState<ProcessingState | null>(null);
 
-  // Modals & Alerts
-  const [activeModal, setActiveModal] = useState<
-    null | 'labelSpeakers' | 'aliases' | 'clientInfo' | 'export' | 'help'
-  >(null);
-  const [alert, setAlert] = useState<BannerAlert | null>(null);
-  const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
+  // Interactive step-by-step Grammar Check session
+  const grammarRunnerRef = useRef<GrammarCheckerSession | null>(null);
+  const [grammarActive, setGrammarActive] = useState(false);
+  const [checkAllSentences, setCheckAllSentences] = useState(false);
+  const [currentOriginalLine, setCurrentOriginalLine] = useState<string | null>(null);
+  const [correctionDraft, setCorrectionDraft] = useState('');
+  const [grammarProgress, setGrammarProgress] = useState({ remaining: 0, total: 0 });
 
-  // Refs for imperative audio/worker engines
-  const audioElRef = useRef<HTMLAudioElement | null>(null);
-  const audioUrlRef = useRef<string | null>(null);
-  const recorderRef = useRef<BrowserAudioRecorder | null>(null);
-  const transcriptionRef = useRef<TranscriptionService | null>(null);
-  const grammarCheckerRef = useRef<GrammarChecker | null>(null);
-  const playbackRateRef = useRef(playbackRate);
+  // Layout & Modals
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
+  const [mobileTab, setMobileTab] = useState<MobileTab>('audio');
+  const [iosBannerDismissed, setIosBannerDismissed] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
 
-  const getTranscriptionService = useCallback(() => {
-    if (!transcriptionRef.current) {
-      transcriptionRef.current = new TranscriptionService();
-    }
-    return transcriptionRef.current;
-  }, []);
+  const [showClientModal, setShowClientModal] = useState(false);
+  const [showExportModal, setShowExportModal] = useState(false);
+  const [showModelModal, setShowModelModal] = useState(false);
+  const [showHelpModal, setShowHelpModal] = useState(false);
+  const [showLabelSpeakersModal, setShowLabelSpeakersModal] = useState(false);
+  const [showAliasesModal, setShowAliasesModal] = useState(false);
+  const [showWaveformModal, setShowWaveformModal] = useState(false);
 
-  const activeSession = useMemo(
-    () => sessions.find((s) => s.id === activeSessionId) ?? sessions[0] ?? null,
-    [sessions, activeSessionId]
-  );
+  const [toasts, setToasts] = useState<ToastMessage[]>([]);
 
-  const notify = useCallback((tone: BannerAlert['tone'], message: string) => {
-    setAlert({ tone, message });
-  }, []);
-
-  // Apply Light / Dark / System theme to document root
-  useEffect(() => {
-    const applyTheme = () => {
-      const resolved =
-        theme === 'system'
-          ? window.matchMedia('(prefers-color-scheme: dark)').matches
-            ? 'dark'
-            : 'light'
-          : theme;
-      document.documentElement.setAttribute('data-theme', resolved);
-    };
-    applyTheme();
-    saveThemePreference(theme);
-
-    if (theme === 'system') {
-      const mql = window.matchMedia('(prefers-color-scheme: dark)');
-      mql.addEventListener('change', applyTheme);
-      return () => mql.removeEventListener('change', applyTheme);
-    }
-    return undefined;
-  }, [theme]);
-
-  // Capture Android/Windows PWA install prompt
-  useEffect(() => {
-    const handler = (e: Event) => {
-      e.preventDefault();
-      setInstallPrompt(e as BeforeInstallPromptEvent);
-    };
-    window.addEventListener('beforeinstallprompt', handler);
-    return () => window.removeEventListener('beforeinstallprompt', handler);
-  }, []);
-
-  // Load persisted sessions from IndexedDB on initial mount
-  useEffect(() => {
-    let cancelled = false;
-    loadAllSessions().then((loaded) => {
-      if (cancelled) return;
-      if (loaded.length > 0) {
-        setSessions(loaded);
-        setActiveSessionId(loaded[loaded.length - 1].id);
-      } else {
-        const first = createNewSession(1);
-        setSessions([first]);
-        setActiveSessionId(first.id);
-        void saveSessionRecord(first);
+  const pushToast = useCallback(
+    (
+      tone: ToastMessage['tone'],
+      title: string,
+      description?: string,
+      retry?: { label?: string; onRetry: () => void }
+    ) => {
+      const id = `toast_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+      setToasts((prev) => {
+        const filtered =
+          tone === 'error'
+            ? prev.slice(-1)
+            : prev.filter((t) => t.tone === 'error').slice(-1);
+        return [
+          ...filtered,
+          {
+            id,
+            tone,
+            title,
+            description,
+            retryLabel: retry?.label,
+            onRetry: retry?.onRetry,
+          },
+        ];
+      });
+      if (tone !== 'error') {
+        setTimeout(() => {
+          setToasts((prev) => prev.filter((t) => t.id !== id));
+        }, 3200);
       }
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  // Helper to update the active session immutably and persist to IndexedDB
-  const updateSession = useCallback(
-    (sessionId: string, updater: (prev: SessionRecord) => SessionRecord) => {
-      setSessions((prevList) =>
-        prevList.map((item) => {
-          if (item.id !== sessionId) return item;
-          const updated: SessionRecord = {
-            ...updater(item),
-            updatedAt: new Date().toISOString(),
-          };
-          void saveSessionRecord(updated);
-          return updated;
-        })
-      );
     },
     []
   );
 
-  // Sync external HTMLAudioElement & IndexedDB audio blob whenever active session changes
+  const dismissToast = useCallback((id: string) => {
+    setToasts((prev) => prev.filter((t) => t.id !== id));
+  }, []);
+
+  // Hydrate persisted sessions from IndexedDB on startup
   useEffect(() => {
     let cancelled = false;
-
-    if (audioElRef.current) {
-      audioElRef.current.pause();
-      audioElRef.current.removeAttribute('src');
-      audioElRef.current.load();
-    }
-    if (audioUrlRef.current) {
-      URL.revokeObjectURL(audioUrlRef.current);
-      audioUrlRef.current = null;
-    }
-    grammarCheckerRef.current = null;
-
-    if (!activeSessionId) {
-      return;
-    }
-
-    loadSessionAudio(activeSessionId).then(async (blob) => {
+    void (async () => {
+      const stored = await loadAllSessions();
       if (cancelled) return;
-      setIsPlaying(false);
-      setCurrentTime(0);
-      setGrammarState(EMPTY_GRAMMAR_STATE);
-
-      if (!blob) {
-        setActiveAudioBlob(null);
-        setAudioPeaks([]);
-        setDuration(0);
-        return;
+      if (stored.length > 0) {
+        setSessions(stored);
+        setActiveSessionId(stored[0].id);
+      } else {
+        const first = createFreshSession(1);
+        setSessions([first]);
+        setActiveSessionId(first.id);
+        await saveSessionRecord(first).catch(() => {});
       }
-
-      setActiveAudioBlob(blob);
-      const url = URL.createObjectURL(blob);
-      audioUrlRef.current = url;
-      if (audioElRef.current) {
-        audioElRef.current.src = url;
-        audioElRef.current.playbackRate = playbackRateRef.current;
-      }
-
-      try {
-        const decoded = await decodeAudioBlob(blob);
-        if (!cancelled) {
-          setDuration(decoded.duration);
-          setAudioPeaks(extractWaveformPeaks(decoded, 180));
-        }
-      } catch {
-        // Fallback: audio element metadata will still report duration
-      }
-    });
-
+      setHydrated(true);
+    })();
     return () => {
       cancelled = true;
     };
-  }, [activeSessionId]);
-
-  // Keep playbackRate synced on audio element without reloading audio
-  useEffect(() => {
-    playbackRateRef.current = playbackRate;
-    if (audioElRef.current) {
-      audioElRef.current.playbackRate = playbackRate;
-    }
-  }, [playbackRate]);
-
-  // Cleanup recorder & worker on unmount
-  useEffect(() => {
-    return () => {
-      recorderRef.current?.cancel();
-      transcriptionRef.current?.cancel();
-      if (audioUrlRef.current) {
-        URL.revokeObjectURL(audioUrlRef.current);
-      }
-    };
   }, []);
 
-  const bindNewAudioBlob = useCallback(
-    async (sessionId: string, wavBlob: Blob, audioDuration: number, peaks: number[], fileName: string) => {
-      if (audioUrlRef.current) {
-        URL.revokeObjectURL(audioUrlRef.current);
-      }
-      const url = URL.createObjectURL(wavBlob);
-      audioUrlRef.current = url;
-
-      if (audioElRef.current) {
-        audioElRef.current.pause();
-        audioElRef.current.src = url;
-        audioElRef.current.playbackRate = playbackRate;
-        audioElRef.current.currentTime = 0;
-      }
-
-      setActiveAudioBlob(wavBlob);
-      setAudioPeaks(peaks);
-      setDuration(audioDuration);
-      setCurrentTime(0);
-      setIsPlaying(false);
-
-      await saveSessionAudio(sessionId, wavBlob);
-      updateSession(sessionId, (s) => ({
-        ...s,
-        fileName,
-        audioDuration,
-        hasAudio: true,
-      }));
-    },
-    [playbackRate, updateSession]
+  const activeSession = useMemo(
+    () => sessions.find((s) => s.id === activeSessionId) ?? sessions[0],
+    [sessions, activeSessionId]
   );
 
-  // ==================== SESSION HANDLERS ====================
-  const handleCreateSession = () => {
-    if (isRecording) {
-      notify('info', 'Stop the active recording before starting a new session.');
-      return;
-    }
-    if (processing.kind) {
-      transcriptionRef.current?.cancel();
-      setProcessing({ kind: null, stage: '', progress: 0, cancellable: false });
-    }
-    const next = createNewSession(sessions.length + 1);
-    setSessions((prev) => [...prev, next]);
-    setActiveSessionId(next.id);
-    void saveSessionRecord(next);
-    setAlert(null);
-  };
+  const activeId = activeSession.id;
+  const activeHasAudio = activeSession.hasAudioBlob;
 
-  const handleRenameSession = (id: string, nextName: string) => {
-    updateSession(id, (s) => ({ ...s, name: nextName }));
-  };
-
-  const handleDeleteSession = (id: string) => {
-    const target = sessions.find((s) => s.id === id);
-    if (!target) return;
-    if (!window.confirm(`Delete "${target.name}" and its local audio recording?`)) {
-      return;
-    }
-    if (id === activeSessionId && processing.kind) {
-      transcriptionRef.current?.cancel();
-      setProcessing({ kind: null, stage: '', progress: 0, cancellable: false });
-    }
-    void deleteSessionRecord(id);
-
-    const remaining = sessions.filter((s) => s.id !== id);
-    if (remaining.length === 0) {
-      const fresh = createNewSession(1);
-      setSessions([fresh]);
-      setActiveSessionId(fresh.id);
-      void saveSessionRecord(fresh);
-    } else {
-      setSessions(remaining);
-      if (id === activeSessionId) {
-        setActiveSessionId(remaining[remaining.length - 1].id);
+  // Load audio Blob from IndexedDB when switching sessions
+  useEffect(() => {
+    if (!hydrated || !activeId) return;
+    let cancelled = false;
+    void (async () => {
+      if (!activeHasAudio) {
+        setActiveAudioBlob(null);
+        return;
       }
-    }
-  };
+      const blob = await loadAudioBlob(activeId);
+      if (!cancelled) {
+        setActiveAudioBlob(blob);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [hydrated, activeId, activeHasAudio]);
 
-  const handleClearAllLocalData = async () => {
-    if (
-      !window.confirm(
-        'Erase ALL sessions, transcripts, client info, and audio recordings stored on this device?'
-      )
-    ) {
-      return;
-    }
-    recorderRef.current?.cancel();
-    transcriptionRef.current?.cancel();
-    setIsRecording(false);
-    setProcessing({ kind: null, stage: '', progress: 0, cancellable: false });
-    await clearAllLocalData();
+  const updateSettings = useCallback((partial: Partial<AppSettings>) => {
+    setSettings((prev) => {
+      const next = { ...prev, ...partial };
+      saveAppSettings(next);
+      return next;
+    });
+  }, []);
 
-    const fresh = createNewSession(1);
-    setSessions([fresh]);
+  const handleVolumeChange = useCallback(
+    (playbackVolume: number) => {
+      updateSettings({ playbackVolume });
+    },
+    [updateSettings]
+  );
+
+  const player = useAudioPlayer(
+    activeAudioBlob,
+    activeSession.audioMeta?.duration ?? 0,
+    settings.playbackVolume,
+    handleVolumeChange,
+    useCallback((msg: string) => pushToast('error', 'Playback Error', msg), [pushToast])
+  );
+
+  const updateActiveSession = useCallback(
+    (updater: (session: SessionRecord) => SessionRecord) => {
+      setSessions((prev) => {
+        const next = prev.map((s) => {
+          if (s.id !== activeId) return s;
+          const updated = { ...updater(s), updatedAt: Date.now() };
+          void saveSessionRecord(updated).catch(() => {});
+          return updated;
+        });
+        return next;
+      });
+    },
+    [activeId]
+  );
+
+  const resetGrammarReview = useCallback(() => {
+    grammarRunnerRef.current = null;
+    setGrammarActive(false);
+    setCurrentOriginalLine(null);
+    setCorrectionDraft('');
+    setGrammarProgress({ remaining: 0, total: 0 });
+  }, []);
+
+  // Session Management
+  const handleNewSession = useCallback(() => {
+    if (isRecording) {
+      recorderRef.current?.cancel();
+      setIsRecording(false);
+      setIsRecordingPaused(false);
+    }
+    if (processing?.kind === 'transcription') {
+      whisperClient.cancel();
+      setProcessing(null);
+    }
+    resetGrammarReview();
+    player.pause();
+
+    const fresh = createFreshSession(sessions.length + 1);
+    setSessions((prev) => [fresh, ...prev]);
     setActiveSessionId(fresh.id);
     setActiveAudioBlob(null);
-    setAudioPeaks([]);
-    setDuration(0);
-    setCurrentTime(0);
-    void saveSessionRecord(fresh);
-    notify('success', 'All local sessions and audio recordings were cleared from this browser.');
-  };
+    void saveSessionRecord(fresh).catch(() => {});
+  }, [isRecording, processing, resetGrammarReview, player, sessions.length]);
 
-  // ==================== AUDIO CAPTURE & PLAYBACK ====================
-  const handleUploadFile = async (file: File) => {
-    if (!activeSession) return;
-    setAlert(null);
-    try {
-      const decoded = await decodeAudioBlob(file);
-      if (decoded.duration <= 0.05) {
-        throw new Error('The selected audio file appears to be empty.');
+  const handleSelectSession = useCallback(
+    (id: string) => {
+      if (id === activeId) return;
+      if (isRecording) {
+        pushToast('warning', 'Recording in progress', 'Stop recording before switching sessions.');
+        return;
       }
-      const wavBlob = encodeWavFromAudioBuffer(decoded, false);
-      const peaks = extractWaveformPeaks(decoded, 180);
-      await bindNewAudioBlob(activeSession.id, wavBlob, decoded.duration, peaks, file.name);
-      notify('success', `Loaded "${file.name}" (${Math.round(decoded.duration)}s). Ready to play or transcribe.`);
+      if (processing?.kind === 'transcription') {
+        whisperClient.cancel();
+        setProcessing(null);
+      }
+      resetGrammarReview();
+      player.pause();
+      setActiveSessionId(id);
+    },
+    [activeId, isRecording, processing, resetGrammarReview, player, pushToast]
+  );
+
+  const handleRenameSession = useCallback((id: string, nextName: string) => {
+    setSessions((prev) =>
+      prev.map((s) => {
+        if (s.id !== id) return s;
+        const updated = { ...s, name: nextName, updatedAt: Date.now() };
+        void saveSessionRecord(updated).catch(() => {});
+        return updated;
+      })
+    );
+  }, []);
+
+  const handleDeleteSession = useCallback(
+    (id: string) => {
+      const target = sessions.find((s) => s.id === id);
+      if (!target) return;
+      if (!window.confirm(`Delete "${target.name}"? This cannot be undone.`)) {
+        return;
+      }
+      if (id === activeId) {
+        if (processing?.kind === 'transcription') {
+          whisperClient.cancel();
+          setProcessing(null);
+        }
+        resetGrammarReview();
+        player.pause();
+      }
+      mono16kCacheRef.current.delete(id);
+      void deleteSessionRecord(id).catch(() => {});
+
+      setSessions((prev) => {
+        const remaining = prev.filter((s) => s.id !== id);
+        if (remaining.length === 0) {
+          const fallback = createFreshSession(1);
+          setActiveSessionId(fallback.id);
+          setActiveAudioBlob(null);
+          void saveSessionRecord(fallback).catch(() => {});
+          return [fallback];
+        }
+        if (id === activeId) {
+          setActiveSessionId(remaining[0].id);
+        }
+        return remaining;
+      });
+    },
+    [sessions, activeId, processing, resetGrammarReview, player]
+  );
+
+  const handleImportSessionJson = useCallback(
+    async (file: File) => {
+      try {
+        const raw = await file.text();
+        const parsed = JSON.parse(raw) as {
+          schema?: string;
+          session?: Partial<SessionRecord>;
+        };
+        const imported = parsed.session;
+        if (!imported || typeof imported.name !== 'string') {
+          throw new Error('File is not a valid Saltify session backup (.saltify.json).');
+        }
+        const now = Date.now();
+        const record: SessionRecord = {
+          ...createFreshSession(sessions.length + 1),
+          ...imported,
+          id: `sess_${now}_${Math.random().toString(36).slice(2, 7)}`,
+          createdAt: imported.createdAt ?? now,
+          updatedAt: now,
+          audioMeta: null,
+          hasAudioBlob: false,
+        };
+        setSessions((prev) => [record, ...prev]);
+        setActiveSessionId(record.id);
+        setActiveAudioBlob(null);
+        await saveSessionRecord(record);
+        pushToast('success', 'Session imported', `Loaded "${record.name}".`);
+      } catch (err) {
+        pushToast(
+          'error',
+          'Import failed',
+          err instanceof Error ? err.message : 'Invalid JSON file.'
+        );
+      }
+    },
+    [sessions.length, pushToast]
+  );
+
+  // Audio Ingest (Upload or Recording stop)
+  const ingestAudioBlob = useCallback(
+    async (rawBlob: Blob, fileName: string) => {
+      player.pause();
+      try {
+        const decoded = await decodeAudioBlob(rawBlob);
+        mono16kCacheRef.current.set(activeId, decoded.mono16k);
+        await saveAudioBlob(activeId, decoded.wavBlob);
+        setActiveAudioBlob(decoded.wavBlob);
+
+        updateActiveSession((s) => ({
+          ...s,
+          hasAudioBlob: true,
+          audioMeta: {
+            fileName,
+            mimeType: 'audio/wav',
+            duration: decoded.duration,
+            sampleRate: 16000,
+            sizeBytes: decoded.wavBlob.size,
+            waveformPeaks: decoded.waveformPeaks,
+          },
+        }));
+
+        pushToast(
+          'success',
+          'Audio ready',
+          `${fileName} (${formatDurationPadded(decoded.duration)}) normalized locally.`
+        );
+      } catch (err) {
+        pushToast(
+          'error',
+          'Audio could not be processed',
+          err instanceof Error ? err.message : 'Try another WAV, MP3, M4A, or WebM file.'
+        );
+      }
+    },
+    [activeId, player, updateActiveSession, pushToast]
+  );
+
+  const handleUploadFile = useCallback(
+    (file: File) => {
+      void ingestAudioBlob(file, file.name);
+    },
+    [ingestAudioBlob]
+  );
+
+  const handleStartRecording = useCallback(async () => {
+    player.pause();
+    const recorder = new CrossPlatformAudioRecorder();
+    recorderRef.current = recorder;
+    try {
+      setRecordingSeconds(0);
+      setRecordingLevel(0);
+      await recorder.start({
+        onLevel: setRecordingLevel,
+        onDuration: setRecordingSeconds,
+      });
+      setIsRecording(true);
+      setIsRecordingPaused(false);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      notify(
+      recorderRef.current = null;
+      pushToast(
         'error',
-        `Could not load audio file: ${msg}. Try a standard WAV, MP3, or M4A recording.`
+        'Microphone Error',
+        err instanceof Error ? err.message : 'Could not start recording.'
       );
     }
-  };
+  }, [player, pushToast]);
 
-  const handleToggleRecord = async () => {
-    if (!activeSession) return;
-    setAlert(null);
-
-    if (!isRecording) {
-      if (audioElRef.current && !audioElRef.current.paused) {
-        audioElRef.current.pause();
-        setIsPlaying(false);
-      }
-      const recorder = new BrowserAudioRecorder();
-      recorderRef.current = recorder;
-      try {
-        setRecordingSeconds(0);
-        setRecordingLevel(0);
-        await recorder.start((level, elapsed) => {
-          setRecordingLevel(level);
-          setRecordingSeconds(elapsed);
-        });
-        setIsRecording(true);
-      } catch (err) {
-        recorderRef.current = null;
-        notify('error', err instanceof Error ? err.message : String(err));
-      }
+  const handleTogglePauseRecording = useCallback(() => {
+    const recorder = recorderRef.current;
+    if (!recorder) return;
+    if (recorder.isPaused) {
+      recorder.resume();
+      setIsRecordingPaused(false);
     } else {
-      setIsRecording(false);
-      setRecordingLevel(0);
-      try {
-        const result = await recorderRef.current!.stop();
-        recorderRef.current = null;
-        const name = activeSession.fileName.trim() || 'Live_Recording.wav';
-        await bindNewAudioBlob(
-          activeSession.id,
-          result.wavBlob,
-          result.duration,
-          result.peaks,
-          name
-        );
-        notify('success', `Recording saved locally (${result.duration.toFixed(1)}s).`);
-      } catch (err) {
-        recorderRef.current = null;
-        notify('error', err instanceof Error ? err.message : String(err));
-      }
+      recorder.pause();
+      setIsRecordingPaused(true);
     }
-  };
+  }, []);
 
-  const handleTogglePlay = async () => {
-    const audio = audioElRef.current;
-    if (!audio || !activeAudioBlob) return;
+  const handleStopRecording = useCallback(async () => {
+    const recorder = recorderRef.current;
+    if (!recorder) return;
+    setIsRecording(false);
+    setIsRecordingPaused(false);
+    recorderRef.current = null;
+
     try {
-      if (audio.paused) {
-        await audio.play();
-        setIsPlaying(true);
-      } else {
-        audio.pause();
-        setIsPlaying(false);
-      }
+      const blob = await recorder.stop();
+      const stamp = new Date().toTimeString().slice(0, 8).replace(/:/g, '-');
+      await ingestAudioBlob(blob, `Recording_${stamp}.wav`);
     } catch (err) {
-      notify('error', `Audio playback failed: ${err instanceof Error ? err.message : String(err)}`);
+      pushToast(
+        'error',
+        'Recording could not be saved',
+        err instanceof Error ? err.message : 'Empty recording.'
+      );
     }
-  };
+  }, [ingestAudioBlob, pushToast]);
 
-  const handleSeek = (seconds: number) => {
-    const audio = audioElRef.current;
-    if (!audio || !activeAudioBlob) return;
-    const clamped = Math.max(0, Math.min(seconds, duration || audio.duration || 0));
-    audio.currentTime = clamped;
-    setCurrentTime(clamped);
-  };
+  const handleDownloadAudio = useCallback(async () => {
+    if (!activeAudioBlob || !activeSession) return;
+    let blobToSave = activeAudioBlob;
+    const gain = player.muted ? 1 : player.volume;
 
-  const handleSeekAndPlay = (seconds: number) => {
-    handleSeek(seconds);
-    const audio = audioElRef.current;
-    if (audio && audio.paused && activeAudioBlob) {
-      audio.play().then(() => setIsPlaying(true)).catch(() => {});
-    }
-  };
-
-  // ==================== ON-DEVICE WHISPER TRANSCRIPTION ====================
-  const handleToggleTranscribe = async () => {
-    if (!activeSession) return;
-
-    if (processing.kind === 'transcription') {
-      transcriptionRef.current?.cancel();
-      setProcessing({ kind: null, stage: '', progress: 0, cancellable: false });
-      notify('info', 'Transcription cancelled.');
-      return;
+    if (gain > 1.05) {
+      try {
+        let mono16k = mono16kCacheRef.current.get(activeId);
+        if (!mono16k) {
+          const decoded = await decodeAudioBlob(activeAudioBlob);
+          mono16k = decoded.mono16k;
+          mono16kCacheRef.current.set(activeId, mono16k);
+        }
+        const boosted = applySoftLimitedGain(mono16k, gain);
+        blobToSave = encodeWavBlob(boosted, 16000);
+      } catch {
+        blobToSave = activeAudioBlob;
+      }
     }
 
-    if (!activeAudioBlob) {
-      notify('error', 'Upload or record an audio file before transcribing.');
-      return;
-    }
+    const saved = downloadSessionAudio(
+      blobToSave,
+      activeSession.audioMeta?.fileName || activeSession.name
+    );
+    pushToast(
+      'success',
+      'WAV Audio Downloaded',
+      gain > 1.05
+        ? `${saved} (exported with ${Math.round(gain * 100)}% loudness boost)`
+        : saved
+    );
+  }, [activeAudioBlob, activeId, activeSession, player.muted, player.volume, pushToast]);
 
-    if (audioElRef.current && !audioElRef.current.paused) {
-      audioElRef.current.pause();
-      setIsPlaying(false);
-    }
+  // On-Device Whisper Transcription
+  const startTranscriptionRef = useRef<() => Promise<void>>(async () => {});
 
-    setAlert(null);
+  const startTranscription = useCallback(async () => {
+    if (!activeAudioBlob || !activeId) return;
+    player.pause();
+    resetGrammarReview();
+
     setProcessing({
       kind: 'transcription',
-      stage: 'Preparing & normalizing audio...',
+      stage: 'Preparing 16 kHz audio',
       progress: 0.03,
-      cancellable: true,
     });
 
-    const targetSessionId = activeSession.id;
-    const targetAliases = activeSession.speakerAliases;
-
     try {
-      const result = await getTranscriptionService().transcribeBlob(
-        activeAudioBlob,
-        whisperModel,
-        targetAliases,
+      let mono16k = mono16kCacheRef.current.get(activeId);
+      if (!mono16k) {
+        const decoded = await decodeAudioBlob(activeAudioBlob);
+        mono16k = decoded.mono16k;
+        mono16kCacheRef.current.set(activeId, mono16k);
+      }
+
+      const result = await whisperClient.transcribe(
+        mono16k,
         {
-          onProgress: (stage, progress) => {
+          modelId: settings.modelId,
+          device: settings.device,
+          modelSource: settings.modelSource,
+          customModelBaseUrl: settings.customModelBaseUrl,
+          aliases: activeSession.speakerAliases,
+        },
+        {
+          onProgress: (stage, progress, detail) => {
             setProcessing({
               kind: 'transcription',
               stage,
               progress,
-              cancellable: true,
+              detail,
             });
+          },
+          onPartial: (partialTranscript) => {
+            if (partialTranscript.trim()) {
+              updateActiveSession((s) => ({
+                ...s,
+                transcriptionText: partialTranscript,
+              }));
+            }
           },
         }
       );
 
-      setProcessing({ kind: null, stage: '', progress: 0, cancellable: false });
+      setProcessing(null);
 
       if (!result.transcript.trim()) {
-        notify(
-          'info',
-          'No speech was detected in this recording. Check the audio volume or try a larger Whisper model.'
+        pushToast(
+          'warning',
+          'No speech detected',
+          'Check that the recording has audible speech and try again.',
+          { label: 'Retry', onRetry: () => void startTranscriptionRef.current() }
         );
         return;
       }
 
-      updateSession(targetSessionId, (s) => ({
+      updateActiveSession((s) => ({
         ...s,
         transcriptionText: result.transcript,
-        transcriptionLocked: true,
       }));
-      const s1 = targetAliases.speaker1 || 'C';
-      const s2 = targetAliases.speaker2 || 'E';
-      notify(
+      setMobileTab('transcript');
+      pushToast(
         'success',
-        result.speakerCount === 2
-          ? `On-device transcription complete with speakers auto-assigned (${s1} / ${s2}). Click any [m:ss] timestamp to jump playback, or open Label Speakers to refine or swap.`
-          : `On-device transcription complete with speaker auto-assigned (${s1}). Click any [m:ss] timestamp to jump playback, or open Label Speakers to refine.`
+        'On-device transcription complete',
+        `Auto-labeled ${result.speakerCount} speaker${result.speakerCount > 1 ? 's' : ''} locally via ${result.backendUsed.toUpperCase()}.`
       );
     } catch (err) {
-      setProcessing({ kind: null, stage: '', progress: 0, cancellable: false });
-      if (err instanceof DOMException && err.name === 'AbortError') {
+      setProcessing(null);
+      if (isCancelledError(err)) {
+        pushToast('info', 'Transcription cancelled', 'Your audio and previous text were preserved.');
         return;
       }
-      notify('error', err instanceof Error ? err.message : String(err));
+      pushToast(
+        'error',
+        'Transcription failed',
+        err instanceof Error ? err.message : 'Unexpected error during Whisper inference.',
+        { label: 'Retry', onRetry: () => void startTranscriptionRef.current() }
+      );
     }
-  };
+  }, [
+    activeAudioBlob,
+    activeId,
+    activeSession.speakerAliases,
+    player,
+    resetGrammarReview,
+    settings.modelId,
+    settings.device,
+    settings.modelSource,
+    settings.customModelBaseUrl,
+    updateActiveSession,
+    pushToast,
+  ]);
 
-  // ==================== SPEAKER ALIASES & LABELS ====================
-  const handleSaveAliases = (nextAliases: SpeakerAliases) => {
-    if (!activeSession) return;
-    const prevAliases = activeSession.speakerAliases;
-    updateSession(activeSession.id, (s) => ({
+  useEffect(() => {
+    startTranscriptionRef.current = startTranscription;
+  }, [startTranscription]);
+
+  const handleToggleTranscribe = useCallback(() => {
+    if (processing?.kind === 'transcription') {
+      whisperClient.cancel();
+      setProcessing(null);
+      return;
+    }
+    void startTranscription();
+  }, [processing, startTranscription]);
+
+  const handlePreloadModel = useCallback(
+    async (modelId: WhisperModelId) => {
+      setProcessing({
+        kind: 'model-download',
+        stage: 'Loading Whisper model for offline use',
+        progress: 0.04,
+      });
+      try {
+        const res = await whisperClient.preloadModel(
+          {
+            modelId,
+            device: settings.device,
+            modelSource: settings.modelSource,
+            customModelBaseUrl: settings.customModelBaseUrl,
+          },
+          (stage, progress, detail) => {
+            setProcessing({ kind: 'model-download', stage, progress, detail });
+          }
+        );
+        setProcessing(null);
+        pushToast(
+          'success',
+          'Whisper model ready offline',
+          `Cached locally using ${res.backendUsed.toUpperCase()}.`
+        );
+      } catch (err) {
+        setProcessing(null);
+        if (!isCancelledError(err)) {
+          pushToast(
+            'error',
+            'Model load failed',
+            err instanceof Error ? err.message : 'Check your server or network connection.'
+          );
+        }
+      }
+    },
+    [settings.device, settings.modelSource, settings.customModelBaseUrl, pushToast]
+  );
+
+  // Load Demo Sample for instant testing without needing a recording first
+  const handleLoadDemoSample = useCallback(() => {
+    resetGrammarReview();
+    updateActiveSession((s) => ({
       ...s,
-      speakerAliases: nextAliases,
-      transcriptionText: renameSpeakerAliasesInText(s.transcriptionText, prevAliases, nextAliases),
-      conventionText: renameSpeakerAliasesInText(s.conventionText, prevAliases, nextAliases),
+      name: 'Demo Child Language Sample (4;8)',
+      clientInfo: { ...DEMO_CLIENT_INFO },
+      speakerAliases: { speaker1: 'C', speaker2: 'E' },
+      transcriptionText: DEMO_TRANSCRIPT,
+      conventionText: '',
+      grammarCheckPerformed: false,
+      morphemesApplied: false,
     }));
-    notify('success', `Updated speaker aliases to "${nextAliases.speaker1}" and "${nextAliases.speaker2}".`);
-  };
+    setMobileTab('transcript');
+    pushToast(
+      'info',
+      'Demo language sample loaded',
+      'Click Grammar Check → Add Morphemes to preview full SALT coding and clinical metrics.'
+    );
+  }, [resetGrammarReview, updateActiveSession, pushToast]);
 
-  // ==================== STEP-BY-STEP SALT GRAMMAR CHECK ====================
+  // Step-by-Step SALT Grammar Check Workflow (Desktop Saltify parity + batch option)
   const advanceGrammarStep = useCallback(
-    (sessionId: string, accumulatedConvention: string) => {
-      const checker = grammarCheckerRef.current;
-      if (!checker) return;
+    (runner: GrammarCheckerSession, baseConventionLines: string[]) => {
+      const step = runner.getNextCorrection();
+      const merged = [...baseConventionLines, ...step.passedLines].filter(Boolean);
+      const nextConventionText = merged.join('\n');
 
-      const step = checker.getNextCorrection();
-      const nextConvention = accumulatedConvention + step.passedThrough;
-
-      updateSession(sessionId, (s) => ({
+      updateActiveSession((s) => ({
         ...s,
-        conventionText: nextConvention.trimEnd(),
+        conventionText: nextConventionText,
         grammarCheckPerformed: step.done ? true : s.grammarCheckPerformed,
+        morphemesApplied: false,
       }));
 
-      if (step.done || step.nextSuggestion === null) {
-        setGrammarState(EMPTY_GRAMMAR_STATE);
-        grammarCheckerRef.current = null;
-        notify(
+      if (step.done || step.nextCorrection === null) {
+        grammarRunnerRef.current = null;
+        setGrammarActive(false);
+        setCurrentOriginalLine(null);
+        setCorrectionDraft('');
+        setGrammarProgress({ remaining: 0, total: runner.getTotalCount() });
+        pushToast(
           'success',
-          'Grammar check complete! Click "Add Morphemes" next to apply SALT bound inflectional morphemes.'
+          'Grammar check complete',
+          'Click "Add Morphemes" to tag bound inflectional morphemes.'
         );
       } else {
-        const total = checker.getTotalCount();
-        const reviewed = total - checker.getRemainingCount();
-        setGrammarState({
-          active: true,
-          sentences: [],
-          currentIndex: reviewed,
-          totalSentences: total,
-          currentSuggestion: step.nextSuggestion,
-          currentOriginal: step.nextOriginal ?? step.nextSuggestion,
-          currentReasons: step.reasons,
+        setGrammarActive(true);
+        setCurrentOriginalLine(step.originalLine);
+        setCorrectionDraft(step.nextCorrection);
+        setGrammarProgress({
+          remaining: runner.getRemainingCount(),
+          total: runner.getTotalCount(),
         });
       }
     },
-    [notify, updateSession]
+    [updateActiveSession, pushToast]
   );
 
-  const handleToggleGrammarCheck = () => {
-    if (!activeSession) return;
-    if (grammarState.active) {
-      setGrammarState(EMPTY_GRAMMAR_STATE);
-      grammarCheckerRef.current = null;
-      notify('info', 'Grammar check paused. You can re-run it anytime.');
+  const handleStartOrCancelGrammarCheck = useCallback(() => {
+    if (grammarActive) {
+      resetGrammarReview();
+      pushToast('info', 'Grammar review stopped');
       return;
     }
+    if (!activeSession?.transcriptionText.trim()) return;
 
-    if (!activeSession.transcriptionText.trim()) {
-      notify('error', 'Transcribe or enter text before running Grammar Check.');
-      return;
-    }
+    const runner = new GrammarCheckerSession(
+      activeSession.transcriptionText,
+      {
+        checkAllSentences,
+        codeFillerMazes: settings.codeFillerMazes,
+        useOverregularizationTag: settings.useOverregularizationTag,
+      },
+      [activeSession.speakerAliases.speaker1, activeSession.speakerAliases.speaker2]
+    );
+    grammarRunnerRef.current = runner;
+    setMobileTab('salt');
+    advanceGrammarStep(runner, []);
+  }, [
+    grammarActive,
+    resetGrammarReview,
+    activeSession,
+    checkAllSentences,
+    settings.codeFillerMazes,
+    settings.useOverregularizationTag,
+    advanceGrammarStep,
+    pushToast,
+  ]);
 
-    const checker = new GrammarChecker();
-    checker.start(activeSession.transcriptionText, false, [
-      activeSession.speakerAliases.speaker1,
-      activeSession.speakerAliases.speaker2,
-    ]);
-    grammarCheckerRef.current = checker;
-    setAlert(null);
+  const handleSubmitCorrection = useCallback(() => {
+    const runner = grammarRunnerRef.current;
+    if (!runner || !activeSession) return;
+    const formatted = formatCorrectionForConventionBox(correctionDraft);
+    const existingLines = activeSession.conventionText
+      ? activeSession.conventionText.split(/\r?\n/).filter(Boolean)
+      : [];
+    const nextLines = formatted ? [...existingLines, formatted] : existingLines;
+    advanceGrammarStep(runner, nextLines);
+  }, [activeSession, correctionDraft, advanceGrammarStep]);
 
-    updateSession(activeSession.id, (s) => ({
+  const handleSkipCorrection = useCallback(() => {
+    const runner = grammarRunnerRef.current;
+    if (!runner || !activeSession) return;
+    const existingLines = activeSession.conventionText
+      ? activeSession.conventionText.split(/\r?\n/).filter(Boolean)
+      : [];
+    const nextLines = currentOriginalLine
+      ? [...existingLines, currentOriginalLine]
+      : existingLines;
+    advanceGrammarStep(runner, nextLines);
+  }, [activeSession, currentOriginalLine, advanceGrammarStep]);
+
+  const handleAutoApplyAllRemaining = useCallback(() => {
+    const runner = grammarRunnerRef.current;
+    if (!runner || !activeSession) return;
+    const existingLines = activeSession.conventionText
+      ? activeSession.conventionText.split(/\r?\n/).filter(Boolean)
+      : [];
+    const currentLine = formatCorrectionForConventionBox(correctionDraft);
+    const rest = runner.applyAllRemaining();
+    const combined = [...existingLines, ...(currentLine ? [currentLine] : []), ...rest].join('\n');
+
+    grammarRunnerRef.current = null;
+    setGrammarActive(false);
+    setCurrentOriginalLine(null);
+    setCorrectionDraft('');
+    setGrammarProgress({ remaining: 0, total: runner.getTotalCount() });
+
+    updateActiveSession((s) => ({
       ...s,
-      conventionText: '',
-      grammarCheckPerformed: false,
-      morphemesAdded: false,
+      conventionText: combined,
+      grammarCheckPerformed: true,
+      morphemesApplied: false,
     }));
+    pushToast(
+      'success',
+      'Applied SALT coding to all utterances',
+      'Review any line or click "Add Morphemes" next.'
+    );
+  }, [activeSession, correctionDraft, updateActiveSession, pushToast]);
 
-    advanceGrammarStep(activeSession.id, '');
-  };
-
-  const handleSubmitGrammarLine = (lineText: string) => {
+  // Bound Inflectional Morphemes (Desktop Saltify parity)
+  const handleAddMorphemes = useCallback(() => {
     if (!activeSession) return;
-    const formatted = formatCorrectionForConventionBox(lineText);
-    const base = activeSession.conventionText.trimEnd();
-    const updatedConvention = base ? `${base}\n${formatted}` : formatted;
-    advanceGrammarStep(activeSession.id, updatedConvention);
-  };
+    const sourceText =
+      activeSession.conventionText.trim() || activeSession.transcriptionText.trim();
+    if (!sourceText) return;
 
-  // ==================== SALT INFLECTIONAL MORPHEMES ====================
-  const handleAddMorphemes = () => {
-    if (!activeSession) return;
-    const hasExistingConvention = Boolean(activeSession.conventionText.trim());
-    const source = hasExistingConvention
-      ? activeSession.conventionText
-      : activeSession.transcriptionText;
-
-    if (!source.trim()) {
-      notify('error', 'No transcript available to tag morphemes.');
-      return;
-    }
-
-    const coded = addInflectionalMorphemesToTranscript(source, [
+    const coded = addInflectionalMorphemes(sourceText, [
       activeSession.speakerAliases.speaker1,
       activeSession.speakerAliases.speaker2,
     ]);
 
-    if (hasExistingConvention && coded.trim() === activeSession.conventionText.trim()) {
-      updateSession(activeSession.id, (s) => ({
-        ...s,
-        conventionLocked: true,
-        morphemesAdded: true,
-      }));
-      notify('info', 'SALT inflectional morphemes are already applied to this transcript.');
-      return;
-    }
-
-    updateSession(activeSession.id, (s) => ({
+    updateActiveSession((s) => ({
       ...s,
       conventionText: coded,
-      conventionLocked: true,
-      morphemesAdded: true,
+      morphemesApplied: true,
     }));
-    notify('success', 'Applied SALT inflectional morphemes (/s, /z, /ed, /3s, /ing, contractions).');
-  };
-
-  const handleLoadSample = () => {
-    if (!activeSession) return;
-    updateSession(activeSession.id, (s) => ({
-      ...s,
-      name: s.name.startsWith('Session') ? 'Sample Child Narrative' : s.name,
-      fileName: s.fileName || 'Sample_Story_Retell',
-      transcriptionText: SAMPLE_TRANSCRIPT,
-      conventionText: '',
-      transcriptionLocked: true,
-      grammarCheckPerformed: false,
-      morphemesAdded: false,
-    }));
-    notify(
-      'info',
-      'Loaded a sample child-examiner narrative. Try clicking "Grammar Check" and then "Add Morphemes"!'
+    setMobileTab('salt');
+    pushToast(
+      'success',
+      'Inflectional morphemes coded',
+      'Applied SALT /s, /z, /ed, /3s, /ing, and contraction conventions.'
     );
-  };
+  }, [activeSession, updateActiveSession, pushToast]);
 
-  const handleInstallPwa = async () => {
-    if (!installPrompt) return;
-    await installPrompt.prompt();
-    const choice = await installPrompt.userChoice;
-    if (choice.outcome === 'accepted') {
-      setInstallPrompt(null);
-      notify('success', 'Saltify Web has been installed on your device!');
+  // Speaker Aliases Update
+  const handleSaveAliases = useCallback(
+    (nextAliases: SpeakerAliases) => {
+      if (!activeSession) return;
+      const prev = activeSession.speakerAliases;
+      updateActiveSession((s) => ({
+        ...s,
+        speakerAliases: nextAliases,
+        transcriptionText: remapSpeakerAliases(s.transcriptionText, prev, nextAliases),
+        conventionText: remapSpeakerAliases(s.conventionText, prev, nextAliases),
+      }));
+      pushToast(
+        'success',
+        'Speaker aliases updated',
+        `Speaker 1 → ${nextAliases.speaker1}, Speaker 2 → ${nextAliases.speaker2}`
+      );
+    },
+    [activeSession, updateActiveSession, pushToast]
+  );
+
+  const handleAutoAssignSpeakers = useCallback(async () => {
+    if (!activeSession?.transcriptionText.trim()) return;
+    let audio16k = mono16kCacheRef.current.get(activeId) ?? null;
+    if (!audio16k && activeAudioBlob) {
+      try {
+        const decoded = await decodeAudioBlob(activeAudioBlob);
+        audio16k = decoded.mono16k;
+        mono16kCacheRef.current.set(activeId, audio16k);
+      } catch {
+        audio16k = null;
+      }
     }
-  };
+    const result = autoAssignSpeakersInTranscript(
+      activeSession.transcriptionText,
+      activeSession.speakerAliases,
+      audio16k,
+      16000
+    );
+    updateActiveSession((s) => ({
+      ...s,
+      transcriptionText: result.transcript,
+    }));
+    pushToast(
+      'success',
+      'Speakers auto-assigned',
+      `Detected ${result.speakerCount} speaker${result.speakerCount > 1 ? 's' : ''} using local ${result.method} analysis.`
+    );
+  }, [activeSession, activeId, activeAudioBlob, updateActiveSession, pushToast]);
 
-  const metricsSourceText =
-    activeSession && activeSession.conventionText.trim()
-      ? activeSession.conventionText
-      : activeSession?.transcriptionText ?? '';
-  const metricsSourceLabel =
-    activeSession && activeSession.conventionText.trim() ? 'Conventions' : 'Transcript';
+  const handleSwapSpeakers = useCallback(() => {
+    if (!activeSession) return;
+    const aliases = activeSession.speakerAliases;
+    updateActiveSession((s) => ({
+      ...s,
+      transcriptionText: swapSpeakersInTranscript(s.transcriptionText, aliases),
+      conventionText: swapSpeakersInTranscript(s.conventionText, aliases),
+    }));
+    pushToast(
+      'info',
+      'Swapped speakers',
+      `Swapped ${aliases.speaker1} ↔ ${aliases.speaker2} labels across this session.`
+    );
+  }, [activeSession, updateActiveSession, pushToast]);
 
-  const exportText =
-    activeSession && activeSession.conventionText.trim()
-      ? activeSession.conventionText
-      : activeSession?.transcriptionText ?? '';
-  const exportSourceLabel =
-    activeSession && activeSession.conventionText.trim()
-      ? 'SALT Convention Box'
-      : 'Transcription Box';
+  // Derived utterance timestamps for Waveform markers & live SALT metrics
+  const activeTranscript = activeSession.transcriptionText;
+  const activeConventions = activeSession.conventionText;
+  const activeAliases = activeSession.speakerAliases;
+  const activeDuration = activeSession.audioMeta?.duration ?? null;
+  const activeClientInfo = activeSession.clientInfo;
+
+  const utteranceTimestamps = useMemo(() => {
+    if (!activeTranscript) return [];
+    return parseUtteranceLines(activeTranscript, activeAliases)
+      .map((u) => u.timestampSec)
+      .filter((sec): sec is number => sec !== null);
+  }, [activeTranscript, activeAliases]);
+
+  const metricsSourceText = activeConventions.trim() || activeTranscript;
+
+  const metrics = useMemo(
+    () => computeSaltMetrics(metricsSourceText, activeAliases, activeDuration),
+    [metricsSourceText, activeAliases, activeDuration]
+  );
+
+  const clientChipSummary = useMemo(() => {
+    const parts = [
+      activeClientInfo.name,
+      activeClientInfo.age ? `CA ${activeClientInfo.age}` : '',
+      activeClientInfo.samplingContext,
+    ].filter(Boolean);
+    return parts.length > 0 ? parts.join(' · ') : 'Add Client Info';
+  }, [activeClientInfo]);
+
+  if (!activeSession) return null;
 
   return (
-    <div className="app-shell">
-      {/* Hidden native audio element for rock-solid cross-platform playback on iPad, Android & Windows */}
-      <audio
-        ref={audioElRef}
-        preload="metadata"
-        onTimeUpdate={(e) => setCurrentTime(e.currentTarget.currentTime)}
-        onLoadedMetadata={(e) => {
-          if (Number.isFinite(e.currentTarget.duration) && e.currentTarget.duration > 0) {
-            setDuration(e.currentTarget.duration);
-          }
-        }}
-        onEnded={() => setIsPlaying(false)}
-        onPause={() => setIsPlaying(false)}
-        onPlay={() => setIsPlaying(true)}
+    <div
+      className={`app-shell ${sidebarCollapsed ? 'sidebar-collapsed' : ''} ${
+        mobileDrawerOpen ? 'mobile-drawer-open' : ''
+      }`}
+      onDragOver={(e) => {
+        e.preventDefault();
+        setDragOver(true);
+      }}
+      onDragLeave={(e) => {
+        if (e.currentTarget === e.target) setDragOver(false);
+      }}
+      onDrop={(e) => {
+        e.preventDefault();
+        setDragOver(false);
+        const file = e.dataTransfer.files?.[0];
+        if (file && (file.type.startsWith('audio/') || /\.(wav|mp3|m4a|mp4|webm|ogg|flac)$/i.test(file.name))) {
+          handleUploadFile(file);
+        }
+      }}
+    >
+      <div
+        className="sidebar-backdrop"
+        onClick={() => setMobileDrawerOpen(false)}
       />
 
       <Sidebar
         sessions={sessions}
-        activeSessionId={activeSession?.id ?? ''}
-        isOpen={sidebarOpen}
-        theme={theme}
-        onClose={() => setSidebarOpen(false)}
-        onSelectSession={setActiveSessionId}
-        onCreateSession={handleCreateSession}
+        activeSessionId={activeSession.id}
+        theme={settings.theme}
+        isOnline={pwa.isOnline}
+        canPromptInstall={pwa.canPromptInstall}
+        onSelectSession={handleSelectSession}
+        onNewSession={handleNewSession}
         onRenameSession={handleRenameSession}
         onDeleteSession={handleDeleteSession}
-        onChangeTheme={setTheme}
-        onOpenClientInfo={() => setActiveModal('clientInfo')}
-        onOpenHelp={() => setActiveModal('help')}
-        onClearAllData={handleClearAllLocalData}
+        onImportSessionJson={(file) => void handleImportSessionJson(file)}
+        onChangeTheme={(theme) => updateSettings({ theme })}
+        onOpenModels={() => setShowModelModal(true)}
+        onOpenHelp={() => setShowHelpModal(true)}
+        onPromptInstall={() => void pwa.promptInstall()}
+        onCloseMobileDrawer={() => {
+          setMobileDrawerOpen(false);
+          if (window.innerWidth > 1040) {
+            setSidebarCollapsed(true);
+          }
+        }}
       />
 
-      <main className="workspace">
-        <header className="topbar">
+      <div className="workspace">
+        {/* Top Clinical Header Bar */}
+        <header className="topbar no-print">
           <div className="topbar-left">
             <button
-              id="btn-toggle-sidebar"
+              id="toggle-sidebar-btn"
               type="button"
-              className="icon-btn menu-toggle-btn"
-              onClick={() => setSidebarOpen(true)}
-              aria-label="Open sessions menu"
+              className="btn btn-ghost btn-icon"
+              aria-label="Toggle sessions sidebar"
+              onClick={() => {
+                if (window.innerWidth <= 1040) {
+                  setMobileDrawerOpen((v) => !v);
+                } else {
+                  setSidebarCollapsed((v) => !v);
+                }
+              }}
             >
-              <Menu size={20} />
+              <Menu size={19} />
             </button>
-            <div className="topbar-title-group">
-              <h1 className="workspace-title">{activeSession?.name ?? 'Saltify Web'}</h1>
-            </div>
-            <span className="privacy-pill" title="Audio and transcripts stay 100% inside your device">
-              <ShieldCheck size={13} aria-hidden="true" />
-              On-Device · Offline Ready
-            </span>
+
+            <h2 className="topbar-session-title" title={activeSession.name}>
+              {activeSession.name}
+            </h2>
+
+            <button
+              id="client-info-btn"
+              type="button"
+              className="topbar-client-chip"
+              onClick={() => setShowClientModal(true)}
+              title="Edit Client Info and SALT Header fields"
+            >
+              <UserRound size={14} />
+              <span>{clientChipSummary}</span>
+            </button>
           </div>
 
           <div className="topbar-right">
-            {installPrompt && (
-              <button
-                id="btn-install-pwa"
-                type="button"
-                className="btn btn-sm"
-                onClick={handleInstallPwa}
-              >
-                <DownloadCloud size={14} aria-hidden="true" />
-                Install App
-              </button>
-            )}
-
-            {activeSession && !activeSession.transcriptionText.trim() && (
-              <button
-                id="btn-topbar-sample"
-                type="button"
-                className="btn btn-sm"
-                onClick={handleLoadSample}
-                title="Load a sample child language transcript to explore SALT coding"
-              >
-                <Sparkles size={14} aria-hidden="true" />
-                Sample
-              </button>
-            )}
-
             <button
-              id="btn-topbar-client-info"
               type="button"
-              className="btn btn-sm"
-              onClick={() => setActiveModal('clientInfo')}
-              title="Edit Client & Sample metadata for .slt and .docx headers"
+              className="btn btn-ghost btn-icon"
+              title="Client & Sample Info"
+              aria-label="Edit Client Info"
+              onClick={() => setShowClientModal(true)}
             >
-              <UserRound size={14} aria-hidden="true" />
-              Client
+              <UserRound size={17} />
             </button>
 
             <button
-              id="btn-topbar-export"
+              id="open-export-btn"
               type="button"
-              className="btn btn-sm btn-primary"
-              disabled={!activeSession || (!exportText.trim() && !activeAudioBlob)}
-              onClick={() => setActiveModal('export')}
+              className="btn btn-secondary btn-sm"
+              onClick={() => setShowExportModal(true)}
             >
-              <Download size={14} aria-hidden="true" />
-              Export
+              <Download size={15} />
+              <span>Export</span>
             </button>
           </div>
         </header>
 
-        <div className="workspace-scroll">
-          {alert && (
-            <div className={`alert-banner is-${alert.tone}`} role="status" aria-live="polite">
-              <div className="alert-left">
-                {alert.tone === 'error' && <AlertCircle size={16} aria-hidden="true" />}
-                {alert.tone === 'success' && <CheckCircle2 size={16} aria-hidden="true" />}
-                {alert.tone === 'info' && <Info size={16} aria-hidden="true" />}
-                <span>{alert.message}</span>
-              </div>
+        {/* iPadOS Safari Install Helper Banner */}
+        {pwa.isIosOrIpad && !pwa.isStandalone && !iosBannerDismissed && (
+          <div className="install-banner no-print">
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
+              <Share size={15} />
+              <span>
+                Install Saltify on your iPad: tap Safari&apos;s <strong>Share</strong>{' '}
+                button → <strong>Add to Home Screen</strong> for full-screen offline use.
+              </span>
+            </span>
+            <div className="install-banner-actions">
               <button
                 type="button"
-                className="icon-btn icon-btn-sm"
-                onClick={() => setAlert(null)}
-                aria-label="Dismiss message"
+                className="btn btn-ghost btn-icon"
+                style={{ width: 28, height: 28, minWidth: 28, minHeight: 28 }}
+                aria-label="Dismiss iPad install tip"
+                onClick={() => setIosBannerDismissed(true)}
               >
                 <X size={14} />
               </button>
             </div>
-          )}
+          </div>
+        )}
 
-          {activeSession && (
-            <>
-              <AudioSection
-                fileName={activeSession.fileName}
-                hasAudio={Boolean(activeAudioBlob)}
-                isRecording={isRecording}
-                recordingSeconds={recordingSeconds}
-                recordingLevel={recordingLevel}
-                peaks={audioPeaks}
-                currentTime={currentTime}
-                duration={duration}
-                isPlaying={isPlaying}
-                playbackRate={playbackRate}
-                isProcessing={processing.kind !== null}
-                onChangeFileName={(name) =>
-                  updateSession(activeSession.id, (s) => ({ ...s, fileName: name }))
-                }
-                onUploadFile={handleUploadFile}
-                onToggleRecord={handleToggleRecord}
-                onTogglePlay={handleTogglePlay}
-                onSeek={handleSeek}
-                onRestart={() => handleSeek(0)}
-                onStep={(delta) => handleSeek(currentTime + delta)}
-                onChangeRate={setPlaybackRate}
-              />
-
-              <TranscriptionToolbar
-                hasAudio={Boolean(activeAudioBlob)}
-                hasTranscript={Boolean(activeSession.transcriptionText.trim())}
-                hasConventions={Boolean(activeSession.conventionText.trim())}
-                isRecording={isRecording}
-                grammarActive={grammarState.active}
-                processing={processing}
-                whisperModel={whisperModel}
-                onChangeWhisperModel={(model) => {
-                  setWhisperModel(model);
-                  saveWhisperModelPreference(model);
+        {/* Mobile Sticky Mini Audio Bar when viewing Transcript or SALT on Phones */}
+        {activeAudioBlob && mobileTab !== 'audio' && (
+          <div className="mobile-mini-player no-print">
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+              <button
+                type="button"
+                className="transport-play-btn"
+                style={{ width: 34, height: 34 }}
+                onClick={() => void player.togglePlayPause()}
+                aria-label={player.isPlaying ? 'Pause' : 'Play'}
+              >
+                {player.isPlaying ? <Pause size={15} /> : <Play size={15} />}
+              </button>
+              <span
+                style={{
+                  fontSize: '0.8rem',
+                  fontWeight: 600,
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
                 }}
-                onToggleTranscribe={handleToggleTranscribe}
-                onOpenLabelSpeakers={() => setActiveModal('labelSpeakers')}
-                onOpenAliases={() => setActiveModal('aliases')}
-                onToggleGrammarCheck={handleToggleGrammarCheck}
-                onAddMorphemes={handleAddMorphemes}
-              />
+              >
+                {activeSession.audioMeta?.fileName || 'Recording'}
+              </span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+              <button
+                type="button"
+                className={`boost-pill ${!player.muted && player.volume > 1.05 ? 'boosted' : ''}`}
+                onClick={player.cycleBoost}
+                title="Cycle output volume boost"
+              >
+                {player.muted ? 'Mute' : `${Math.round(player.volume * 100)}%`}
+              </button>
+              <span className="transport-time">
+                {formatDurationPadded(player.currentTime)} /{' '}
+                {formatDurationPadded(player.duration)}
+              </span>
+            </div>
+          </div>
+        )}
 
-              <DualTranscriptEditor
-                transcriptionText={activeSession.transcriptionText}
-                conventionText={activeSession.conventionText}
-                transcriptionLocked={activeSession.transcriptionLocked}
-                conventionLocked={activeSession.conventionLocked}
+        {/* Main Workspace Body */}
+        <main className="workspace-body">
+          <div className={mobileTab !== 'audio' ? 'mobile-hidden' : 'mobile-scroll-slot'}>
+            <AudioStudio
+              audioMeta={activeSession.audioMeta}
+              hasAudio={Boolean(activeAudioBlob)}
+              player={player}
+              isRecording={isRecording}
+              isRecordingPaused={isRecordingPaused}
+              recordingSeconds={recordingSeconds}
+              recordingLevel={recordingLevel}
+              processing={processing}
+              modelId={settings.modelId}
+              utteranceTimestamps={utteranceTimestamps}
+              onFileNameChange={(fileName) =>
+                updateActiveSession((s) =>
+                  s.audioMeta ? { ...s, audioMeta: { ...s.audioMeta, fileName } } : s
+                )
+              }
+              onUploadFile={handleUploadFile}
+              onStartRecording={() => void handleStartRecording()}
+              onTogglePauseRecording={handleTogglePauseRecording}
+              onStopRecording={() => void handleStopRecording()}
+              onDownloadAudio={() => void handleDownloadAudio()}
+              onToggleTranscribe={handleToggleTranscribe}
+              onOpenModelManager={() => setShowModelModal(true)}
+              onExpandWaveform={() => setShowWaveformModal(true)}
+              onLoadDemoSample={handleLoadDemoSample}
+            />
+          </div>
+
+          <div
+            className={`editor-panes ${
+              mobileTab === 'audio' || mobileTab === 'metrics' ? 'mobile-hidden' : ''
+            }`}
+          >
+            <div
+              className={mobileTab !== 'transcript' ? 'mobile-hidden' : ''}
+              style={{ display: 'flex', minHeight: 0 }}
+            >
+              <TranscriptionPane
+                text={activeSession.transcriptionText}
+                aliases={activeSession.speakerAliases}
                 hasAudio={Boolean(activeAudioBlob)}
-                aliases={activeSession.speakerAliases}
-                grammarState={grammarState}
-                onChangeTranscription={(value) =>
-                  updateSession(activeSession.id, (s) => ({ ...s, transcriptionText: value }))
+                currentTime={player.currentTime}
+                disabled={processing !== null}
+                onChangeText={(transcriptionText) =>
+                  updateActiveSession((s) => ({ ...s, transcriptionText }))
                 }
-                onChangeConvention={(value) =>
-                  updateSession(activeSession.id, (s) => ({
-                    ...s,
-                    conventionText: value,
-                    morphemesAdded: false,
-                  }))
-                }
-                onToggleTranscriptionLock={() =>
-                  updateSession(activeSession.id, (s) => ({
-                    ...s,
-                    transcriptionLocked: !s.transcriptionLocked,
-                  }))
-                }
-                onToggleConventionLock={() =>
-                  updateSession(activeSession.id, (s) => ({
-                    ...s,
-                    conventionLocked: !s.conventionLocked,
-                  }))
-                }
-                onClearTranscription={() =>
-                  updateSession(activeSession.id, (s) => ({ ...s, transcriptionText: '' }))
-                }
-                onClearConvention={() =>
-                  updateSession(activeSession.id, (s) => ({
-                    ...s,
-                    conventionText: '',
-                    grammarCheckPerformed: false,
-                    morphemesAdded: false,
-                  }))
-                }
-                onSeekToTimestamp={handleSeekAndPlay}
-                onLoadSample={handleLoadSample}
-                onChangeGrammarDraft={(value) =>
-                  setGrammarState((prev) => ({ ...prev, currentSuggestion: value }))
-                }
-                onSubmitGrammarCorrection={() =>
-                  handleSubmitGrammarLine(grammarState.currentSuggestion)
-                }
-                onKeepOriginalSentence={() =>
-                  handleSubmitGrammarLine(grammarState.currentOriginal)
-                }
+                onSeekToTime={(sec) => player.seek(sec, player.isPlaying)}
+                onOpenLabelSpeakers={() => setShowLabelSpeakersModal(true)}
+                onOpenAliases={() => setShowAliasesModal(true)}
+                onLoadDemoSample={handleLoadDemoSample}
               />
+            </div>
 
-              <MetricsBar
-                sourceText={metricsSourceText}
-                sourceLabel={metricsSourceLabel}
+            <div
+              className={mobileTab !== 'salt' ? 'mobile-hidden' : ''}
+              style={{ display: 'flex', minHeight: 0 }}
+            >
+              <ConventionPane
+                text={activeSession.conventionText}
+                hasTranscript={activeSession.transcriptionText.trim().length > 0}
                 aliases={activeSession.speakerAliases}
+                grammarActive={grammarActive}
+                grammarCheckPerformed={activeSession.grammarCheckPerformed}
+                morphemesApplied={activeSession.morphemesApplied}
+                currentOriginalLine={currentOriginalLine}
+                correctionDraft={correctionDraft}
+                grammarRemaining={grammarProgress.remaining}
+                grammarTotal={grammarProgress.total}
+                checkAllSentences={checkAllSentences}
+                disabled={processing !== null}
+                onChangeText={(conventionText) =>
+                  updateActiveSession((s) => ({ ...s, conventionText }))
+                }
+                onToggleCheckAll={setCheckAllSentences}
+                onStartOrCancelGrammarCheck={handleStartOrCancelGrammarCheck}
+                onChangeCorrectionDraft={setCorrectionDraft}
+                onSubmitCorrection={handleSubmitCorrection}
+                onSkipCorrection={handleSkipCorrection}
+                onAutoApplyAllRemaining={handleAutoApplyAllRemaining}
+                onAddMorphemes={handleAddMorphemes}
+                onSeekToTime={(sec) => player.seek(sec, player.isPlaying)}
               />
-            </>
-          )}
+            </div>
+          </div>
+
+          <div className={mobileTab !== 'metrics' ? 'mobile-hidden' : 'mobile-scroll-slot'}>
+            <MetricsPanel metrics={metrics} alwaysExpanded={mobileTab === 'metrics'} />
+          </div>
+        </main>
+
+        {/* Android / Mobile Bottom Tab Navigation */}
+        <nav className="mobile-nav no-print" aria-label="Mobile workspace tabs">
+          <button
+            type="button"
+            className={`mobile-nav-btn ${mobileTab === 'audio' ? 'active' : ''}`}
+            onClick={() => setMobileTab('audio')}
+          >
+            {isRecording ? <Activity size={18} /> : <Mic size={18} />}
+            <span>Audio</span>
+          </button>
+          <button
+            type="button"
+            className={`mobile-nav-btn ${mobileTab === 'transcript' ? 'active' : ''}`}
+            onClick={() => setMobileTab('transcript')}
+          >
+            <FileText size={18} />
+            <span>Transcript</span>
+          </button>
+          <button
+            type="button"
+            className={`mobile-nav-btn ${mobileTab === 'salt' ? 'active' : ''}`}
+            onClick={() => setMobileTab('salt')}
+          >
+            <SpellCheck size={18} />
+            <span>SALT</span>
+          </button>
+          <button
+            type="button"
+            className={`mobile-nav-btn ${mobileTab === 'metrics' ? 'active' : ''}`}
+            onClick={() => setMobileTab('metrics')}
+          >
+            <BarChart3 size={18} />
+            <span>Metrics</span>
+          </button>
+        </nav>
+      </div>
+
+      {/* Drag-and-Drop Audio Overlay */}
+      {dragOver && (
+        <div
+          className="modal-backdrop"
+          style={{ pointerEvents: 'none', zIndex: 150 }}
+        >
+          <div
+            className="modal-card"
+            style={{ padding: 36, textAlign: 'center', maxWidth: 400 }}
+          >
+            <h2 style={{ margin: '0 0 8px' }}>Drop Audio File Here</h2>
+            <p style={{ margin: 0, color: 'var(--text-secondary)' }}>
+              WAV, MP3, M4A, MP4, WebM, or OGG — decoded 100% locally.
+            </p>
+          </div>
         </div>
-      </main>
+      )}
 
       {/* Modals */}
-      {activeModal === 'labelSpeakers' && activeSession && (
-        <LabelSpeakersModal
-          transcriptText={activeSession.transcriptionText}
+      {showClientModal && (
+        <ClientInfoModal
+          open
+          clientInfo={activeSession.clientInfo}
           aliases={activeSession.speakerAliases}
-          audioBlob={activeAudioBlob}
-          onApply={(updated) =>
-            updateSession(activeSession.id, (s) => ({ ...s, transcriptionText: updated }))
+          onSave={(clientInfo: ClientInfo) =>
+            updateActiveSession((s) => ({ ...s, clientInfo }))
           }
-          onClose={() => setActiveModal(null)}
+          onClose={() => setShowClientModal(false)}
         />
       )}
 
-      {activeModal === 'aliases' && activeSession && (
+      {showLabelSpeakersModal && (
+        <LabelSpeakersModal
+          open
+          text={activeSession.transcriptionText}
+          aliases={activeSession.speakerAliases}
+          onApplyText={(transcriptionText) =>
+            updateActiveSession((s) => ({ ...s, transcriptionText }))
+          }
+          onAutoAssignSpeakers={() => void handleAutoAssignSpeakers()}
+          onSwapSpeakers={handleSwapSpeakers}
+          onClose={() => setShowLabelSpeakersModal(false)}
+        />
+      )}
+
+      {showAliasesModal && (
         <SpeakerAliasesModal
+          open
           aliases={activeSession.speakerAliases}
           onSave={handleSaveAliases}
-          onClose={() => setActiveModal(null)}
+          onClose={() => setShowAliasesModal(false)}
         />
       )}
 
-      {activeModal === 'clientInfo' && activeSession && (
-        <ClientInfoModal
-          clientInfo={activeSession.clientInfo}
-          onSave={(info: ClientInfo) => {
-            updateSession(activeSession.id, (s) => ({ ...s, clientInfo: info }));
-            notify('success', 'Saved client metadata locally for this session.');
-          }}
-          onClose={() => setActiveModal(null)}
-        />
-      )}
+      <ExportModal
+        open={showExportModal}
+        session={activeSession}
+        audioBlob={activeAudioBlob}
+        includeSaltHeaders={settings.includeSaltHeadersOnExport}
+        stripTimestamps={settings.stripTimestampsOnExport}
+        onUpdateExportPrefs={({ includeSaltHeaders, stripTimestamps }) =>
+          updateSettings({
+            includeSaltHeadersOnExport: includeSaltHeaders,
+            stripTimestampsOnExport: stripTimestamps,
+          })
+        }
+        onNotify={(title, desc) => pushToast('success', title, desc)}
+        onClose={() => setShowExportModal(false)}
+      />
 
-      {activeModal === 'export' && activeSession && (
-        <ExportMenuModal
-          sessionName={activeSession.name}
-          fileName={activeSession.fileName}
-          exportText={exportText}
-          exportSourceLabel={exportSourceLabel}
-          clientInfo={activeSession.clientInfo}
-          aliases={activeSession.speakerAliases}
-          audioBlob={activeAudioBlob}
-          onClose={() => setActiveModal(null)}
-          onNotify={(msg) => notify('success', msg)}
-        />
-      )}
+      <ModelManagerModal
+        open={showModelModal}
+        settings={settings}
+        processing={processing}
+        onUpdateSettings={updateSettings}
+        onPreloadModel={(id) => void handlePreloadModel(id)}
+        onNotify={(title, desc) => pushToast('info', title, desc)}
+        onClose={() => setShowModelModal(false)}
+      />
 
-      {activeModal === 'help' && <HelpModal onClose={() => setActiveModal(null)} />}
+      <WaveformModal
+        open={showWaveformModal}
+        onClose={() => setShowWaveformModal(false)}
+        fileName={activeSession.audioMeta?.fileName ?? activeSession.name}
+        peaks={activeSession.audioMeta?.waveformPeaks ?? []}
+        currentTime={player.currentTime}
+        duration={player.duration}
+        markers={utteranceTimestamps}
+        onSeek={(sec) => player.seek(sec)}
+      />
+
+      <HelpModal open={showHelpModal} onClose={() => setShowHelpModal(false)} />
+
+      <ToastStack toasts={toasts} onDismiss={dismissToast} />
     </div>
   );
 }
-
-export default App;

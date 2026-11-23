@@ -1,333 +1,565 @@
-import { env, pipeline, type AutomaticSpeechRecognitionPipeline } from '@huggingface/transformers';
-import type { SpeakerAliases, WhisperModelId } from '../types/session';
 import {
-  splitAudioIntoSegments,
-  splitChunkIntoUtterances,
-  WHISPER_SAMPLE_RATE,
-  type TimedUtterance,
-} from '../lib/audio/audioChunker';
-import {
-  diarizeSpeakerSegments,
-  formatDiarizedTranscript,
-} from '../lib/audio/speakerDiarizer';
+  env,
+  pipeline,
+  type AutomaticSpeechRecognitionPipeline,
+  type ProgressInfo,
+} from '@huggingface/transformers';
+import { sliceAudioIntoPauseAwareChunks } from '../engine/audioProcessing';
+import { autoAssignSpeakersInTranscript } from '../engine/speakerDiarizer';
+import { formatWhisperChunks } from '../engine/transcriptFormat';
+import type {
+  ComputeDevice,
+  ModelSource,
+  SpeakerAliases,
+  WhisperModelId,
+} from '../types/saltify';
 
-// Always fetch models from Hugging Face Hub on first load and cache locally in Browser Cache API
-env.allowLocalModels = false;
+// Enable local Cache Storage for offline model + WASM reuse
 env.useBrowserCache = true;
 env.useWasmCache = true;
 
-interface TranscribeRequest {
-  type: 'transcribe';
-  audio: Float32Array;
-  modelId: WhisperModelId;
-  aliases: SpeakerAliases;
-  lowMemory: boolean;
+if (env.backends?.onnx?.wasm) {
+  // We are already inside a dedicated Web Worker — never spawn a nested proxy worker.
+  env.backends.onnx.wasm.proxy = false;
+  // Single-threaded WASM avoids SharedArrayBuffer / COOP-COEP requirements on static hosts & iPadOS
+  env.backends.onnx.wasm.numThreads =
+    typeof self !== 'undefined' && self.crossOriginIsolated
+      ? Math.min(navigator.hardwareConcurrency || 4, 4)
+      : 1;
 }
 
-type WorkerOutbound =
-  | { type: 'progress'; stage: string; progress: number }
+export type WorkerRequest =
+  | {
+      type: 'preload';
+      jobId: string;
+      modelId: WhisperModelId;
+      device: ComputeDevice;
+      modelSource: ModelSource;
+      customModelBaseUrl: string;
+      appBaseUrl: string;
+    }
+  | {
+      type: 'transcribe';
+      jobId: string;
+      modelId: WhisperModelId;
+      device: ComputeDevice;
+      modelSource: ModelSource;
+      customModelBaseUrl: string;
+      appBaseUrl: string;
+      aliases: SpeakerAliases;
+      audio: Float32Array;
+    };
+
+export type WorkerResponse =
+  | {
+      type: 'progress';
+      jobId: string;
+      stage: string;
+      progress: number;
+      detail?: string;
+    }
+  | {
+      type: 'partial';
+      jobId: string;
+      partialTranscript: string;
+    }
+  | {
+      type: 'ready';
+      jobId: string;
+      modelId: WhisperModelId;
+      backendUsed: 'webgpu' | 'wasm';
+    }
   | {
       type: 'done';
+      jobId: string;
       transcript: string;
+      backendUsed: 'webgpu' | 'wasm';
       speakerCount: 1 | 2;
-      effectiveModelId: WhisperModelId;
     }
-  | { type: 'error'; message: string };
+  | {
+      type: 'error';
+      jobId: string;
+      message: string;
+      details?: string;
+    };
 
-interface WhisperChunkOutput {
-  text?: string;
-  timestamp?: [number | null, number | null];
+interface SelfHostedManifestEntry {
+  id: string;
+  wasmQ8: boolean;
+  webgpu: boolean;
 }
 
-interface WhisperResultOutput {
-  text?: string;
-  chunks?: WhisperChunkOutput[];
+let activePipeline: AutomaticSpeechRecognitionPipeline | null = null;
+let loadedKey: string | null = null;
+let loadedBackend: 'webgpu' | 'wasm' | null = null;
+
+function post(msg: WorkerResponse): void {
+  self.postMessage(msg);
 }
 
-interface TransformersProgressInfo {
-  status?: string;
-  file?: string;
-  progress?: number;
-  loaded?: number;
-  total?: number;
+function ensureTrailingSlash(url: string): string {
+  return url.endsWith('/') ? url : `${url}/`;
 }
 
-let cachedPipeline: AutomaticSpeechRecognitionPipeline | null = null;
-let cachedModelId: WhisperModelId | null = null;
-let cachedLowMemory: boolean | null = null;
-
-function post(message: WorkerOutbound): void {
-  self.postMessage(message);
+function isSafariBrowser(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  const ua = navigator.userAgent || '';
+  return /Safari/.test(ua) && !/Chrome|Chromium|Edg|Android/.test(ua);
 }
 
-function formatSec(seconds: number): string {
-  const safe = Math.max(0, Math.floor(seconds));
-  const mins = Math.floor(safe / 60);
-  const secs = safe % 60;
-  return `${mins}:${secs.toString().padStart(2, '0')}`;
+function isLowMemoryDevice(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  const ua = navigator.userAgent || '';
+  const isIosOrMobile =
+    /iPad|iPhone|iPod|Android|Mobile/i.test(ua) ||
+    (isSafariBrowser() && typeof navigator.maxTouchPoints === 'number' && navigator.maxTouchPoints > 1);
+  const devMem = (navigator as unknown as { deviceMemory?: number }).deviceMemory;
+  return isIosOrMobile || (typeof devMem === 'number' && devMem <= 4);
 }
 
 function yieldToEventLoop(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
-function configureOnnxRuntime(lowMemory: boolean): void {
-  const backends = env.backends as {
-    onnx?: { wasm?: { numThreads?: number; proxy?: boolean } };
-  };
-  const wasm = backends?.onnx?.wasm;
-  if (!wasm) return;
-
-  // We are already inside a dedicated Web Worker — never spawn a nested proxy worker.
-  wasm.proxy = false;
-  if (lowMemory) {
-    // Keep WASM single-threaded on iPad/iOS/mobile to avoid Safari memory & worker overhead.
-    wasm.numThreads = 1;
-  }
-}
-
-async function getTranscriber(
-  modelId: WhisperModelId,
-  lowMemory: boolean
-): Promise<AutomaticSpeechRecognitionPipeline> {
-  if (cachedPipeline && cachedModelId === modelId && cachedLowMemory === lowMemory) {
-    return cachedPipeline;
-  }
-
-  if (cachedPipeline) {
-    try {
-      await cachedPipeline.dispose();
-    } catch {
-      // Ignore disposal errors
-    }
-    cachedPipeline = null;
-    cachedModelId = null;
-  }
-
-  configureOnnxRuntime(lowMemory);
-
-  const fileLoaded = new Map<string, number>();
-  const fileTotal = new Map<string, number>();
-  const filePercent = new Map<string, number>();
-  let lastPostAt = 0;
-
-  const onProgress = (info: TransformersProgressInfo) => {
-    const now = Date.now();
-    if (info.status === 'progress' && info.file) {
-      if (typeof info.loaded === 'number' && typeof info.total === 'number' && info.total > 0) {
-        fileLoaded.set(info.file, info.loaded);
-        fileTotal.set(info.file, info.total);
-      }
-      if (typeof info.progress === 'number') {
-        filePercent.set(info.file, Math.max(0, Math.min(1, info.progress / 100)));
-      }
-
-      if (now - lastPostAt < 140) return;
-      lastPostAt = now;
-
-      let ratio = 0;
-      let totalBytes = 0;
-      let loadedBytes = 0;
-      for (const [f, tot] of fileTotal.entries()) {
-        totalBytes += tot;
-        loadedBytes += fileLoaded.get(f) ?? 0;
-      }
-
-      if (totalBytes > 0) {
-        ratio = Math.min(1, loadedBytes / totalBytes);
-      } else if (filePercent.size > 0) {
-        let sum = 0;
-        for (const val of filePercent.values()) sum += val;
-        ratio = sum / filePercent.size;
-      }
-
-      const mbInfo =
-        totalBytes > 1024 * 1024
-          ? ` (${Math.round(loadedBytes / 1048576)}/${Math.round(totalBytes / 1048576)} MB)`
-          : ` (${Math.round(ratio * 100)}%)`;
-
-      post({
-        type: 'progress',
-        stage: `Downloading speech model${mbInfo}...`,
-        progress: 0.05 + ratio * 0.37,
-      });
-    } else if (info.status === 'initiate') {
-      if (now - lastPostAt >= 200) {
-        lastPostAt = now;
-        post({
-          type: 'progress',
-          stage: 'Preparing speech model...',
-          progress: 0.06,
-        });
-      }
-    } else if (info.status === 'done' && info.file?.endsWith('.onnx')) {
-      post({
-        type: 'progress',
-        stage: 'Initializing on-device speech engine...',
-        progress: 0.43,
-      });
-    }
-  };
-
-  // Memory-saving ONNX Runtime session options for iPad/iOS/mobile prevent Safari Jetsam reloads
-  const sessionOptions = lowMemory
-    ? {
-        enableCpuMemArena: false,
-        enableMemPattern: false,
-        graphOptimizationLevel: 'basic' as const,
-        executionMode: 'sequential' as const,
-      }
-    : {
-        executionMode: 'sequential' as const,
-      };
-
-  const asr = (await pipeline('automatic-speech-recognition', modelId, {
-    dtype: 'q8',
-    device: 'wasm',
-    session_options: sessionOptions,
-    progress_callback: onProgress,
-  })) as unknown as AutomaticSpeechRecognitionPipeline;
-
-  cachedPipeline = asr;
-  cachedModelId = modelId;
-  cachedLowMemory = lowMemory;
-  return asr;
-}
-
-function describeWorkerError(error: unknown): string {
-  const raw = error instanceof Error ? error.message : String(error);
-  const lowered = raw.toLowerCase();
-
-  if (
-    lowered.includes('out of memory') ||
-    lowered.includes('allocation failed') ||
-    lowered.includes('oom') ||
-    lowered.includes('wasm') && lowered.includes('memory') ||
-    lowered.includes('rangeerror')
-  ) {
-    return 'This device ran out of memory while running Whisper. Switch to "Whisper Base" or "Whisper Tiny" in the model menu, or try a shorter recording.';
-  }
-  if (
-    lowered.includes('failed to fetch') ||
-    lowered.includes('network') ||
-    lowered.includes('offline') ||
-    lowered.includes('load failed')
-  ) {
-    return 'Could not download the Whisper speech model. Connect to the internet once to cache the model locally for offline use.';
-  }
-  return `Transcription failed: ${raw || 'Unknown error'}. You can retry or switch to Whisper Base / Tiny.`;
-}
-
-function getChunkTimingProfile(modelId: WhisperModelId, lowMemory: boolean) {
-  if (modelId === 'onnx-community/distil-small.en') {
-    // Distil-Whisper performs best and uses minimal KV-cache RAM on ~15-20s windows
-    return { targetSegmentSec: 16, minSegmentSec: 10, maxSegmentSec: 20 };
-  }
-  if (lowMemory) {
-    return { targetSegmentSec: 18, minSegmentSec: 12, maxSegmentSec: 24 };
-  }
-  return { targetSegmentSec: 24, minSegmentSec: 15, maxSegmentSec: 28 };
-}
-
-self.addEventListener('message', async (event: MessageEvent<TranscribeRequest>) => {
-  const msg = event.data;
-  if (!msg || msg.type !== 'transcribe') return;
+async function canUseWebGpu(): Promise<boolean> {
+  if (typeof navigator === 'undefined') return false;
+  if (isSafariBrowser()) return false;
 
   try {
-    // Defense-in-depth: never let the 240 MB 12-layer decoder OOM a memory-constrained iPad
-    const effectiveModelId: WhisperModelId =
-      msg.lowMemory && msg.modelId === 'Xenova/whisper-small.en'
-        ? 'onnx-community/distil-small.en'
-        : msg.modelId;
+    const gpu = (navigator as unknown as { gpu?: { requestAdapter: () => Promise<unknown | null> } }).gpu;
+    if (!gpu) return false;
+    const adapter = await gpu.requestAdapter();
+    return adapter !== null;
+  } catch {
+    return false;
+  }
+}
 
-    post({ type: 'progress', stage: 'Loading speech model...', progress: 0.05 });
-    const transcriber = await getTranscriber(effectiveModelId, msg.lowMemory);
+/**
+ * Configures ONNX Runtime Web to load its WASM + JS factory from THIS server's
+ * `/ort/` directory (zero jsDelivr CDN requests) and configures Whisper model
+ * resolution for self-hosted, air-gapped, custom-host, or Hugging Face modes.
+ */
+function configureSelfHostedRuntime(
+  appBaseUrl: string,
+  modelSource: ModelSource,
+  customModelBaseUrl: string
+): { manifestBaseUrl: string; useLocalFilesOnly: boolean } {
+  const ortBase = new URL('ort/', appBaseUrl).href;
+  const suffix = isSafariBrowser() ? '' : '.asyncify';
 
-    const totalDurationSec = msg.audio.length / WHISPER_SAMPLE_RATE;
-    const timingProfile = getChunkTimingProfile(effectiveModelId, msg.lowMemory);
-    const allSegments = splitAudioIntoSegments(msg.audio, timingProfile);
-    const speechSegments = allSegments.filter((seg) => !seg.isSilent);
-    const activeSegments = speechSegments.length > 0 ? speechSegments : allSegments;
+  if (env.backends?.onnx?.wasm) {
+    env.backends.onnx.wasm.wasmPaths = {
+      mjs: `${ortBase}ort-wasm-simd-threaded${suffix}.mjs`,
+      wasm: `${ortBase}ort-wasm-simd-threaded${suffix}.wasm`,
+    };
+  }
 
-    const utterances: TimedUtterance[] = [];
+  const trimmedCustom = customModelBaseUrl.trim();
+  const isCustomExternalUrl = /^https?:\/\//i.test(trimmedCustom);
 
-    for (let idx = 0; idx < activeSegments.length; idx++) {
-      const seg = activeSegments[idx];
-      const baseProgress = 0.45 + (idx / Math.max(1, activeSegments.length)) * 0.46;
-      const rangeLabel = `${formatSec(seg.startSec)}–${formatSec(seg.endSec)}`;
-      const stageLabel =
-        activeSegments.length > 1
-          ? `Transcribing part ${idx + 1} of ${activeSegments.length} (${rangeLabel} / ${formatSec(totalDurationSec)})...`
-          : `Transcribing (${formatSec(totalDurationSec)} audio)...`;
+  if (isCustomExternalUrl && modelSource !== 'huggingface') {
+    // External self-hosted model server (e.g. Cloudflare R2, clinic NAS, or CDN)
+    const customBase = ensureTrailingSlash(trimmedCustom);
+    env.allowLocalModels = false;
+    env.allowRemoteModels = true;
+    env.remoteHost = customBase;
+    env.remotePathTemplate = '{model}/';
+    return { manifestBaseUrl: customBase, useLocalFilesOnly: false };
+  }
 
+  // Restore standard Hugging Face remote defaults
+  env.remoteHost = 'https://huggingface.co/';
+  env.remotePathTemplate = '{model}/resolve/{revision}/';
+
+  // IMPORTANT: Transformers.js v4's _get_file_metadata requires env.localModelPath
+  // to be an origin-relative path (not starting with http:// or https://).
+  const relativeModelPath = trimmedCustom
+    ? ensureTrailingSlash(trimmedCustom.startsWith('/') ? trimmedCustom : `/${trimmedCustom}`)
+    : ensureTrailingSlash(new URL('models/', appBaseUrl).pathname);
+
+  env.localModelPath = relativeModelPath;
+
+  if (modelSource === 'local-only') {
+    env.allowLocalModels = true;
+    env.allowRemoteModels = false;
+  } else if (modelSource === 'huggingface') {
+    env.allowLocalModels = false;
+    env.allowRemoteModels = true;
+  } else {
+    // 'auto': check self-hosted `/models/` first, fall back to Hugging Face if missing
+    env.allowLocalModels = true;
+    env.allowRemoteModels = true;
+  }
+
+  const manifestBaseUrl = new URL(relativeModelPath, appBaseUrl).href;
+  return {
+    manifestBaseUrl,
+    useLocalFilesOnly: modelSource === 'local-only',
+  };
+}
+
+async function fetchSelfHostedEntry(
+  manifestBaseUrl: string,
+  modelId: WhisperModelId
+): Promise<SelfHostedManifestEntry | null> {
+  try {
+    const resp = await fetch(`${manifestBaseUrl}manifest.json`, { cache: 'no-cache' });
+    if (!resp.ok) return null;
+    const contentType = resp.headers.get('content-type') || '';
+    if (!contentType.includes('json')) return null;
+    const data = (await resp.json()) as { models?: SelfHostedManifestEntry[] };
+    return data.models?.find((m) => m.id === modelId) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+async function ensurePipeline(
+  jobId: string,
+  modelId: WhisperModelId,
+  requestedDevice: ComputeDevice,
+  modelSource: ModelSource,
+  customModelBaseUrl: string,
+  appBaseUrl: string
+): Promise<{
+  transcriber: AutomaticSpeechRecognitionPipeline;
+  backendUsed: 'webgpu' | 'wasm';
+}> {
+  const { manifestBaseUrl, useLocalFilesOnly } = configureSelfHostedRuntime(
+    appBaseUrl,
+    modelSource,
+    customModelBaseUrl
+  );
+
+  // If self-hosted server has q8 WASM weights (without larger WebGPU fp32/q4 weights),
+  // prefer WASM directly to avoid unnecessary fallback fetches.
+  const localEntry =
+    modelSource !== 'huggingface'
+      ? await fetchSelfHostedEntry(manifestBaseUrl, modelId)
+      : null;
+
+  const webGpuSupported =
+    requestedDevice === 'webgpu' ||
+    (requestedDevice === 'auto' && (await canUseWebGpu()));
+
+  const preferWebGpu =
+    webGpuSupported &&
+    !(localEntry && localEntry.wasmQ8 && !localEntry.webgpu && requestedDevice === 'auto');
+
+  const targetBackend: 'webgpu' | 'wasm' = preferWebGpu ? 'webgpu' : 'wasm';
+  const cacheSignature = `${modelId}|${targetBackend}|${modelSource}|${manifestBaseUrl}`;
+
+  if (activePipeline && loadedKey === cacheSignature && loadedBackend) {
+    return { transcriber: activePipeline, backendUsed: loadedBackend };
+  }
+
+  // Dispose any previously loaded model to free RAM on iPad/Android
+  if (activePipeline) {
+    try {
+      await activePipeline.dispose();
+    } catch {
+      // ignore disposal errors
+    }
+    activePipeline = null;
+    loadedKey = null;
+    loadedBackend = null;
+  }
+
+  const fileProgress = new Map<string, { loaded: number; total: number }>();
+  const sourceLabel =
+    modelSource === 'local-only' || localEntry
+      ? 'from your self-hosted server'
+      : 'and caching locally for offline use';
+
+  const onModelProgress = (info: ProgressInfo) => {
+    if (info.status === 'progress' && info.file) {
+      fileProgress.set(info.file, {
+        loaded: info.loaded ?? 0,
+        total: info.total ?? 0,
+      });
+      let loadedSum = 0;
+      let totalSum = 0;
+      for (const entry of fileProgress.values()) {
+        loadedSum += entry.loaded;
+        totalSum += entry.total;
+      }
+      const frac =
+        totalSum > 0 ? Math.min(loadedSum / totalSum, 1) : (info.progress ?? 0) / 100;
+      const mbLoaded = (loadedSum / (1024 * 1024)).toFixed(1);
+      const mbTotal = totalSum > 0 ? ` / ${(totalSum / (1024 * 1024)).toFixed(1)} MB` : '';
       post({
         type: 'progress',
-        stage: stageLabel,
-        progress: baseProgress,
+        jobId,
+        stage: 'Loading Whisper model',
+        progress: Math.max(0.02, frac * 0.25),
+        detail: `${mbLoaded} MB${mbTotal} (${sourceLabel})`,
       });
-
-      const segDurationSec = Math.max(0.5, seg.endSec - seg.startSec);
-      // Cap generated tokens per segment (~6 tokens/sec max speech rate) to prevent
-      // Whisper 448-token hallucination loops that freeze or time out mobile browsers.
-      const maxNewTokens = Math.min(224, Math.max(64, Math.ceil(segDurationSec * 6)));
-      const slice = msg.audio.subarray(seg.startSample, seg.endSample);
-
-      const output = (await transcriber(slice, {
-        return_timestamps: true,
-        max_new_tokens: maxNewTokens,
-      })) as WhisperResultOutput | WhisperResultOutput[];
-
-      const single = Array.isArray(output) ? output[0] : output;
-      const chunks = single?.chunks;
-
-      if (chunks && chunks.length > 0) {
-        for (const chunk of chunks) {
-          const text = chunk.text ?? '';
-          if (!text.trim()) continue;
-          const localStart =
-            Array.isArray(chunk.timestamp) && typeof chunk.timestamp[0] === 'number'
-              ? Math.max(0, chunk.timestamp[0])
-              : 0;
-          const localEnd =
-            Array.isArray(chunk.timestamp) && typeof chunk.timestamp[1] === 'number'
-              ? Math.max(localStart + 0.35, Math.min(segDurationSec, chunk.timestamp[1]))
-              : segDurationSec;
-
-          const absStart = seg.startSec + localStart;
-          const absEnd = Math.min(seg.endSec, seg.startSec + localEnd);
-          utterances.push(...splitChunkIntoUtterances(text, absStart, absEnd));
-        }
-      } else if (single?.text?.trim()) {
-        utterances.push(...splitChunkIntoUtterances(single.text, seg.startSec, seg.endSec));
-      }
-
-      // Yield briefly between segments so Safari GC can reclaim intermediate WASM/JS buffers
-      if (idx + 1 < activeSegments.length) {
-        await yieldToEventLoop();
-      }
-    }
-
-    if (utterances.length === 0) {
+    } else if (info.status === 'initiate') {
       post({
-        type: 'done',
-        transcript: '',
-        speakerCount: 1,
-        effectiveModelId,
+        type: 'progress',
+        jobId,
+        stage: 'Loading Whisper model',
+        progress: 0.04,
+        detail: info.file ? `Preparing ${info.file}` : undefined,
+      });
+    }
+  };
+
+  const lowMemory = isLowMemoryDevice();
+  const loadWithBackend = async (backend: 'webgpu' | 'wasm') => {
+    const dtype =
+      backend === 'webgpu'
+        ? ({ encoder_model: 'fp32', decoder_model_merged: 'q4' } as const)
+        : ('q8' as const);
+
+    // Memory-saving ONNX Runtime session options prevent Safari Jetsam reloads on iPad/mobile
+    const sessionOptions =
+      backend === 'wasm' && lowMemory
+        ? {
+            enableCpuMemArena: false,
+            enableMemPattern: false,
+            graphOptimizationLevel: 'basic' as const,
+            executionMode: 'sequential' as const,
+          }
+        : {
+            executionMode: 'sequential' as const,
+          };
+
+    const pipe = await pipeline('automatic-speech-recognition', modelId, {
+      device: backend,
+      dtype,
+      local_files_only: useLocalFilesOnly,
+      session_options: sessionOptions,
+      progress_callback: onModelProgress,
+    });
+    return pipe;
+  };
+
+  let backendUsed: 'webgpu' | 'wasm' = targetBackend;
+  try {
+    activePipeline = await loadWithBackend(targetBackend);
+  } catch (err) {
+    if (targetBackend === 'webgpu') {
+      post({
+        type: 'progress',
+        jobId,
+        stage: 'Switching to WASM engine',
+        progress: 0.08,
+        detail: 'Falling back to universal on-device WASM.',
+      });
+      backendUsed = 'wasm';
+      activePipeline = await loadWithBackend('wasm');
+    } else {
+      throw err;
+    }
+  }
+
+  loadedKey = cacheSignature;
+  loadedBackend = backendUsed;
+  return { transcriber: activePipeline, backendUsed };
+}
+
+function describeWorkerError(
+  error: unknown,
+  modelId: WhisperModelId,
+  modelSource: ModelSource
+): { message: string; details: string } {
+  const raw = error instanceof Error ? error.message : String(error);
+  const details = error instanceof Error ? error.stack || raw : raw;
+  const lower = raw.toLowerCase();
+
+  if (
+    lower.includes('out of memory') ||
+    lower.includes('oom') ||
+    lower.includes('allocation') ||
+    (lower.includes('wasm') && lower.includes('memory')) ||
+    lower.includes('rangeerror')
+  ) {
+    return {
+      message:
+        'This device ran out of browser memory while transcribing. Switch to "Whisper Tiny (.en)" in AI Models or try a shorter clip.',
+      details,
+    };
+  }
+  if (
+    modelSource === 'local-only' &&
+    (lower.includes('not found locally') ||
+      lower.includes('local_files_only') ||
+      lower.includes('404'))
+  ) {
+    const shortKey = modelId.includes('tiny')
+      ? 'tiny'
+      : modelId.includes('base')
+      ? 'base'
+      : 'small';
+    return {
+      message: `Model "${modelId}" was not found on your self-hosted server. Run "npm run models:download -- --models=${shortKey}" on your host (or switch Model Hosting to Auto).`,
+      details,
+    };
+  }
+  if (
+    lower.includes('failed to fetch') ||
+    lower.includes('load failed') ||
+    lower.includes('network') ||
+    lower.includes('offline') ||
+    lower.includes('err_internet')
+  ) {
+    return {
+      message:
+        'The Whisper speech model has not been cached yet and could not be downloaded. Connect to your server or Wi-Fi once to cache it for offline use.',
+      details,
+    };
+  }
+  return {
+    message: `On-device transcription failed: ${raw}`,
+    details,
+  };
+}
+
+self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
+  const req = event.data;
+
+  try {
+    if (req.type === 'preload') {
+      const { backendUsed } = await ensurePipeline(
+        req.jobId,
+        req.modelId,
+        req.device,
+        req.modelSource,
+        req.customModelBaseUrl,
+        req.appBaseUrl
+      );
+      post({
+        type: 'progress',
+        jobId: req.jobId,
+        stage: 'Model ready for offline use',
+        progress: 1,
+      });
+      post({
+        type: 'ready',
+        jobId: req.jobId,
+        modelId: req.modelId,
+        backendUsed,
       });
       return;
     }
 
-    post({ type: 'progress', stage: 'Auto-assigning speakers...', progress: 0.94 });
-    const diarization = diarizeSpeakerSegments(msg.audio, utterances, WHISPER_SAMPLE_RATE);
-    const transcript = formatDiarizedTranscript(utterances, diarization.roles, msg.aliases);
+    if (req.type === 'transcribe') {
+      post({
+        type: 'progress',
+        jobId: req.jobId,
+        stage: 'Loading Whisper model',
+        progress: 0.05,
+      });
 
-    post({
-      type: 'done',
-      transcript,
-      speakerCount: diarization.speakerCount,
-      effectiveModelId,
-    });
+      const { transcriber, backendUsed } = await ensurePipeline(
+        req.jobId,
+        req.modelId,
+        req.device,
+        req.modelSource,
+        req.customModelBaseUrl,
+        req.appBaseUrl
+      );
+
+      // Pause-aware low-RAM chunking keeps iPadOS Safari & Android memory bounded
+      const lowMemory = isLowMemoryDevice();
+      const slices = lowMemory
+        ? sliceAudioIntoPauseAwareChunks(req.audio, 16000, 18, 12, 24)
+        : sliceAudioIntoPauseAwareChunks(req.audio, 16000, 26, 18, 29);
+      if (slices.length === 0) {
+        post({
+          type: 'done',
+          jobId: req.jobId,
+          transcript: '',
+          backendUsed,
+          speakerCount: 1,
+        });
+        return;
+      }
+
+      const allChunks: Array<{ timestamp: [number, number | null]; text: string }> = [];
+
+      for (let i = 0; i < slices.length; i++) {
+        const slice = slices[i];
+        const baseProgress = 0.25 + (i / slices.length) * 0.68;
+        post({
+          type: 'progress',
+          jobId: req.jobId,
+          stage: `Transcribing segment ${i + 1} of ${slices.length}`,
+          progress: baseProgress,
+          detail: `Running 100% locally (${backendUsed.toUpperCase()})`,
+        });
+
+        const segDurationSec = Math.max(0.5, slice.endSec - slice.startSec);
+        // Cap generated tokens per segment (~6 tokens/sec max speech rate) to prevent
+        // Whisper 448-token hallucination loops on iPad/mobile browsers.
+        const maxNewTokens = Math.min(224, Math.max(64, Math.ceil(segDurationSec * 6)));
+
+        const output = await transcriber(slice.samples, {
+          return_timestamps: true,
+          max_new_tokens: maxNewTokens,
+        });
+
+        const singleOutput = Array.isArray(output) ? output[0] : output;
+        if (singleOutput?.chunks && singleOutput.chunks.length > 0) {
+          for (const ch of singleOutput.chunks) {
+            const relStart = ch.timestamp?.[0] ?? 0;
+            const relEnd = ch.timestamp?.[1] ?? null;
+            allChunks.push({
+              timestamp: [
+                slice.startSec + relStart,
+                relEnd !== null ? slice.startSec + relEnd : null,
+              ],
+              text: ch.text,
+            });
+          }
+        } else if (singleOutput?.text?.trim()) {
+          allChunks.push({
+            timestamp: [slice.startSec, slice.endSec],
+            text: singleOutput.text,
+          });
+        }
+
+        post({
+          type: 'partial',
+          jobId: req.jobId,
+          partialTranscript: formatWhisperChunks(allChunks),
+        });
+
+        // Yield briefly between segments so Safari GC can reclaim intermediate WASM/JS buffers
+        if (i + 1 < slices.length) {
+          await yieldToEventLoop();
+        }
+      }
+
+      post({
+        type: 'progress',
+        jobId: req.jobId,
+        stage: 'Assigning speakers locally',
+        progress: 0.96,
+      });
+
+      const formatted = formatWhisperChunks(allChunks);
+      const diarized = formatted.trim()
+        ? autoAssignSpeakersInTranscript(formatted, req.aliases, req.audio, 16000)
+        : { transcript: '', speakerCount: 1 as const };
+
+      post({
+        type: 'done',
+        jobId: req.jobId,
+        transcript: diarized.transcript,
+        backendUsed,
+        speakerCount: diarized.speakerCount,
+      });
+    }
   } catch (err) {
-    post({ type: 'error', message: describeWorkerError(err) });
+    const { message, details } = describeWorkerError(err, req.modelId, req.modelSource);
+    post({
+      type: 'error',
+      jobId: req.jobId,
+      message,
+      details,
+    });
   }
-});
+};

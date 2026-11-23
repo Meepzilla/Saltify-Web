@@ -1,0 +1,25 @@
+services:
+  saltify-web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: saltify-web
+    restart: unless-stopped
+    environment:
+      # Options:
+      #   ":80"                    -> behind Tailscale Serve, Cloudflare Tunnel, or Nginx Proxy Manager
+      #   "saltify.yourdomain.com" -> automatic Let's Encrypt HTTPS directly from Caddy
+      SALTIFY_SITE: "${SALTIFY_SITE:-:80}"
+    ports:
+      - "${SALTIFY_HTTP_PORT:-8080}:80"
+      - "${SALTIFY_HTTPS_PORT:-8443}:443"
+    volumes:
+      # Run `npm run models:download` on the host to populate ./public/models
+      # so clients load Whisper models directly from your server with zero external calls.
+      - ./public/models:/srv/models:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  caddy_data:
+  caddy_config:
