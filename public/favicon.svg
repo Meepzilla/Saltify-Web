@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0F829E"/>
+      <stop offset="100%" stop-color="#0A546C"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#E6FAFF"/>
+      <stop offset="100%" stop-color="#B9EDF7"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
+  <!-- Subtle clinical acoustic rings -->
+  <circle cx="256" cy="256" r="196" fill="none" stroke="#FFFFFF" stroke-opacity="0.10" stroke-width="6"/>
+  <circle cx="256" cy="256" r="154" fill="none" stroke="#FFFFFF" stroke-opacity="0.08" stroke-width="4"/>
+  <!-- Stylized waveform bars + SALT morpheme slash -->
+  <rect x="116" y="216" width="32" height="80" rx="16" fill="url(#accent)" opacity="0.82"/>
+  <rect x="172" y="162" width="34" height="188" rx="17" fill="#FFFFFF"/>
+  <rect x="230" y="124" width="36" height="264" rx="18" fill="#FFFFFF"/>
+  <rect x="290" y="176" width="34" height="160" rx="17" fill="url(#accent)"/>
+  <!-- Forward slash representing SALT bound morpheme coding (e.g. walk/ed) -->
+  <path d="M388 142 L340 370" stroke="#FBBF24" stroke-width="26" stroke-linecap="round"/>
+</svg>
