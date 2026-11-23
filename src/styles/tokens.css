@@ -1,9 +1,9 @@
 /* Saltify Web — Clinical Design System Tokens */
 
 :root {
-  /* Typography */
-  --font-sans: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-  --font-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  /* Typography — Native system fonts for instant offline load and zero third-party calls */
+  --font-sans: 'Segoe UI Variable', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', 'Cascadia Code', Consolas, Menlo, Monaco, monospace;
 
   /* Light Theme — Warm Clinical Alabaster & Deep Slate */
   --bg-canvas: hsl(216, 22%, 96%);

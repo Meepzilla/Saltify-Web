@@ -7,6 +7,8 @@ export type WhisperModelId =
 
 export type ComputeDevice = 'auto' | 'webgpu' | 'wasm';
 
+export type ModelSource = 'auto' | 'local-only' | 'huggingface';
+
 export interface WhisperModelInfo {
   id: WhisperModelId;
   label: string;
@@ -22,8 +24,8 @@ export const WHISPER_MODELS: readonly WhisperModelInfo[] = [
     id: 'onnx-community/whisper-tiny.en',
     label: 'Whisper Tiny (English)',
     shortLabel: 'Tiny .en',
-    sizeLabel: '~42 MB',
-    sizeMb: 42,
+    sizeLabel: '~38 MB',
+    sizeMb: 38,
     recommendedFor: 'iPad, Android phones & quick offline sessions',
     description: 'Fastest on-device transcription with minimal RAM usage. Safe for iPadOS Safari and mobile devices.',
   },
@@ -31,8 +33,8 @@ export const WHISPER_MODELS: readonly WhisperModelInfo[] = [
     id: 'onnx-community/whisper-base.en',
     label: 'Whisper Base (English)',
     shortLabel: 'Base .en',
-    sizeLabel: '~78 MB',
-    sizeMb: 78,
+    sizeLabel: '~73 MB',
+    sizeMb: 73,
     recommendedFor: 'iPad Pro, modern Android tablets & laptops',
     description: 'Balanced accuracy and speed for clinical child-examiner conversations.',
   },
@@ -40,8 +42,8 @@ export const WHISPER_MODELS: readonly WhisperModelInfo[] = [
     id: 'onnx-community/whisper-small.en',
     label: 'Whisper Small (English)',
     shortLabel: 'Small .en',
-    sizeLabel: '~245 MB',
-    sizeMb: 245,
+    sizeLabel: '~237 MB',
+    sizeMb: 237,
     recommendedFor: 'Windows PCs & high-RAM devices (desktop Saltify parity)',
     description: 'Highest accuracy, matching the desktop Saltify small.en model. Best on Windows laptops/desktops.',
   },
@@ -155,6 +157,8 @@ export interface AppSettings {
   theme: ThemeMode;
   modelId: WhisperModelId;
   device: ComputeDevice;
+  modelSource: ModelSource;
+  customModelBaseUrl: string;
   codeFillerMazes: boolean;
   useOverregularizationTag: boolean;
   includeSaltHeadersOnExport: boolean;
@@ -165,6 +169,8 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   theme: 'system',
   modelId: 'onnx-community/whisper-tiny.en',
   device: 'auto',
+  modelSource: 'auto',
+  customModelBaseUrl: '',
   codeFillerMazes: true,
   useOverregularizationTag: false,
   includeSaltHeadersOnExport: true,

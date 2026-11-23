@@ -4,12 +4,16 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
+    "predev": "node scripts/copy-ort-wasm.mjs",
     "dev": "vite",
+    "prebuild": "node scripts/copy-ort-wasm.mjs",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "preview": "vite preview",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "models:download": "node scripts/download-models.mjs",
+    "ort:copy": "node scripts/copy-ort-wasm.mjs"
   },
   "dependencies": {
     "@huggingface/transformers": "^4.3.2",

@@ -517,8 +517,12 @@ export default function App() {
 
       const result = await whisperClient.transcribe(
         mono16k,
-        settings.modelId,
-        settings.device,
+        {
+          modelId: settings.modelId,
+          device: settings.device,
+          modelSource: settings.modelSource,
+          customModelBaseUrl: settings.customModelBaseUrl,
+        },
         {
           onProgress: (stage, progress, detail) => {
             setProcessing({
@@ -581,6 +585,8 @@ export default function App() {
     resetGrammarReview,
     settings.modelId,
     settings.device,
+    settings.modelSource,
+    settings.customModelBaseUrl,
     updateActiveSession,
     pushToast,
   ]);
@@ -602,13 +608,17 @@ export default function App() {
     async (modelId: WhisperModelId) => {
       setProcessing({
         kind: 'model-download',
-        stage: 'Downloading Whisper model for offline use',
+        stage: 'Loading Whisper model for offline use',
         progress: 0.04,
       });
       try {
         const res = await whisperClient.preloadModel(
-          modelId,
-          settings.device,
+          {
+            modelId,
+            device: settings.device,
+            modelSource: settings.modelSource,
+            customModelBaseUrl: settings.customModelBaseUrl,
+          },
           (stage, progress, detail) => {
             setProcessing({ kind: 'model-download', stage, progress, detail });
           }
@@ -624,13 +634,13 @@ export default function App() {
         if (!isCancelledError(err)) {
           pushToast(
             'error',
-            'Model download failed',
-            err instanceof Error ? err.message : 'Check your internet connection.'
+            'Model load failed',
+            err instanceof Error ? err.message : 'Check your server or network connection.'
           );
         }
       }
     },
-    [settings.device, pushToast]
+    [settings.device, settings.modelSource, settings.customModelBaseUrl, pushToast]
   );
 
   // Load Demo Sample for instant testing without needing a recording first

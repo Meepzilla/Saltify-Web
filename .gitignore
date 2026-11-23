@@ -12,6 +12,10 @@ dist
 dist-ssr
 *.local
 
+# Self-hosted runtime assets generated/downloaded locally (not committed to git)
+public/ort/
+public/models/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

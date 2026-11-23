@@ -1,4 +1,12 @@
-import { CheckCircle2, Cpu, Download, HardDrive, Trash2, X } from 'lucide-react';
+import {
+  CheckCircle2,
+  Cpu,
+  Download,
+  HardDrive,
+  Server,
+  Trash2,
+  X,
+} from 'lucide-react';
 import { useEffect, useState } from 'react';
 import {
   clearCachedWhisperModels,
@@ -8,6 +16,7 @@ import {
   WHISPER_MODELS,
   type AppSettings,
   type ComputeDevice,
+  type ModelSource,
   type ProcessingState,
   type WhisperModelId,
 } from '../types/saltify';
@@ -22,6 +31,14 @@ interface ModelManagerModalProps {
   onClose: () => void;
 }
 
+interface SelfHostedManifest {
+  models?: Array<{
+    id: string;
+    wasmQ8: boolean;
+    webgpu: boolean;
+  }>;
+}
+
 export function ModelManagerModal({
   open,
   settings,
@@ -33,26 +50,46 @@ export function ModelManagerModal({
 }: ModelManagerModalProps) {
   const [cachedModels, setCachedModels] = useState<string[]>([]);
   const [cacheBytes, setCacheBytes] = useState(0);
+  const [selfHostedModels, setSelfHostedModels] = useState<string[]>([]);
 
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
+
     void inspectCachedWhisperModels().then((info) => {
       if (cancelled) return;
       setCachedModels(info.cachedModelIds);
       setCacheBytes(info.estimatedBytes);
     });
+
+    const base = settings.customModelBaseUrl.trim()
+      ? settings.customModelBaseUrl.trim().replace(/\/?$/, '/')
+      : './models/';
+
+    void fetch(`${base}manifest.json`, { cache: 'no-cache' })
+      .then(async (resp) => {
+        if (!resp.ok) return [];
+        const ct = resp.headers.get('content-type') || '';
+        if (!ct.includes('json')) return [];
+        const data = (await resp.json()) as SelfHostedManifest;
+        return (data.models ?? []).map((m) => m.id);
+      })
+      .catch(() => [] as string[])
+      .then((ids) => {
+        if (!cancelled) setSelfHostedModels(ids);
+      });
+
     return () => {
       cancelled = true;
     };
-  }, [open, processing]);
+  }, [open, processing, settings.customModelBaseUrl]);
 
   if (!open) return null;
 
   const handleClearCache = async () => {
     if (
       !window.confirm(
-        'Remove cached on-device Whisper models from browser storage? You can re-download them anytime while online.'
+        'Remove cached on-device Whisper models from browser storage? You can re-download them anytime from your server or Wi-Fi.'
       )
     ) {
       return;
@@ -75,7 +112,7 @@ export function ModelManagerModal({
       >
         <div className="modal-header">
           <h2 id="model-manager-title" className="modal-title">
-            On-Device Speech Model &amp; SALT Preferences
+            On-Device Speech Model &amp; Self-Hosting Settings
           </h2>
           <button
             type="button"
@@ -89,15 +126,16 @@ export function ModelManagerModal({
 
         <div className="modal-body">
           <p style={{ margin: 0, fontSize: '0.83rem', color: 'var(--text-secondary)' }}>
-            Whisper models download once from Hugging Face and stay cached locally in
-            this browser so future clinical transcriptions work{' '}
-            <strong>100% offline</strong> with zero audio leaving your device.
+            Whisper models load directly from your self-hosted server (<code>/models/</code>
+            ) when present, or from Hugging Face Hub if allowed, and stay cached locally in
+            this browser for <strong>100% offline</strong> clinical transcription.
           </p>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {WHISPER_MODELS.map((model) => {
               const isSelected = settings.modelId === model.id;
               const isCached = cachedModels.includes(model.id);
+              const isSelfHosted = selfHostedModels.includes(model.id);
               return (
                 <div
                   key={model.id}
@@ -105,9 +143,31 @@ export function ModelManagerModal({
                   onClick={() => onUpdateSettings({ modelId: model.id })}
                 >
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                    <div
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 8,
+                        flexWrap: 'wrap',
+                      }}
+                    >
                       <strong style={{ fontSize: '0.9rem' }}>{model.label}</strong>
                       <span className="pane-count-badge">{model.sizeLabel}</span>
+                      {isSelfHosted && (
+                        <span
+                          style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: 4,
+                            fontSize: '0.74rem',
+                            fontWeight: 600,
+                            color: 'var(--accent)',
+                          }}
+                        >
+                          <Server size={13} />
+                          <span>Self-Hosted</span>
+                        </span>
+                      )}
                       {isCached && (
                         <span
                           style={{
@@ -143,7 +203,7 @@ export function ModelManagerModal({
                     }}
                   >
                     <Download size={14} />
-                    <span>{isCached ? 'Verify' : 'Download'}</span>
+                    <span>{isCached ? 'Verify' : 'Cache'}</span>
                   </button>
                 </div>
               );
@@ -151,6 +211,24 @@ export function ModelManagerModal({
           </div>
 
           <div className="form-grid">
+            <div className="form-field">
+              <label htmlFor="model-source-select" className="form-label">
+                Model Hosting Source
+              </label>
+              <select
+                id="model-source-select"
+                className="field-select"
+                value={settings.modelSource}
+                onChange={(e) =>
+                  onUpdateSettings({ modelSource: e.target.value as ModelSource })
+                }
+              >
+                <option value="auto">Self-Hosted First, HF Fallback (Auto)</option>
+                <option value="local-only">Self-Hosted Only (Zero External Requests)</option>
+                <option value="huggingface">Hugging Face Hub Only</option>
+              </select>
+            </div>
+
             <div className="form-field">
               <label htmlFor="compute-device-select" className="form-label">
                 On-Device Compute Engine
@@ -170,7 +248,23 @@ export function ModelManagerModal({
             </div>
 
             <div className="form-field">
-              <span className="form-label">Local Offline Cache</span>
+              <label htmlFor="custom-model-url-input" className="form-label">
+                Custom Self-Hosted Model Base URL (optional)
+              </label>
+              <input
+                id="custom-model-url-input"
+                type="text"
+                className="field-input"
+                value={settings.customModelBaseUrl}
+                onChange={(e) =>
+                  onUpdateSettings({ customModelBaseUrl: e.target.value })
+                }
+                placeholder="Default: ./models/ on this server"
+              />
+            </div>
+
+            <div className="form-field">
+              <span className="form-label">Local Browser Cache</span>
               <div
                 style={{
                   display: 'flex',
@@ -219,7 +313,10 @@ export function ModelManagerModal({
               gap: 8,
             }}
           >
-            <span className="form-label" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            <span
+              className="form-label"
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+            >
               <Cpu size={14} />
               <span>SALT Grammar Coding Preferences</span>
             </span>

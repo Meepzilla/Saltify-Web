@@ -1,0 +1,43 @@
+# Saltify Web — Self-Hosted Caddy Configuration
+#
+# Set SALTIFY_SITE in docker-compose.yml (or environment):
+#   - Behind a reverse proxy / Cloudflare Tunnel / Tailscale Serve: ":80"
+#   - Public custom domain with automatic Let's Encrypt HTTPS:      "saltify.yourdomain.com"
+#   - Local LAN HTTPS with Caddy internal CA (for iPad/Android):    "saltify.local" + uncomment `tls internal` below
+
+{$SALTIFY_SITE::80} {
+	root * /srv
+	encode zstd gzip
+
+	# Uncomment for local LAN HTTPS without a public domain:
+	# tls internal
+
+	# Strict 404 (no index.html fallback) for self-hosted models & ONNX WASM
+	@modelAssets path /models/* /ort/*
+	handle @modelAssets {
+		header Cache-Control "public, max-age=31536000, immutable"
+		header Access-Control-Allow-Origin "*"
+		file_server
+	}
+
+	# Never aggressively cache the service worker, manifest, or HTML shell
+	@noCache path /sw.js /manifest.webmanifest /index.html /models/manifest.json
+	header @noCache Cache-Control "no-cache, no-store, must-revalidate"
+
+	# Cache hashed JS/CSS bundles immutably
+	@hashed path /assets/*
+	header @hashed Cache-Control "public, max-age=31536000, immutable"
+
+	# Security & PWA headers
+	# COOP/COEP enable multi-threaded WASM acceleration on Windows & Android
+	header {
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "no-referrer"
+		Cross-Origin-Opener-Policy "same-origin"
+		Cross-Origin-Embedder-Policy "credentialless"
+	}
+
+	# SPA fallback for all other routes
+	try_files {path} /index.html
+	file_server
+}

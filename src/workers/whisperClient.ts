@@ -1,4 +1,4 @@
-import type { ComputeDevice, WhisperModelId } from '../types/saltify';
+import type { ComputeDevice, ModelSource, WhisperModelId } from '../types/saltify';
 import type { WorkerRequest, WorkerResponse } from './whisper.worker';
 
 export interface TranscribeCallbacks {
@@ -16,6 +16,13 @@ export interface PreloadResult {
   backendUsed: 'webgpu' | 'wasm';
 }
 
+export interface WhisperModelRuntimeOptions {
+  modelId: WhisperModelId;
+  device: ComputeDevice;
+  modelSource: ModelSource;
+  customModelBaseUrl: string;
+}
+
 class CancelledError extends Error {
   constructor() {
     super('Processing was cancelled.');
@@ -25,6 +32,11 @@ class CancelledError extends Error {
 
 export function isCancelledError(error: unknown): boolean {
   return error instanceof CancelledError || (error instanceof Error && error.name === 'CancelledError');
+}
+
+function getAppBaseUrl(): string {
+  if (typeof window === 'undefined') return 'http://localhost/';
+  return new URL('./', window.location.href).href;
 }
 
 /**
@@ -46,16 +58,18 @@ export class WhisperWorkerClient {
   }
 
   preloadModel(
-    modelId: WhisperModelId,
-    device: ComputeDevice,
+    options: WhisperModelRuntimeOptions,
     onProgress?: (stage: string, progress: number, detail?: string) => void
   ): Promise<PreloadResult> {
     return this.runJob<PreloadResult>(
       (jobId) => ({
         type: 'preload',
         jobId,
-        modelId,
-        device,
+        modelId: options.modelId,
+        device: options.device,
+        modelSource: options.modelSource,
+        customModelBaseUrl: options.customModelBaseUrl,
+        appBaseUrl: getAppBaseUrl(),
       }),
       { onProgress }
     );
@@ -63,18 +77,19 @@ export class WhisperWorkerClient {
 
   transcribe(
     audio16k: Float32Array,
-    modelId: WhisperModelId,
-    device: ComputeDevice,
+    options: WhisperModelRuntimeOptions,
     callbacks: TranscribeCallbacks = {}
   ): Promise<TranscribeResult> {
-    // Copy buffer so transferring ownership to the worker never detaches caller data
     const copy = new Float32Array(audio16k);
     return this.runJob<TranscribeResult>(
       (jobId) => ({
         type: 'transcribe',
         jobId,
-        modelId,
-        device,
+        modelId: options.modelId,
+        device: options.device,
+        modelSource: options.modelSource,
+        customModelBaseUrl: options.customModelBaseUrl,
+        appBaseUrl: getAppBaseUrl(),
         audio: copy,
       }),
       callbacks,
@@ -148,7 +163,6 @@ export class WhisperWorkerClient {
 
       const onError = (event: ErrorEvent) => {
         cleanup();
-        // Reset worker on fatal crash (e.g., WASM abort on low-RAM device)
         if (this.worker === worker) {
           worker.terminate();
           this.worker = null;

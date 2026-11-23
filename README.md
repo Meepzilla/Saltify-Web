@@ -39,15 +39,32 @@ To prepare for offline clinical sessions, open **AI Models** in the sidebar whil
 
 ---
 
+## Self-Hosting (100% Air-Gapped / Zero External Calls)
+
+Saltify Web includes everything needed to self-host the entire PWA, ONNX Runtime Web WASM (`/ort/`), and Whisper models (`/models/`) on your own Windows PC, Linux server, Raspberry Pi, or clinic LAN with **zero outbound internet traffic** from client devices:
+
+```bash
+# 1. Download Whisper models onto your server (default: tiny + base; add --all for small too)
+npm run models:download
+
+# 2. Launch with Docker Compose + Caddy (or serve dist/ with nginx.conf)
+docker compose up -d --build
+```
+
+See [SELF_HOSTING.md](./SELF_HOSTING.md) for complete setup instructions — including HTTPS options for **iPad, Android, and Windows** (Tailscale HTTPS, Caddy Let's Encrypt, Cloudflare Tunnel, and air-gapped LAN CA).
+
+---
+
 ## Development
 
 ```bash
 npm install
-npm run dev       # Start local Vite dev server
-npm test          # Run Vitest suite (includes ported SpeechTranscription SALT tests)
-npm run build     # Type-check + build production PWA bundle with Workbox service worker
-npm run preview   # Preview production PWA build locally
-npm run lint      # Run oxlint checks
+npm run models:download   # Optional: download self-hosted Whisper models into public/models/
+npm run dev               # Copies self-hosted ORT WASM into public/ort/ and starts Vite dev server
+npm test                  # Run Vitest suite (includes ported SpeechTranscription SALT tests)
+npm run build             # Type-check + build production PWA bundle with Workbox service worker
+npm run preview           # Preview production PWA build locally
+npm run lint              # Run oxlint checks
 ```
 
 ## License & Attribution
