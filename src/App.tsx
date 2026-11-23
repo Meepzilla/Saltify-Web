@@ -39,6 +39,7 @@ import {
 } from './engine/saltConventions';
 import { computeSaltMetrics } from './engine/saltMetrics';
 import { DEMO_CLIENT_INFO, DEMO_TRANSCRIPT } from './engine/sampleData';
+import { autoAssignSpeakersInTranscript } from './engine/speakerDiarizer';
 import {
   deleteSessionRecord,
   loadAllSessions,
@@ -52,6 +53,7 @@ import {
   formatDurationPadded,
   parseUtteranceLines,
   remapSpeakerAliases,
+  swapSpeakersInTranscript,
 } from './engine/transcriptFormat';
 import { useAudioPlayer } from './hooks/useAudioPlayer';
 import { usePwaInstall } from './hooks/usePwaInstall';
@@ -559,6 +561,7 @@ export default function App() {
           device: settings.device,
           modelSource: settings.modelSource,
           customModelBaseUrl: settings.customModelBaseUrl,
+          aliases: activeSession.speakerAliases,
         },
         {
           onProgress: (stage, progress, detail) => {
@@ -600,7 +603,7 @@ export default function App() {
       pushToast(
         'success',
         'On-device transcription complete',
-        `Processed locally via ${result.backendUsed.toUpperCase()}.`
+        `Auto-labeled ${result.speakerCount} speaker${result.speakerCount > 1 ? 's' : ''} locally via ${result.backendUsed.toUpperCase()}.`
       );
     } catch (err) {
       setProcessing(null);
@@ -618,6 +621,7 @@ export default function App() {
   }, [
     activeAudioBlob,
     activeId,
+    activeSession.speakerAliases,
     player,
     resetGrammarReview,
     settings.modelId,
@@ -866,6 +870,50 @@ export default function App() {
     },
     [activeSession, updateActiveSession, pushToast]
   );
+
+  const handleAutoAssignSpeakers = useCallback(async () => {
+    if (!activeSession?.transcriptionText.trim()) return;
+    let audio16k = mono16kCacheRef.current.get(activeId) ?? null;
+    if (!audio16k && activeAudioBlob) {
+      try {
+        const decoded = await decodeAudioBlob(activeAudioBlob);
+        audio16k = decoded.mono16k;
+        mono16kCacheRef.current.set(activeId, audio16k);
+      } catch {
+        audio16k = null;
+      }
+    }
+    const result = autoAssignSpeakersInTranscript(
+      activeSession.transcriptionText,
+      activeSession.speakerAliases,
+      audio16k,
+      16000
+    );
+    updateActiveSession((s) => ({
+      ...s,
+      transcriptionText: result.transcript,
+    }));
+    pushToast(
+      'success',
+      'Speakers auto-assigned',
+      `Detected ${result.speakerCount} speaker${result.speakerCount > 1 ? 's' : ''} using local ${result.method} analysis.`
+    );
+  }, [activeSession, activeId, activeAudioBlob, updateActiveSession, pushToast]);
+
+  const handleSwapSpeakers = useCallback(() => {
+    if (!activeSession) return;
+    const aliases = activeSession.speakerAliases;
+    updateActiveSession((s) => ({
+      ...s,
+      transcriptionText: swapSpeakersInTranscript(s.transcriptionText, aliases),
+      conventionText: swapSpeakersInTranscript(s.conventionText, aliases),
+    }));
+    pushToast(
+      'info',
+      'Swapped speakers',
+      `Swapped ${aliases.speaker1} ↔ ${aliases.speaker2} labels across this session.`
+    );
+  }, [activeSession, updateActiveSession, pushToast]);
 
   // Derived utterance timestamps for Waveform markers & live SALT metrics
   const activeTranscript = activeSession.transcriptionText;
@@ -1242,6 +1290,8 @@ export default function App() {
           onApplyText={(transcriptionText) =>
             updateActiveSession((s) => ({ ...s, transcriptionText }))
           }
+          onAutoAssignSpeakers={() => void handleAutoAssignSpeakers()}
+          onSwapSpeakers={handleSwapSpeakers}
           onClose={() => setShowLabelSpeakersModal(false)}
         />
       )}

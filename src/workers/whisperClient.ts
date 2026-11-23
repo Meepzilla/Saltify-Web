@@ -1,4 +1,9 @@
-import type { ComputeDevice, ModelSource, WhisperModelId } from '../types/saltify';
+import type {
+  ComputeDevice,
+  ModelSource,
+  SpeakerAliases,
+  WhisperModelId,
+} from '../types/saltify';
 import type { WorkerRequest, WorkerResponse } from './whisper.worker';
 
 export interface TranscribeCallbacks {
@@ -9,6 +14,7 @@ export interface TranscribeCallbacks {
 export interface TranscribeResult {
   transcript: string;
   backendUsed: 'webgpu' | 'wasm';
+  speakerCount: 1 | 2;
 }
 
 export interface PreloadResult {
@@ -21,6 +27,7 @@ export interface WhisperModelRuntimeOptions {
   device: ComputeDevice;
   modelSource: ModelSource;
   customModelBaseUrl: string;
+  aliases?: SpeakerAliases;
 }
 
 class CancelledError extends Error {
@@ -90,6 +97,7 @@ export class WhisperWorkerClient {
         modelSource: options.modelSource,
         customModelBaseUrl: options.customModelBaseUrl,
         appBaseUrl: getAppBaseUrl(),
+        aliases: options.aliases ?? { speaker1: 'C', speaker2: 'E' },
         audio: copy,
       }),
       callbacks,
@@ -154,6 +162,7 @@ export class WhisperWorkerClient {
           resolve({
             transcript: msg.transcript,
             backendUsed: msg.backendUsed,
+            speakerCount: msg.speakerCount,
           } as T);
         } else if (msg.type === 'error') {
           cleanup();

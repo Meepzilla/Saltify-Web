@@ -165,6 +165,30 @@ export function remapSpeakerAliases(
 }
 
 /**
+ * Swaps Speaker 1 and Speaker 2 labels across all labeled utterances in a transcript.
+ */
+export function swapSpeakersInTranscript(
+  text: string,
+  aliases: SpeakerAliases
+): string {
+  if (!text.trim()) return text;
+  const parsed = parseUtteranceLines(text, aliases);
+  const s1 = aliases.speaker1.trim() || 'C';
+  const s2 = aliases.speaker2.trim() || 'E';
+
+  return parsed
+    .map((line) => {
+      if (!line.raw.trim() || !line.speakerSlot) {
+        return line.raw;
+      }
+      const tsPart = line.timestampStr ? `[${line.timestampStr}] ` : '';
+      const swapped = line.speakerSlot === 'speaker1' ? s2 : s1;
+      return `${tsPart}${swapped} ${line.body}`.trimEnd();
+    })
+    .join('\n');
+}
+
+/**
  * Strips leading `[M:SS] ` timestamps from every line (for Word/SALT export).
  */
 export function stripTimestamps(text: string): string {

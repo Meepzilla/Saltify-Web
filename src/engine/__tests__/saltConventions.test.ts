@@ -148,3 +148,51 @@ describe('conjugateThirdPersonSingular & formatCorrectionForConventionBox', () =
     ).toBe('[0:12] C He telled[EW:told] a lie.');
   });
 });
+
+describe('addInflectionalMorphemes idempotency (repeated Add Morphemes presses)', () => {
+  it('never duplicates slashes on contractions, possessives, plurals, or verb inflections across multiple presses', () => {
+    const input = [
+      "[0:00] E Tell me what happened in the story about John's dogs.",
+      "[0:05] C I'm not doing my homework, but I can't do it now anyway.",
+      "[0:10] C It's John's dog and he's running, she'll play, they've walked, we're here, I'd go.",
+      "[0:16] C He didn't stop, couldn't jump, isn't fun, won't go, and don't run.",
+      "[0:22] C And that's all!",
+    ].join('\n');
+
+    const pass1 = addInflectionalMorphemes(input, ['C', 'E']);
+    const pass2 = addInflectionalMorphemes(pass1, ['C', 'E']);
+    const pass3 = addInflectionalMorphemes(pass2, ['C', 'E']);
+
+    expect(pass1).toContain("I/'m not do/ing");
+    expect(pass1).toContain("can/'t");
+    expect(pass1).toContain("that/'s");
+    expect(pass1).toContain("did/n't");
+    expect(pass2).toBe(pass1);
+    expect(pass3).toBe(pass1);
+  });
+
+  it('remains strictly idempotent when mixed with SALT error codes, mazes, omitted markers, and quotes', () => {
+    const input = [
+      "[0:00] C (I I) I telled[EW:told] my mom that it's a dog.",
+      "[0:05] C He liked his[EP:her] shoes and John's dogs weren't happy.",
+      "[0:10] C He walk/*3s to John's house and isn't late.",
+      '[0:15] C She said "it\'s okay" and walked away.',
+    ].join('\n');
+
+    const pass1 = addInflectionalMorphemes(input, ['C', 'E']);
+    const pass2 = addInflectionalMorphemes(pass1, ['C', 'E']);
+    const pass3 = addInflectionalMorphemes(pass2, ['C', 'E']);
+
+    expect(pass1).toContain('"it/\'s okay"');
+    expect(pass1).toContain("were/n't");
+    expect(pass2).toBe(pass1);
+    expect(pass3).toBe(pass1);
+  });
+
+  it('tags newly added words cleanly while leaving previously coded morphemes untouched', () => {
+    const partiallyCoded = "[0:00] C I/'m running to John/z dogs.";
+    const result = addInflectionalMorphemes(partiallyCoded, ['C', 'E']);
+    expect(result).toBe("[0:00] C I/'m run/ing to John/z dog/s.");
+    expect(addInflectionalMorphemes(result, ['C', 'E'])).toBe(result);
+  });
+});

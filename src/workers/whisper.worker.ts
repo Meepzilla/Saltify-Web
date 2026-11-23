@@ -5,14 +5,22 @@ import {
   type ProgressInfo,
 } from '@huggingface/transformers';
 import { sliceAudioIntoPauseAwareChunks } from '../engine/audioProcessing';
+import { autoAssignSpeakersInTranscript } from '../engine/speakerDiarizer';
 import { formatWhisperChunks } from '../engine/transcriptFormat';
-import type { ComputeDevice, ModelSource, WhisperModelId } from '../types/saltify';
+import type {
+  ComputeDevice,
+  ModelSource,
+  SpeakerAliases,
+  WhisperModelId,
+} from '../types/saltify';
 
 // Enable local Cache Storage for offline model + WASM reuse
 env.useBrowserCache = true;
 env.useWasmCache = true;
 
 if (env.backends?.onnx?.wasm) {
+  // We are already inside a dedicated Web Worker — never spawn a nested proxy worker.
+  env.backends.onnx.wasm.proxy = false;
   // Single-threaded WASM avoids SharedArrayBuffer / COOP-COEP requirements on static hosts & iPadOS
   env.backends.onnx.wasm.numThreads =
     typeof self !== 'undefined' && self.crossOriginIsolated
@@ -38,6 +46,7 @@ export type WorkerRequest =
       modelSource: ModelSource;
       customModelBaseUrl: string;
       appBaseUrl: string;
+      aliases: SpeakerAliases;
       audio: Float32Array;
     };
 
@@ -65,6 +74,7 @@ export type WorkerResponse =
       jobId: string;
       transcript: string;
       backendUsed: 'webgpu' | 'wasm';
+      speakerCount: 1 | 2;
     }
   | {
       type: 'error';
@@ -95,6 +105,20 @@ function isSafariBrowser(): boolean {
   if (typeof navigator === 'undefined') return false;
   const ua = navigator.userAgent || '';
   return /Safari/.test(ua) && !/Chrome|Chromium|Edg|Android/.test(ua);
+}
+
+function isLowMemoryDevice(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  const ua = navigator.userAgent || '';
+  const isIosOrMobile =
+    /iPad|iPhone|iPod|Android|Mobile/i.test(ua) ||
+    (isSafariBrowser() && typeof navigator.maxTouchPoints === 'number' && navigator.maxTouchPoints > 1);
+  const devMem = (navigator as unknown as { deviceMemory?: number }).deviceMemory;
+  return isIosOrMobile || (typeof devMem === 'number' && devMem <= 4);
+}
+
+function yieldToEventLoop(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
 async function canUseWebGpu(): Promise<boolean> {
@@ -282,16 +306,31 @@ async function ensurePipeline(
     }
   };
 
+  const lowMemory = isLowMemoryDevice();
   const loadWithBackend = async (backend: 'webgpu' | 'wasm') => {
     const dtype =
       backend === 'webgpu'
         ? ({ encoder_model: 'fp32', decoder_model_merged: 'q4' } as const)
         : ('q8' as const);
 
+    // Memory-saving ONNX Runtime session options prevent Safari Jetsam reloads on iPad/mobile
+    const sessionOptions =
+      backend === 'wasm' && lowMemory
+        ? {
+            enableCpuMemArena: false,
+            enableMemPattern: false,
+            graphOptimizationLevel: 'basic' as const,
+            executionMode: 'sequential' as const,
+          }
+        : {
+            executionMode: 'sequential' as const,
+          };
+
     const pipe = await pipeline('automatic-speech-recognition', modelId, {
       device: backend,
       dtype,
       local_files_only: useLocalFilesOnly,
+      session_options: sessionOptions,
       progress_callback: onModelProgress,
     });
     return pipe;
@@ -330,7 +369,13 @@ function describeWorkerError(
   const details = error instanceof Error ? error.stack || raw : raw;
   const lower = raw.toLowerCase();
 
-  if (lower.includes('out of memory') || lower.includes('oom') || lower.includes('allocation')) {
+  if (
+    lower.includes('out of memory') ||
+    lower.includes('oom') ||
+    lower.includes('allocation') ||
+    (lower.includes('wasm') && lower.includes('memory')) ||
+    lower.includes('rangeerror')
+  ) {
     return {
       message:
         'This device ran out of browser memory while transcribing. Switch to "Whisper Tiny (.en)" in AI Models or try a shorter clip.',
@@ -355,6 +400,7 @@ function describeWorkerError(
   }
   if (
     lower.includes('failed to fetch') ||
+    lower.includes('load failed') ||
     lower.includes('network') ||
     lower.includes('offline') ||
     lower.includes('err_internet')
@@ -417,13 +463,17 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
       );
 
       // Pause-aware low-RAM chunking keeps iPadOS Safari & Android memory bounded
-      const slices = sliceAudioIntoPauseAwareChunks(req.audio, 16000, 26, 18, 29);
+      const lowMemory = isLowMemoryDevice();
+      const slices = lowMemory
+        ? sliceAudioIntoPauseAwareChunks(req.audio, 16000, 18, 12, 24)
+        : sliceAudioIntoPauseAwareChunks(req.audio, 16000, 26, 18, 29);
       if (slices.length === 0) {
         post({
           type: 'done',
           jobId: req.jobId,
           transcript: '',
           backendUsed,
+          speakerCount: 1,
         });
         return;
       }
@@ -432,7 +482,7 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
 
       for (let i = 0; i < slices.length; i++) {
         const slice = slices[i];
-        const baseProgress = 0.25 + (i / slices.length) * 0.7;
+        const baseProgress = 0.25 + (i / slices.length) * 0.68;
         post({
           type: 'progress',
           jobId: req.jobId,
@@ -441,8 +491,14 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
           detail: `Running 100% locally (${backendUsed.toUpperCase()})`,
         });
 
+        const segDurationSec = Math.max(0.5, slice.endSec - slice.startSec);
+        // Cap generated tokens per segment (~6 tokens/sec max speech rate) to prevent
+        // Whisper 448-token hallucination loops on iPad/mobile browsers.
+        const maxNewTokens = Math.min(224, Math.max(64, Math.ceil(segDurationSec * 6)));
+
         const output = await transcriber(slice.samples, {
           return_timestamps: true,
+          max_new_tokens: maxNewTokens,
         });
 
         const singleOutput = Array.isArray(output) ? output[0] : output;
@@ -470,22 +526,31 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
           jobId: req.jobId,
           partialTranscript: formatWhisperChunks(allChunks),
         });
+
+        // Yield briefly between segments so Safari GC can reclaim intermediate WASM/JS buffers
+        if (i + 1 < slices.length) {
+          await yieldToEventLoop();
+        }
       }
 
       post({
         type: 'progress',
         jobId: req.jobId,
-        stage: 'Formatting transcript',
-        progress: 0.97,
+        stage: 'Assigning speakers locally',
+        progress: 0.96,
       });
 
-      const finalTranscript = formatWhisperChunks(allChunks);
+      const formatted = formatWhisperChunks(allChunks);
+      const diarized = formatted.trim()
+        ? autoAssignSpeakersInTranscript(formatted, req.aliases, req.audio, 16000)
+        : { transcript: '', speakerCount: 1 as const };
 
       post({
         type: 'done',
         jobId: req.jobId,
-        transcript: finalTranscript,
+        transcript: diarized.transcript,
         backendUsed,
+        speakerCount: diarized.speakerCount,
       });
     }
   } catch (err) {

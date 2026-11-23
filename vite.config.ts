@@ -57,7 +57,7 @@ export default defineConfig({
         globIgnores: ['models/**', 'ort/**'],
         maximumFileSizeToCacheInBytes: 12 * 1024 * 1024,
         cleanupOutdatedCaches: true,
-        navigateFallbackDenylist: [/^\/models\//, /^\/ort\//],
+        navigateFallbackDenylist: [/\/models\//, /\/ort\//],
       },
       devOptions: {
         enabled: false,

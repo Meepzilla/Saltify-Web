@@ -1,4 +1,4 @@
-import { CheckSquare, Square, X } from 'lucide-react';
+import { ArrowLeftRight, CheckSquare, Square, Wand2, X } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import {
   applySpeakerLabelsToLines,
@@ -11,6 +11,8 @@ interface LabelSpeakersModalProps {
   text: string;
   aliases: SpeakerAliases;
   onApplyText: (nextText: string) => void;
+  onAutoAssignSpeakers?: () => void;
+  onSwapSpeakers?: () => void;
   onClose: () => void;
 }
 
@@ -19,6 +21,8 @@ export function LabelSpeakersModal({
   text,
   aliases,
   onApplyText,
+  onAutoAssignSpeakers,
+  onSwapSpeakers,
   onClose,
 }: LabelSpeakersModalProps) {
   const [selected, setSelected] = useState<Set<number>>(new Set());
@@ -85,11 +89,37 @@ export function LabelSpeakersModal({
             }}
           >
             <span style={{ fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
-              Select utterances below and assign them to{' '}
-              <strong style={{ color: 'var(--speaker1)' }}>{aliases.speaker1}</strong> or{' '}
+              Auto-detect speakers on-device, swap labels, or select utterances to assign{' '}
+              <strong style={{ color: 'var(--speaker1)' }}>{aliases.speaker1}</strong> /{' '}
               <strong style={{ color: 'var(--speaker2)' }}>{aliases.speaker2}</strong>.
             </span>
-            <div style={{ display: 'flex', gap: 6 }}>
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              {onAutoAssignSpeakers && (
+                <button
+                  id="auto-label-speakers-btn"
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  onClick={onAutoAssignSpeakers}
+                  title="Auto-assign Child / Examiner labels using local acoustic & turn cues"
+                >
+                  <Wand2 size={14} />
+                  <span>Auto-Label</span>
+                </button>
+              )}
+              {onSwapSpeakers && (
+                <button
+                  id="swap-speakers-btn"
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  onClick={onSwapSpeakers}
+                  title={`Swap all ${aliases.speaker1} and ${aliases.speaker2} labels`}
+                >
+                  <ArrowLeftRight size={14} />
+                  <span>
+                    Swap {aliases.speaker1} ↔ {aliases.speaker2}
+                  </span>
+                </button>
+              )}
               <button
                 type="button"
                 className="btn btn-subtle btn-sm"

@@ -6,6 +6,7 @@ import {
   parseUtteranceLines,
   remapSpeakerAliases,
   stripTimestamps,
+  swapSpeakersInTranscript,
 } from '../transcriptFormat';
 import { EMPTY_CLIENT_INFO } from '../../types/saltify';
 
@@ -36,6 +37,14 @@ describe('transcriptFormat', () => {
     const parsed = parseUtteranceLines(remapSpeakerAliases(text, prev, next), next);
     expect(parsed[0].speakerSlot).toBe('speaker2');
     expect(parsed[1].speakerSlot).toBe('speaker1');
+  });
+
+  it('swaps Speaker 1 and Speaker 2 labels cleanly while leaving unlabeled lines intact', () => {
+    const aliases = { speaker1: 'C', speaker2: 'E' };
+    const text = '[0:00] E Ready?\n[0:04] C Yes!\n[0:08] Unlabeled utterance.';
+    const swapped = swapSpeakersInTranscript(text, aliases);
+    expect(swapped).toBe('[0:00] C Ready?\n[0:04] E Yes!\n[0:08] Unlabeled utterance.');
+    expect(swapSpeakersInTranscript(swapped, aliases)).toBe(text);
   });
 
   it('strips timestamps and generates valid SALT headers', () => {

@@ -367,14 +367,42 @@ function restoreInitialCase(original: string, target: string): string {
  * - Contractions: `/n't`, `/'t`, `/'ll`, `/'m`, `/'d`, `/'re`, `/'ve`
  *   with irregular exceptions: `can't` -> `can/'t`, `don't` -> `don't`, `won't` -> `won't`
  */
+function encodeAlphaIndex(index: number): string {
+  let n = index;
+  let result = '';
+  do {
+    result = String.fromCharCode(65 + (n % 26)) + result;
+    n = Math.floor(n / 26);
+  } while (n > 0);
+  return result.padStart(2, 'A');
+}
+
+function decodeAlphaIndex(tag: string): number {
+  let n = 0;
+  for (let i = 0; i < tag.length; i++) {
+    n = n * 26 + (tag.charCodeAt(i) - 65);
+  }
+  return n;
+}
+
 export function addInflectionalMorphemesToSentence(sentence: string): string {
   const trimmed = sentence.trim();
   if (!trimmed) return '';
 
-  // Already-coded words containing '/' should not be re-tokenized by wink into slashes
-  const tokens = tagger.tagSentence(trimmed);
+  // Protect already-SALT-coded slash tokens (e.g. walk/ed, dog/s, I/'m, can/'t, did/n't, John/z, walk/*3s)
+  // using pure-letter placeholders so wink-pos-tagger never splits them into multiple tokens
+  // and repeated "Add Morphemes" presses remain strictly idempotent.
+  const preservedTokens: string[] = [];
+  const masked = trimmed.replace(/[A-Za-z0-9']+\/[A-Za-z0-9'*]+/g, (match) => {
+    const id = `SALTCODED${encodeAlphaIndex(preservedTokens.length)}`;
+    preservedTokens.push(match);
+    return id;
+  });
+
+  const tokens = tagger.tagSentence(masked);
   let converted = '';
   let mostRecentVerbIsToBe = false;
+  let inDoubleQuote = false;
 
   for (let idx = 0; idx < tokens.length; idx++) {
     const token = tokens[idx];
@@ -382,18 +410,30 @@ export function addInflectionalMorphemesToSentence(sentence: string): string {
     const pos = token.pos;
     const lower = val.toLowerCase();
 
-    // Preserve already-slashed SALT morpheme token sequences if wink split word + / + morph
-    if (
-      val === '/' &&
-      idx > 0 &&
-      idx + 1 < tokens.length &&
-      converted.endsWith(' ')
-    ) {
-      converted = converted.slice(0, -1) + '/';
+    // Restore already SALT-coded token verbatim and update to-be verb context
+    const maskedMatch = val.match(/^SALTCODED([A-Z]{2,})$/);
+    if (maskedMatch) {
+      const originalCoded = preservedTokens[decodeAlphaIndex(maskedMatch[1])];
+      const lowerCoded = originalCoded.toLowerCase();
+      converted += `${originalCoded} `;
+      const root = lowerCoded.split('/')[0];
+      if (/\/(?:'m|'s|'re)$/.test(lowerCoded) || isToBeVerb(root)) {
+        mostRecentVerbIsToBe = true;
+      } else if (/\/(?:ed|3s|ing)$/.test(lowerCoded)) {
+        mostRecentVerbIsToBe = false;
+      }
       continue;
     }
-    if (idx > 0 && tokens[idx - 1].value === '/') {
-      converted += val + ' ';
+
+    // Preserve quotation marks without introducing spaces inside quotes
+    if (val === '“' || val === '‘' || (val === '"' && !inDoubleQuote)) {
+      converted += val;
+      if (val === '"') inDoubleQuote = true;
+      continue;
+    }
+    if (val === '”' || val === '’' || (val === '"' && inDoubleQuote)) {
+      converted = converted.replace(/ $/, '') + val + ' ';
+      if (val === '"') inDoubleQuote = false;
       continue;
     }
 
