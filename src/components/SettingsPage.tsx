@@ -1,5 +1,6 @@
 import {
   ArrowRight,
+  Bug,
   CheckCircle2,
   Cpu,
   Download,
@@ -20,6 +21,7 @@ import {
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { APP_VERSION, formatReleaseDate, getCurrentRelease } from '../data/changelog';
+import type { ErrorLogEntry } from '../engine/errorLog';
 import { estimateLocalStorageUsage } from '../engine/storage';
 import { MAX_PLAYBACK_BOOST } from '../hooks/useAudioPlayer';
 import type { PwaInstallState } from '../hooks/usePwaInstall';
@@ -36,6 +38,7 @@ import {
   type WhisperModelId,
 } from '../types/saltify';
 import { ChangelogPage } from './ChangelogPage';
+import { ErrorLogPage } from './ErrorLogPage';
 
 interface SettingsPageProps {
   activeTab: SettingsTab;
@@ -43,10 +46,12 @@ interface SettingsPageProps {
   resolvedTheme: 'light' | 'dark';
   processing: ProcessingState | null;
   sessionCount: number;
+  errorLogs: ErrorLogEntry[];
   pwa: PwaInstallState;
   onSelectTab: (tab: SettingsTab) => void;
   onUpdateSettings: (partial: Partial<AppSettings>) => void;
   onResetSettings: () => void;
+  onClearErrorLogs: () => void;
   onPreloadModel: (modelId: WhisperModelId) => void;
   onNotify: (title: string, description?: string) => void;
 }
@@ -92,10 +97,12 @@ export function SettingsPage({
   resolvedTheme,
   processing,
   sessionCount,
+  errorLogs,
   pwa,
   onSelectTab,
   onUpdateSettings,
   onResetSettings,
+  onClearErrorLogs,
   onPreloadModel,
   onNotify,
 }: SettingsPageProps) {
@@ -111,6 +118,7 @@ export function SettingsPage({
   }>({ usageBytes: null, quotaBytes: null });
 
   const currentRelease = getCurrentRelease();
+  const errorCount = errorLogs.filter((e) => e.level === 'error').length;
 
   useEffect(() => {
     if (activeTab !== 'general') return;
@@ -171,6 +179,7 @@ export function SettingsPage({
     label: string;
     icon: typeof SlidersHorizontal;
     badge?: string;
+    badgeTone?: 'danger';
     group: 'preferences' | 'application';
   }> = [
     {
@@ -190,6 +199,14 @@ export function SettingsPage({
       label: 'SALT & Export',
       icon: SpellCheck,
       group: 'preferences',
+    },
+    {
+      id: 'logs',
+      label: 'Error Log',
+      icon: Bug,
+      badge: errorCount > 0 ? String(errorCount) : undefined,
+      badgeTone: errorCount > 0 ? 'danger' : undefined,
+      group: 'application',
     },
     {
       id: 'changelog',
@@ -248,7 +265,13 @@ export function SettingsPage({
                   <Icon size={16} />
                   <span>{item.label}</span>
                   {item.badge && (
-                    <span className="settings-nav-badge mono">{item.badge}</span>
+                    <span
+                      className={`settings-nav-badge mono ${
+                        item.badgeTone ? item.badgeTone : ''
+                      }`}
+                    >
+                      {item.badge}
+                    </span>
                   )}
                 </button>
               );
@@ -900,6 +923,16 @@ export function SettingsPage({
                 </div>
               </div>
             </section>
+          )}
+
+          {activeTab === 'logs' && (
+            <ErrorLogPage
+              entries={errorLogs}
+              settings={settings}
+              pwa={pwa}
+              onClearLogs={onClearErrorLogs}
+              onNotify={onNotify}
+            />
           )}
 
           {activeTab === 'changelog' && (

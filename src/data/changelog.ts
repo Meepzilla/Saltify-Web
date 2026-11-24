@@ -24,6 +24,39 @@ export const APP_VERSION: string = __APP_VERSION__;
  */
 export const CHANGELOG_RELEASES: readonly ChangelogRelease[] = [
   {
+    version: '1.3.1',
+    date: '2026-11-23',
+    title: 'On-Device Error Log & Cloudflare Model Download Fix',
+    summary:
+      'Adds a local Error Log & Diagnostics page for troubleshooting and resolves Whisper model downloads on Cloudflare Workers SPA hosting.',
+    changes: [
+      {
+        category: 'added',
+        summary: 'On-device Error Log & Diagnostics page (#settings/logs)',
+        detail:
+          'Automatically captures model download, transcription, audio, and runtime errors locally (with zero transcript text logged), plus Copy Report and Export JSON.',
+      },
+      {
+        category: 'added',
+        summary: 'One-tap View Log action on error notifications',
+        detail:
+          'Jump straight from any error toast to the full technical details and runtime context in Settings → Error Log.',
+      },
+      {
+        category: 'fixed',
+        summary: 'Whisper model downloads on Cloudflare Workers SPA hosting',
+        detail:
+          'Verifies /models/ serves JSON before attempting local model fetches so SPA HTML fallbacks no longer trigger "Unexpected token <" errors.',
+      },
+      {
+        category: 'fixed',
+        summary: 'Cloudflare Workers 25 MiB per-file static asset limit',
+        detail:
+          'Ships the compact 13.6 MiB ONNX Runtime WASM binary by default while keeping full air-gapped ORT bundles enabled in Docker builds.',
+      },
+    ],
+  },
+  {
     version: '1.3.0',
     date: '2026-11-23',
     title: 'Settings Page, Change Log & Version Info',

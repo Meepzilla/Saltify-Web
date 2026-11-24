@@ -51,19 +51,34 @@ export function ToastStack({ toasts, onDismiss }: ToastStackProps) {
                 {toast.description}
               </div>
             )}
-            {toast.onRetry && (
-              <button
-                type="button"
-                className="btn btn-secondary btn-sm"
-                style={{ marginTop: 8 }}
-                onClick={() => {
-                  onDismiss(toast.id);
-                  toast.onRetry?.();
-                }}
-              >
-                <RotateCw size={13} />
-                <span>{toast.retryLabel ?? 'Retry'}</span>
-              </button>
+            {(toast.onRetry || toast.onAction) && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginTop: 8 }}>
+                {toast.onRetry && (
+                  <button
+                    type="button"
+                    className="btn btn-secondary btn-sm"
+                    onClick={() => {
+                      onDismiss(toast.id);
+                      toast.onRetry?.();
+                    }}
+                  >
+                    <RotateCw size={13} />
+                    <span>{toast.retryLabel ?? 'Retry'}</span>
+                  </button>
+                )}
+                {toast.onAction && (
+                  <button
+                    type="button"
+                    className="btn btn-subtle btn-sm"
+                    onClick={() => {
+                      onDismiss(toast.id);
+                      toast.onAction?.();
+                    }}
+                  >
+                    <span>{toast.actionLabel ?? 'Details'}</span>
+                  </button>
+                )}
+              </div>
             )}
           </div>
 
