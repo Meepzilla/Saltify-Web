@@ -173,7 +173,7 @@ export interface ProcessingState {
 
 export type AppView = 'workspace' | 'settings';
 
-export type SettingsTab = 'general' | 'models' | 'salt' | 'changelog';
+export type SettingsTab = 'general' | 'models' | 'salt' | 'logs' | 'changelog';
 
 export interface AppSettings {
   theme: ThemeMode;
@@ -210,4 +210,6 @@ export interface ToastMessage {
   description?: string;
   retryLabel?: string;
   onRetry?: () => void;
+  actionLabel?: string;
+  onAction?: () => void;
 }

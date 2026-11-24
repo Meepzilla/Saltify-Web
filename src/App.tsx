@@ -40,6 +40,14 @@ import {
   parseUtteranceClauseCoding,
   setUtteranceSiCode,
 } from './engine/clauseAnalysis';
+import {
+  appendErrorLog,
+  clearErrorLogs,
+  installGlobalErrorHandlers,
+  loadErrorLogs,
+  subscribeErrorLogs,
+  type ErrorLogEntry,
+} from './engine/errorLog';
 import { downloadSessionAudio } from './engine/exporter';
 import { GrammarCheckerSession } from './engine/grammarSession';
 import {
@@ -89,6 +97,9 @@ function parseHashRoute(hash: string): { view: AppView; tab: SettingsTab } {
   const clean = hash.replace(/^#\/?/, '').toLowerCase();
   if (clean === 'changelog' || clean === 'settings/changelog') {
     return { view: 'settings', tab: 'changelog' };
+  }
+  if (clean === 'logs' || clean === 'settings/logs') {
+    return { view: 'settings', tab: 'logs' };
   }
   if (clean === 'settings/models') {
     return { view: 'settings', tab: 'models' };
@@ -186,6 +197,28 @@ export default function App() {
   const [showWaveformModal, setShowWaveformModal] = useState(false);
 
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
+  const [errorLogs, setErrorLogs] = useState<ErrorLogEntry[]>(() => loadErrorLogs());
+  const openLogsRef = useRef<() => void>(() => {});
+  const runtimeCtxRef = useRef({
+    modelId: settings.modelId,
+    modelSource: settings.modelSource,
+    device: settings.device,
+    isOnline: pwa.isOnline,
+  });
+
+  useEffect(() => {
+    runtimeCtxRef.current = {
+      modelId: settings.modelId,
+      modelSource: settings.modelSource,
+      device: settings.device,
+      isOnline: pwa.isOnline,
+    };
+  }, [settings.modelId, settings.modelSource, settings.device, pwa.isOnline]);
+
+  useEffect(() => {
+    installGlobalErrorHandlers();
+    return subscribeErrorLogs(setErrorLogs);
+  }, []);
 
   const pushToast = useCallback(
     (
@@ -194,6 +227,23 @@ export default function App() {
       description?: string,
       retry?: { label?: string; onRetry: () => void }
     ) => {
+      if (tone === 'error' || tone === 'warning') {
+        const ctx = runtimeCtxRef.current;
+        appendErrorLog({
+          level: tone,
+          source: 'App',
+          title,
+          message: description || title,
+          context: {
+            version: APP_VERSION,
+            model: ctx.modelId,
+            source: ctx.modelSource,
+            device: ctx.device,
+            online: ctx.isOnline,
+          },
+        });
+      }
+
       const id = `toast_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
       setToasts((prev) => {
         const filtered =
@@ -209,6 +259,8 @@ export default function App() {
             description,
             retryLabel: retry?.label,
             onRetry: retry?.onRetry,
+            actionLabel: tone === 'error' ? 'View Log' : undefined,
+            onAction: tone === 'error' ? () => openLogsRef.current() : undefined,
           },
         ];
       });
@@ -307,6 +359,10 @@ export default function App() {
     [syncHash]
   );
 
+  useEffect(() => {
+    openLogsRef.current = () => openSettings('logs');
+  }, [openSettings]);
+
   const closeSettings = useCallback(() => {
     setActiveView('workspace');
     syncHash('workspace', settingsTab);
@@ -333,6 +389,8 @@ export default function App() {
       document.title =
         settingsTab === 'changelog'
           ? `Change Log — Saltify Web v${APP_VERSION}`
+          : settingsTab === 'logs'
+          ? `Error Log — Saltify Web v${APP_VERSION}`
           : `Settings — Saltify Web v${APP_VERSION}`;
     } else {
       document.title = 'Saltify — On-Device SALT Speech Transcription & Analysis';
@@ -1288,7 +1346,11 @@ export default function App() {
 
                 <div className="settings-topbar-breadcrumb">
                   <span className="topbar-session-title">
-                    {settingsTab === 'changelog' ? 'Change Log' : 'Settings'}
+                    {settingsTab === 'changelog'
+                      ? 'Change Log'
+                      : settingsTab === 'logs'
+                      ? 'Error Log'
+                      : 'Settings'}
                   </span>
                 </div>
               </div>
@@ -1326,10 +1388,12 @@ export default function App() {
               resolvedTheme={resolvedTheme}
               processing={processing}
               sessionCount={sessions.length}
+              errorLogs={errorLogs}
               pwa={pwa}
               onSelectTab={(tab) => openSettings(tab)}
               onUpdateSettings={updateSettings}
               onResetSettings={handleResetSettings}
+              onClearErrorLogs={clearErrorLogs}
               onPreloadModel={(id) => void handlePreloadModel(id)}
               onNotify={(title, desc) => pushToast('info', title, desc)}
             />
