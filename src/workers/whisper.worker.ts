@@ -156,6 +156,22 @@ async function hasSelfHostedAsyncifyWasm(ortBase: string): Promise<boolean> {
   }
 }
 
+async function probeLocalModelConfig(
+  manifestBaseUrl: string,
+  modelId: WhisperModelId
+): Promise<boolean> {
+  try {
+    const resp = await fetch(`${manifestBaseUrl}${modelId}/config.json`, {
+      method: 'HEAD',
+      cache: 'no-cache',
+    });
+    const ct = resp.headers.get('content-type') || '';
+    return resp.ok && ct.includes('json');
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Configures ONNX Runtime Web WASM paths (preferring self-hosted `/ort/` binaries,
  * with automatic fallback when static hosts like Cloudflare Workers cap assets at 25 MiB)
@@ -165,12 +181,13 @@ async function configureSelfHostedRuntime(
   appBaseUrl: string,
   modelSource: ModelSource,
   customModelBaseUrl: string,
-  requestedDevice: ComputeDevice
-): Promise<{ manifestBaseUrl: string; useLocalFilesOnly: boolean }> {
+  targetBackend: 'webgpu' | 'wasm',
+  hasLocalModel: boolean
+): Promise<{ useLocalFilesOnly: boolean }> {
   const ortBase = new URL('ort/', appBaseUrl).href;
 
   if (env.backends?.onnx?.wasm) {
-    const wantsAsyncify = !isSafariBrowser();
+    const wantsAsyncify = targetBackend === 'webgpu' && !isSafariBrowser();
     const hasLocalAsyncify =
       wantsAsyncify && (await hasSelfHostedAsyncifyWasm(ortBase));
 
@@ -179,11 +196,7 @@ async function configureSelfHostedRuntime(
         mjs: `${ortBase}ort-wasm-simd-threaded.asyncify.mjs`,
         wasm: `${ortBase}ort-wasm-simd-threaded.asyncify.wasm`,
       };
-    } else if (
-      !wantsAsyncify ||
-      modelSource === 'local-only' ||
-      requestedDevice === 'wasm'
-    ) {
+    } else if (!wantsAsyncify || modelSource === 'local-only') {
       // Compact 13.6 MiB self-hosted binary (works on Cloudflare Workers & air-gapped servers)
       env.backends.onnx.wasm.wasmPaths = {
         mjs: `${ortBase}ort-wasm-simd-threaded.mjs`,
@@ -191,8 +204,7 @@ async function configureSelfHostedRuntime(
       };
     } else {
       // Static hosts with 25 MiB per-file limits (e.g. Cloudflare Workers) cannot host the
-      // 25.6 MiB asyncify WASM needed for WebGPU; load it from jsDelivr (cached via useWasmCache)
-      // or fall back to the local 13.6 MiB WASM binary if offline.
+      // 25.6 MiB asyncify WASM needed for WebGPU; load it from jsDelivr (cached via useWasmCache).
       const ortVersion =
         (env.backends.onnx as { versions?: { web?: string } }).versions?.web ||
         '1.24.3';
@@ -214,7 +226,7 @@ async function configureSelfHostedRuntime(
     env.allowRemoteModels = true;
     env.remoteHost = customBase;
     env.remotePathTemplate = '{model}/';
-    return { manifestBaseUrl: customBase, useLocalFilesOnly: false };
+    return { useLocalFilesOnly: false };
   }
 
   // Restore standard Hugging Face remote defaults
@@ -236,16 +248,27 @@ async function configureSelfHostedRuntime(
     env.allowLocalModels = false;
     env.allowRemoteModels = true;
   } else {
-    // 'auto': check self-hosted `/models/` first, fall back to Hugging Face if missing
-    env.allowLocalModels = true;
+    // 'auto': only enable local /models/ fetch if this origin actually serves JSON model files.
+    // On SPA hosts like Cloudflare Workers, missing /models/* paths return HTTP 200 index.html,
+    // which otherwise breaks Transformers.js with `Unexpected token '<'`.
+    env.allowLocalModels = hasLocalModel;
     env.allowRemoteModels = true;
   }
 
-  const manifestBaseUrl = new URL(relativeModelPath, appBaseUrl).href;
   return {
-    manifestBaseUrl,
     useLocalFilesOnly: modelSource === 'local-only',
   };
+}
+
+function resolveManifestBaseUrl(appBaseUrl: string, customModelBaseUrl: string): string {
+  const trimmedCustom = customModelBaseUrl.trim();
+  if (/^https?:\/\//i.test(trimmedCustom)) {
+    return ensureTrailingSlash(trimmedCustom);
+  }
+  const relativeModelPath = trimmedCustom
+    ? ensureTrailingSlash(trimmedCustom.startsWith('/') ? trimmedCustom : `/${trimmedCustom}`)
+    : ensureTrailingSlash(new URL('models/', appBaseUrl).pathname);
+  return new URL(relativeModelPath, appBaseUrl).href;
 }
 
 async function fetchSelfHostedEntry(
@@ -275,12 +298,7 @@ async function ensurePipeline(
   transcriber: AutomaticSpeechRecognitionPipeline;
   backendUsed: 'webgpu' | 'wasm';
 }> {
-  const { manifestBaseUrl, useLocalFilesOnly } = await configureSelfHostedRuntime(
-    appBaseUrl,
-    modelSource,
-    customModelBaseUrl,
-    requestedDevice
-  );
+  const manifestBaseUrl = resolveManifestBaseUrl(appBaseUrl, customModelBaseUrl);
 
   // If self-hosted server has q8 WASM weights (without larger WebGPU fp32/q4 weights),
   // prefer WASM directly to avoid unnecessary fallback fetches.
@@ -288,6 +306,14 @@ async function ensurePipeline(
     modelSource !== 'huggingface'
       ? await fetchSelfHostedEntry(manifestBaseUrl, modelId)
       : null;
+
+  const isCustomExternalUrl = /^https?:\/\//i.test(customModelBaseUrl.trim());
+  const hasLocalModel =
+    modelSource === 'local-only' ||
+    Boolean(localEntry) ||
+    (modelSource === 'auto' &&
+      !isCustomExternalUrl &&
+      (await probeLocalModelConfig(manifestBaseUrl, modelId)));
 
   const webGpuSupported =
     requestedDevice === 'webgpu' ||
@@ -298,6 +324,15 @@ async function ensurePipeline(
     !(localEntry && localEntry.wasmQ8 && !localEntry.webgpu && requestedDevice === 'auto');
 
   const targetBackend: 'webgpu' | 'wasm' = preferWebGpu ? 'webgpu' : 'wasm';
+
+  const { useLocalFilesOnly } = await configureSelfHostedRuntime(
+    appBaseUrl,
+    modelSource,
+    customModelBaseUrl,
+    targetBackend,
+    hasLocalModel
+  );
+
   const cacheSignature = `${modelId}|${targetBackend}|${modelSource}|${manifestBaseUrl}`;
 
   if (activePipeline && loadedKey === cacheSignature && loadedBackend) {
