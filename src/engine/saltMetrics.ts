@@ -11,6 +11,11 @@ import { parseUtteranceLines } from './transcriptFormat';
 const BOUND_MORPHEME_RE = /\/(?:s|z|ed|3s|ing|n't|'t|'s|'m|'re|'ll|'d|'ve)\b/gi;
 const ERROR_CODE_RE = /\[(?:EW|EO|EP|EU|E[A-Z]*)(?::[^\]]+)?\]/gi;
 const OMISSION_RE = /(?:\/\*[a-z0-9']+|\*[a-zA-Z]+|[a-zA-Z]+\*)/g;
+/** SALT unintelligible markers: X (word), XX (segment), XXX (utterance). Uppercase only. */
+const UNINTELLIGIBLE_TOKEN_RE = /^X{1,3}$/;
+const UNINTELLIGIBLE_IN_TEXT_RE = /(?:^|\s)X{1,3}(?=[\s.,!?>^]|$)/;
+/** SALT comments, e.g. {laughs} or {points to picture}, are not spoken words. */
+const COMMENT_RE = /\{[^}]*\}/g;
 
 function createEmptySiDistribution(): SiDistribution {
   return {
@@ -27,6 +32,8 @@ function createEmptySpeakerMetrics(speaker: string): SpeakerMetrics {
     speaker,
     totalUtterances: 0,
     completeIntelligibleUtterances: 0,
+    ciWords: 0,
+    ciMorphemes: 0,
     totalWords: 0,
     uniqueWords: 0,
     typeTokenRatio: 0,
@@ -61,6 +68,8 @@ function analyzeUtteranceSet(
   }
 
   let completeIntelligible = 0;
+  let ciWords = 0;
+  let ciMorphemes = 0;
   let totalWords = 0;
   let totalMorphemes = 0;
   let boundMorphemes = 0;
@@ -76,7 +85,7 @@ function analyzeUtteranceSet(
   const vocab = new Set<string>();
 
   for (const u of nonEmpty) {
-    let body = u.body.trim();
+    let body = u.body.replace(COMMENT_RE, ' ').trim();
 
     // Parse clause / SALT Subordination Index coding before stripping brackets
     const clauseCoding = parseUtteranceClauseCoding(body);
@@ -105,7 +114,9 @@ function analyzeUtteranceSet(
     const errorMatches = body.match(ERROR_CODE_RE);
     if (errorMatches) errorCount += errorMatches.length;
 
-    // Extract & count mazes: parenthetical segments like "(I I)" or "(and a)"
+    // Extract & count mazes: parenthetical segments like "(I I)" or "(and a)".
+    // Adjacent mazes "(um) (I) I" are one maze in SALT, so merge them before counting.
+    body = body.replace(/\)\s*\(/g, ' ');
     const mazeMatches = body.match(/\([^)]*\)/g);
     if (mazeMatches) {
       mazeCount += mazeMatches.length;
@@ -120,10 +131,13 @@ function analyzeUtteranceSet(
 
     // Check completeness / intelligibility (SALT: abandoned `>`, interrupted `^`, unintelligible `XXX`/`XX`)
     const isAbandonedOrUnintelligible =
-      /[>^]\s*$/.test(body) || /\bX{2,}\b/i.test(body);
+      /[>^]\s*$/.test(body) || UNINTELLIGIBLE_IN_TEXT_RE.test(body);
     if (!isAbandonedOrUnintelligible) {
       completeIntelligible += 1;
     }
+
+    // Remove bracket codes (e.g. [EW:told], [SI-1]) before counting words and morphemes
+    const strippedBrackets = body.replace(/\[[^\]]*\]/g, '');
 
     // Count omitted words/morphemes outside mazes
     const omissionMatches = body.match(OMISSION_RE);
@@ -132,12 +146,10 @@ function analyzeUtteranceSet(
     }
 
     // Count bound morphemes outside mazes
-    const boundMatches = body.match(BOUND_MORPHEME_RE);
+    const boundMatches = strippedBrackets.match(BOUND_MORPHEME_RE);
     const uttBound = boundMatches ? boundMatches.length : 0;
     boundMorphemes += uttBound;
 
-    // Remove bracket codes for word counting while keeping spoken root words
-    const strippedBrackets = body.replace(/\[[^\]]*\]/g, '');
     const tokens = strippedBrackets
       .split(/\s+/)
       .map((t) => t.replace(/^[.,!?;:"'<>^]+|[.,!?;:"'<>^]+$/g, ''))
@@ -147,6 +159,10 @@ function analyzeUtteranceSet(
     for (const tok of tokens) {
       // Skip omitted words (e.g. "*to" or "*is" were NOT spoken by the child)
       if (tok.startsWith('*') || tok.endsWith('*')) {
+        continue;
+      }
+      // Skip unintelligible markers (X, XX, XXX): not countable words in SALT
+      if (UNINTELLIGIBLE_TOKEN_RE.test(tok)) {
         continue;
       }
       // Extract root word before any SALT slash bound morpheme (e.g. "walk/ed" -> "walk")
@@ -159,9 +175,18 @@ function analyzeUtteranceSet(
 
     totalWords += uttWords;
     totalMorphemes += uttWords + uttBound;
+    if (!isAbandonedOrUnintelligible) {
+      ciWords += uttWords;
+      ciMorphemes += uttWords + uttBound;
+    }
   }
 
-  const denomUtterances = completeIntelligible > 0 ? completeIntelligible : nonEmpty.length;
+  // SALT MLU: numerator AND denominator use complete & intelligible utterances only.
+  // (Falls back to all utterances only when none are complete & intelligible.)
+  const useCi = completeIntelligible > 0;
+  const denomUtterances = useCi ? completeIntelligible : nonEmpty.length;
+  const mluWordNumerator = useCi ? ciWords : totalWords;
+  const mluMorphNumerator = useCi ? ciMorphemes : totalMorphemes;
   const totalSpokenWithMazes = totalWords + mazeWords;
   const durationMinutes =
     durationSeconds && durationSeconds > 0 ? durationSeconds / 60 : null;
@@ -178,14 +203,17 @@ function analyzeUtteranceSet(
     speaker: label,
     totalUtterances: nonEmpty.length,
     completeIntelligibleUtterances: completeIntelligible,
+    ciWords: mluWordNumerator,
+    ciMorphemes: mluMorphNumerator,
     totalWords,
     uniqueWords: vocab.size,
     typeTokenRatio: totalWords > 0 ? Number((vocab.size / totalWords).toFixed(2)) : 0,
-    mluWords: denomUtterances > 0 ? Number((totalWords / denomUtterances).toFixed(2)) : 0,
+    mluWords:
+      denomUtterances > 0 ? Number((mluWordNumerator / denomUtterances).toFixed(2)) : 0,
     totalMorphemes,
     boundMorphemes,
     mluMorphemes:
-      denomUtterances > 0 ? Number((totalMorphemes / denomUtterances).toFixed(2)) : 0,
+      denomUtterances > 0 ? Number((mluMorphNumerator / denomUtterances).toFixed(2)) : 0,
     mazeCount,
     mazeWords,
     mazeWordPercent:
@@ -276,24 +304,24 @@ export function describeMetricCalculation(
       return {
         key,
         title: 'MLUm — Mean Length of Utterance (Morphemes)',
-        formula: '(Total Spoken Words + Bound Morphemes) ÷ C&I Utterances',
+        formula: '(Words + Bound Morphemes in C&I Utterances) ÷ C&I Utterances',
         calculation:
           denomUtt > 0
-            ? `(${stats.totalWords} words + ${stats.boundMorphemes} bound = ${stats.totalMorphemes}) ÷ ${denomUtt} ${denomLabel} = ${stats.mluMorphemes.toFixed(2)}`
+            ? `(${stats.ciWords} words + ${stats.ciMorphemes - stats.ciWords} bound = ${stats.ciMorphemes}) ÷ ${denomUtt} ${denomLabel} = ${stats.mluMorphemes.toFixed(2)}`
             : 'No utterances to compute MLUm yet.',
-        note: 'Excludes mazes (…), bracket codes […], and omitted words (*word). Uses Complete & Intelligible utterances (excludes >, ^, XXX) when present.',
+        note: 'Counts root words plus bound morphemes in Complete & Intelligible utterances only (excludes abandoned >, interrupted ^, and utterances with X/XX/XXX). Mazes (…), comments {…}, bracket codes […] and omitted words (*word) are not counted.',
       };
 
     case 'mluWords':
       return {
         key,
         title: 'MLUw — Mean Length of Utterance (Words)',
-        formula: 'Total Spoken Words ÷ C&I Utterances',
+        formula: 'Words in C&I Utterances ÷ C&I Utterances',
         calculation:
           denomUtt > 0
-            ? `${stats.totalWords} words ÷ ${denomUtt} ${denomLabel} = ${stats.mluWords.toFixed(2)}`
+            ? `${stats.ciWords} words ÷ ${denomUtt} ${denomLabel} = ${stats.mluWords.toFixed(2)}`
             : 'No utterances to compute MLUw yet.',
-        note: 'Counts spoken root words outside mazes divided by Complete & Intelligible utterances.',
+        note: 'Counts spoken words outside mazes in Complete & Intelligible utterances only, divided by the number of those utterances.',
       };
 
     case 'typeTokenRatio':
@@ -317,7 +345,7 @@ export function describeMetricCalculation(
           stats.mazeWords > 0
             ? `${stats.totalWords} spoken words across ${stats.totalUtterances} utterances (${stats.mazeWords} maze words excluded)`
             : `${stats.totalWords} spoken words across ${stats.totalUtterances} utterances`,
-        note: 'Excludes parenthetical mazes (…), bracketed SALT codes […], and omitted words (*word).',
+        note: 'Counts words in all utterances. Excludes mazes (…), comments {…}, bracketed SALT codes […], omitted words (*word), and unintelligible X/XX/XXX.',
       };
 
     case 'uniqueWords':

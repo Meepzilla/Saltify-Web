@@ -128,6 +128,10 @@ export interface SpeakerMetrics {
   speaker: string;
   totalUtterances: number;
   completeIntelligibleUtterances: number;
+  /** Words in complete & intelligible utterances only (MLUw numerator). */
+  ciWords: number;
+  /** Morphemes in complete & intelligible utterances only (MLUm numerator). */
+  ciMorphemes: number;
   totalWords: number;
   uniqueWords: number;
   typeTokenRatio: number;

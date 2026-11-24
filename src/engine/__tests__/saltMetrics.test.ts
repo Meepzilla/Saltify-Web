@@ -84,7 +84,7 @@ describe('computeSaltMetrics', () => {
 
     const mlum = describeMetricCalculation('mluMorphemes', s, metrics.durationSeconds);
     expect(mlum.formula).toContain('Bound Morphemes');
-    expect(mlum.calculation).toContain(`${s.totalWords} words + ${s.boundMorphemes} bound`);
+    expect(mlum.calculation).toContain(`${s.ciWords} words + ${s.ciMorphemes - s.ciWords} bound`);
     expect(mlum.calculation).toContain(s.mluMorphemes.toFixed(2));
 
     const cd = describeMetricCalculation('clausalDensity', s, metrics.durationSeconds);

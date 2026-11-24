@@ -6,14 +6,13 @@ import {
 } from '@huggingface/transformers';
 import { sliceAudioIntoPauseAwareChunks } from '../engine/audioProcessing';
 import { purgeHtmlModelCacheEntries } from '../engine/modelCache';
-import { autoAssignSpeakersInTranscript } from '../engine/speakerDiarizer';
 import { formatWhisperChunks } from '../engine/transcriptFormat';
-import type {
-  ComputeDevice,
-  ModelSource,
-  SpeakerAliases,
-  WhisperModelId,
-} from '../types/saltify';
+import type { ComputeDevice, ModelSource, WhisperModelId } from '../types/saltify';
+
+// IMPORTANT: do not import speakerDiarizer / childGrammarEngine (or anything that pulls in
+// wink-pos-tagger / wink-lexicon) into this worker. Those multi-MB CommonJS data modules overflow
+// Safari's small Web Worker stack on load ("RangeError: Maximum call stack size exceeded").
+// Speaker assignment runs on the main thread in whisperClient.ts instead.
 
 // Enable local Cache Storage for offline model + WASM reuse
 env.useBrowserCache = true;
@@ -47,7 +46,6 @@ export type WorkerRequest =
       modelSource: ModelSource;
       customModelBaseUrl: string;
       appBaseUrl: string;
-      aliases: SpeakerAliases;
       audio: Float32Array;
     };
 
@@ -75,7 +73,6 @@ export type WorkerResponse =
       jobId: string;
       transcript: string;
       backendUsed: 'webgpu' | 'wasm';
-      speakerCount: 1 | 2;
     }
   | {
       type: 'error';
@@ -156,6 +153,22 @@ function isLowMemoryDevice(): boolean {
   const devMem = (navigator as unknown as { deviceMemory?: number }).deviceMemory;
   return isIosOrMobile || (typeof devMem === 'number' && devMem <= 4);
 }
+
+/** Phones/tablets (Android, iPhone, iPad). Mobile WebGPU drivers are unreliable for Whisper. */
+function isMobileDevice(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  const ua = navigator.userAgent || '';
+  return (
+    /iPad|iPhone|iPod|Android|Mobile/i.test(ua) ||
+    (isSafariBrowser() && typeof navigator.maxTouchPoints === 'number' && navigator.maxTouchPoints > 1)
+  );
+}
+
+/**
+ * Set once WebGPU has failed in this worker (at load or mid-inference). From then on the
+ * worker uses WASM, even if WebGPU was requested, so transcription keeps working.
+ */
+let webGpuFailed = false;
 
 function yieldToEventLoop(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
@@ -358,9 +371,12 @@ async function ensurePipeline(
       !isCustomExternalUrl &&
       (await probeLocalModelConfig(manifestBaseUrl, modelId)));
 
+  // Auto mode uses WASM on phones/tablets: mobile WebGPU drivers can fail mid-inference
+  // (e.g. ONNX Runtime "Cannot read properties of undefined (reading 'destroy')" on Android).
   const webGpuSupported =
-    requestedDevice === 'webgpu' ||
-    (requestedDevice === 'auto' && (await canUseWebGpu()));
+    !webGpuFailed &&
+    (requestedDevice === 'webgpu' ||
+      (requestedDevice === 'auto' && !isMobileDevice() && (await canUseWebGpu())));
 
   const preferWebGpu =
     webGpuSupported &&
@@ -485,6 +501,7 @@ async function ensurePipeline(
     activePipeline = await loadWithBackend(targetBackend);
   } catch (err) {
     if (targetBackend === 'webgpu') {
+      webGpuFailed = true;
       diag.webgpuError = errorText(err);
       post({
         type: 'progress',
@@ -633,7 +650,7 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
         progress: 0.05,
       });
 
-      const { transcriber, backendUsed } = await ensurePipeline(
+      let { transcriber, backendUsed } = await ensurePipeline(
         req.jobId,
         req.modelId,
         req.device,
@@ -653,7 +670,6 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
           jobId: req.jobId,
           transcript: '',
           backendUsed,
-          speakerCount: 1,
         });
         return;
       }
@@ -677,10 +693,38 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
         const maxNewTokens = Math.min(224, Math.max(64, Math.ceil(segDurationSec * 6)));
 
         setStage(`transcribing segment ${i + 1} of ${slices.length}`);
-        const output = await transcriber(slice.samples, {
-          return_timestamps: true,
-          max_new_tokens: maxNewTokens,
-        });
+        const runSegment = (pipe: AutomaticSpeechRecognitionPipeline) =>
+          pipe(slice.samples, {
+            return_timestamps: true,
+            max_new_tokens: maxNewTokens,
+          });
+
+        let output: Awaited<ReturnType<typeof runSegment>>;
+        try {
+          output = await runSegment(transcriber);
+        } catch (err) {
+          if (backendUsed !== 'webgpu') throw err;
+          // WebGPU failed mid-inference: switch this worker to WASM and retry the same segment.
+          webGpuFailed = true;
+          diag.webgpuError = errorText(err);
+          post({
+            type: 'progress',
+            jobId: req.jobId,
+            stage: 'Switching to WASM engine',
+            progress: baseProgress,
+            detail: 'WebGPU failed on this device. Retrying with the universal WASM engine.',
+          });
+          ({ transcriber, backendUsed } = await ensurePipeline(
+            req.jobId,
+            req.modelId,
+            req.device,
+            req.modelSource,
+            req.customModelBaseUrl,
+            req.appBaseUrl
+          ));
+          setStage(`transcribing segment ${i + 1} of ${slices.length} (WASM retry)`);
+          output = await runSegment(transcriber);
+        }
 
         const singleOutput = Array.isArray(output) ? output[0] : output;
         if (singleOutput?.chunks && singleOutput.chunks.length > 0) {
@@ -715,24 +759,10 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
       }
 
       post({
-        type: 'progress',
-        jobId: req.jobId,
-        stage: 'Assigning speakers locally',
-        progress: 0.96,
-      });
-
-      setStage('assigning speakers');
-      const formatted = formatWhisperChunks(allChunks);
-      const diarized = formatted.trim()
-        ? autoAssignSpeakersInTranscript(formatted, req.aliases, req.audio, 16000)
-        : { transcript: '', speakerCount: 1 as const };
-
-      post({
         type: 'done',
         jobId: req.jobId,
-        transcript: diarized.transcript,
+        transcript: formatWhisperChunks(allChunks),
         backendUsed,
-        speakerCount: diarized.speakerCount,
       });
     }
   } catch (err) {
