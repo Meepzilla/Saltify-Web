@@ -24,6 +24,21 @@ export const APP_VERSION: string = __APP_VERSION__;
  */
 export const CHANGELOG_RELEASES: readonly ChangelogRelease[] = [
   {
+    version: '1.3.3',
+    date: '2026-11-24',
+    title: 'Fix Model Downloads on Cloudflare Workers',
+    summary:
+      'Omits outbound Referer headers on model downloads so Hugging Face no longer blocks requests originating from *.workers.dev domains.',
+    changes: [
+      {
+        category: 'fixed',
+        summary: 'Whisper model downloads failing with CORS / Failed to fetch on workers.dev',
+        detail:
+          'Hugging Face CloudFront returns HTTP 404 (without CORS headers) when a request carries a *.workers.dev Referer header. Saltify now sets referrerPolicy: "no-referrer" and Referrer-Policy: no-referrer so model downloads succeed reliably.',
+      },
+    ],
+  },
+  {
     version: '1.3.2',
     date: '2026-11-24',
     title: 'Clearer Model Errors & Stale Cache Repair',

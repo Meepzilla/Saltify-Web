@@ -111,13 +111,18 @@ function errorText(err: unknown): string {
   return String(err);
 }
 
-// Wrap fetch so network failures say WHICH URL failed (browsers only say "Failed to fetch"/"Load failed").
+// Wrap fetch so network failures say WHICH URL failed (browsers only say "Failed to fetch"/"Load failed")
+// and omit Referer headers, since Hugging Face's CloudFront returns HTTP 404 (without CORS headers)
+// when requests include a `*.workers.dev` Referer.
 const originalFetch = env.fetch ?? fetch.bind(self);
 env.fetch = async (input: string | URL, init?: RequestInit) => {
   const url = typeof input === 'string' ? input : input.href;
   diag.lastUrl = url;
   try {
-    return await originalFetch(input, init);
+    return await originalFetch(input, {
+      ...init,
+      referrerPolicy: 'no-referrer',
+    });
   } catch (err) {
     const wrapped = new Error(`${errorText(err)} — while fetching ${url}`);
     wrapped.name = 'DownloadError';
