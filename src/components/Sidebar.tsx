@@ -3,10 +3,12 @@ import {
   Download,
   FileUp,
   HelpCircle,
+  History,
   Laptop,
   Moon,
   Pencil,
   Plus,
+  Settings,
   ShieldCheck,
   Sun,
   Trash2,
@@ -15,11 +17,19 @@ import {
 } from 'lucide-react';
 import { useRef, useState } from 'react';
 import { formatDurationPadded } from '../engine/transcriptFormat';
-import type { SessionRecord, ThemeMode } from '../types/saltify';
+import type {
+  AppView,
+  SessionRecord,
+  SettingsTab,
+  ThemeMode,
+} from '../types/saltify';
 
 interface SidebarProps {
   sessions: SessionRecord[];
   activeSessionId: string;
+  activeView: AppView;
+  settingsTab: SettingsTab;
+  appVersion: string;
   theme: ThemeMode;
   isOnline: boolean;
   canPromptInstall: boolean;
@@ -29,15 +39,19 @@ interface SidebarProps {
   onDeleteSession: (id: string) => void;
   onImportSessionJson: (file: File) => void;
   onChangeTheme: (theme: ThemeMode) => void;
-  onOpenModels: () => void;
+  onOpenSettings: (tab?: SettingsTab) => void;
   onOpenHelp: () => void;
   onPromptInstall: () => void;
   onCloseMobileDrawer: () => void;
+  onCollapseSidebar: () => void;
 }
 
 export function Sidebar({
   sessions,
   activeSessionId,
+  activeView,
+  settingsTab,
+  appVersion,
   theme,
   isOnline,
   canPromptInstall,
@@ -47,10 +61,11 @@ export function Sidebar({
   onDeleteSession,
   onImportSessionJson,
   onChangeTheme,
-  onOpenModels,
+  onOpenSettings,
   onOpenHelp,
   onPromptInstall,
   onCloseMobileDrawer,
+  onCollapseSidebar,
 }: SidebarProps) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draftName, setDraftName] = useState('');
@@ -83,7 +98,7 @@ export function Sidebar({
           type="button"
           className="btn btn-ghost btn-icon"
           aria-label="Close sidebar"
-          onClick={onCloseMobileDrawer}
+          onClick={onCollapseSidebar}
         >
           <X size={17} />
         </button>
@@ -155,7 +170,8 @@ export function Sidebar({
 
       <div className="session-list" role="list">
         {sessions.map((session) => {
-          const isActive = session.id === activeSessionId;
+          const isActive =
+            activeView === 'workspace' && session.id === activeSessionId;
           const isEditing = editingId === session.id;
           const lineCount = (session.conventionText || session.transcriptionText)
             .split(/\r?\n/)
@@ -257,17 +273,70 @@ export function Sidebar({
       <div className="sidebar-footer">
         <div className="sidebar-footer-row">
           <button
+            id="sidebar-settings-btn"
+            type="button"
+            className={`btn btn-secondary btn-sm sidebar-nav-btn ${
+              activeView === 'settings' &&
+              (settingsTab === 'general' || settingsTab === 'salt')
+                ? 'active'
+                : ''
+            }`}
+            style={{ flex: 1 }}
+            aria-current={
+              activeView === 'settings' &&
+              (settingsTab === 'general' || settingsTab === 'salt')
+                ? 'page'
+                : undefined
+            }
+            onClick={() => {
+              onOpenSettings('general');
+              onCloseMobileDrawer();
+            }}
+          >
+            <Settings size={14} />
+            <span>Settings</span>
+          </button>
+
+          <button
             id="sidebar-models-btn"
             type="button"
-            className="btn btn-secondary btn-sm"
+            className={`btn btn-secondary btn-sm sidebar-nav-btn ${
+              activeView === 'settings' && settingsTab === 'models' ? 'active' : ''
+            }`}
             style={{ flex: 1 }}
+            aria-current={
+              activeView === 'settings' && settingsTab === 'models' ? 'page' : undefined
+            }
             onClick={() => {
-              onOpenModels();
+              onOpenSettings('models');
               onCloseMobileDrawer();
             }}
           >
             <Cpu size={14} />
             <span>AI Models</span>
+          </button>
+        </div>
+
+        <div className="sidebar-footer-row">
+          <button
+            id="sidebar-changelog-btn"
+            type="button"
+            className={`btn btn-secondary btn-sm sidebar-nav-btn ${
+              activeView === 'settings' && settingsTab === 'changelog' ? 'active' : ''
+            }`}
+            style={{ flex: 1 }}
+            aria-current={
+              activeView === 'settings' && settingsTab === 'changelog'
+                ? 'page'
+                : undefined
+            }
+            onClick={() => {
+              onOpenSettings('changelog');
+              onCloseMobileDrawer();
+            }}
+          >
+            <History size={14} />
+            <span>Change Log</span>
           </button>
 
           <button
@@ -311,6 +380,20 @@ export function Sidebar({
             <span>Auto</span>
           </button>
         </div>
+
+        <button
+          id="sidebar-version-btn"
+          type="button"
+          className="sidebar-version-bar"
+          title="View Saltify Web version & change log"
+          onClick={() => {
+            onOpenSettings('changelog');
+            onCloseMobileDrawer();
+          }}
+        >
+          <span className="sidebar-version-label mono">v{appVersion}</span>
+          <span className="sidebar-version-link">What&apos;s new</span>
+        </button>
       </div>
     </aside>
   );
