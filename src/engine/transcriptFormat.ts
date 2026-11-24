@@ -21,9 +21,107 @@ export function parseTimestampToSeconds(timestamp: string): number | null {
   return parseInt(match[1], 10) * 60 + parseInt(match[2], 10);
 }
 
+/** SALT filler words that are always coded as mazes. */
+const FILLER_WORDS = new Set(['um', 'uh', 'uhm', 'umm', 'uhh', 'er', 'erm', 'ah', 'hmm', 'hm', 'mm']);
+
+/**
+ * Short function words whose immediate repetition ("I I want", "the the dog") is a
+ * disfluency in SALT and is coded as a maze: "(I) I want". Content words are left alone
+ * because repeating them can be intentional ("very very big", "no no").
+ */
+const REPEATABLE_FUNCTION_WORDS = new Set([
+  'i', 'a', 'an', 'the', 'and', 'but', 'so', 'or', 'he', 'she', 'it', 'we', 'they', 'you',
+  'my', 'his', 'her', 'their', 'our', 'your', 'to', 'in', 'on', 'at', 'of', 'with', 'is',
+  'was', 'are', 'that', 'this', 'there', 'then', 'me', 'him', 'them', 'if', 'when', 'because',
+]);
+
+/** Abbreviations that end in "." but do not end a sentence. */
+const NON_TERMINAL_ABBREVIATIONS = /\b(?:Mr|Mrs|Ms|Dr|St|Jr|Sr|Mt|vs|etc|e\.g|i\.e)\.$/i;
+
+function normalizeWord(token: string): string {
+  return token.toLowerCase().replace(/^[^a-z']+|[^a-z']+$/g, '');
+}
+
+/**
+ * Converts Whisper disfluencies into SALT mazes:
+ * - fillers: "Um, I want, uh, the ball." -> "(Um) I want (uh) the ball."
+ * - repeated function words: "I, I want" -> "(I) I want"
+ * Adjacent maze words merge into one maze: "(Um I) I want".
+ * Text already containing parentheses (hand-coded) is returned unchanged.
+ */
+export function applyAutoMazes(sentence: string): string {
+  if (!sentence.trim() || sentence.includes('(')) return sentence;
+  const tokens = sentence.split(/\s+/).filter(Boolean);
+  const isMaze = tokens.map(() => false);
+
+  for (let i = 0; i < tokens.length; i++) {
+    const w = normalizeWord(tokens[i]);
+    if (!w) continue;
+    if (FILLER_WORDS.has(w)) {
+      isMaze[i] = true;
+      continue;
+    }
+    const next = i + 1 < tokens.length ? normalizeWord(tokens[i + 1]) : '';
+    if (next && next === w && REPEATABLE_FUNCTION_WORDS.has(w)) {
+      isMaze[i] = true;
+    }
+  }
+
+  if (!isMaze.some(Boolean)) return sentence;
+
+  const out: string[] = [];
+  let group: string[] = [];
+  let groupTrailing = '';
+  const flush = () => {
+    if (group.length > 0) {
+      out.push(`(${group.join(' ')})`);
+      group = [];
+    }
+  };
+
+  for (let i = 0; i < tokens.length; i++) {
+    const tok = tokens[i];
+    if (isMaze[i]) {
+      // Drop commas around maze words; keep sentence-final punctuation for the utterance
+      const terminal = /[.!?]+$/.exec(tok)?.[0] ?? '';
+      group.push(tok.replace(/[,;:.!?]+$/, ''));
+      groupTrailing = terminal;
+      if (i === tokens.length - 1) {
+        flush();
+        if (groupTrailing && out.length > 0) out[out.length - 1] += groupTrailing;
+      }
+      continue;
+    }
+    flush();
+    groupTrailing = '';
+    out.push(tok);
+  }
+
+  return out.join(' ').replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * Splits text into sentences on . ! ? without breaking after abbreviations like "Mr." or "Dr.".
+ */
+export function splitIntoUtterances(text: string): string[] {
+  const words = text.split(/\s+/).filter(Boolean);
+  const sentences: string[] = [];
+  let current: string[] = [];
+  for (const word of words) {
+    current.push(word);
+    if (/[.!?]["')\]]*$/.test(word) && !NON_TERMINAL_ABBREVIATIONS.test(word)) {
+      sentences.push(current.join(' '));
+      current = [];
+    }
+  }
+  if (current.length > 0) sentences.push(current.join(' '));
+  return sentences;
+}
+
 /**
  * Formats Whisper segments into Saltify's standard `[M:SS] utterance` line format,
  * matching diarizationAndTranscription.formatTranscriptionWithTimestamps().
+ * Splits multi-sentence segments into utterances and codes fillers/repetitions as SALT mazes.
  */
 export function formatWhisperChunks(
   chunks: Array<{ timestamp: [number, number | null]; text: string }>
@@ -40,16 +138,12 @@ export function formatWhisperChunks(
 
     if (!cleaned) continue;
 
-    // Split multi-sentence chunks into individual utterance lines while keeping the segment timestamp
-    const sentences = cleaned
-      .replace(/([.!?])\s+/g, '$1\n')
-      .split('\n')
-      .map((s) => s.trim())
-      .filter(Boolean);
-
     const ts = formatTimestamp(startSec);
-    for (const sentence of sentences) {
-      lines.push(`[${ts}] ${sentence}`);
+    for (const sentence of splitIntoUtterances(cleaned)) {
+      const coded = applyAutoMazes(sentence.trim());
+      // Skip utterances that are only fillers, e.g. "(Um.)" — not a countable utterance
+      if (!coded || /^\([^)]*\)[.!?]*$/.test(coded)) continue;
+      lines.push(`[${ts}] ${coded}`);
     }
   }
 

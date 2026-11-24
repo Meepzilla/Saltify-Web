@@ -416,6 +416,46 @@ const CONTRACTED_VERB_HOSTS = new Set([
 
 const NOMINATIVE_SUBJECT_PRONOUNS = new Set(['i', 'you', 'he', 'she', 'it', 'we', 'they']);
 
+/**
+ * Common verbs that wink-pos-tagger sometimes mis-tags right after a subject pronoun
+ * (e.g. "we like it" -> like/IN). Treated as the finite verb in that position.
+ */
+const COMMON_VERBS_AFTER_SUBJECT = new Set([
+  'like',
+  'love',
+  'need',
+  'want',
+  'hate',
+  'know',
+  'think',
+  'see',
+  'go',
+  'have',
+  'get',
+  'make',
+  'play',
+  'eat',
+  'say',
+  'look',
+  'come',
+  'give',
+  'take',
+  'find',
+  'feel',
+  'hear',
+  'watch',
+  'help',
+  'put',
+  'run',
+  'read',
+  'tell',
+  'mean',
+  'guess',
+]);
+
+const RELATIVE_PRONOUNS = new Set(['that', 'who', 'which']);
+const NOUN_LIKE_POS = new Set(['NN', 'NNS', 'NNP', 'NNPS', 'CD', 'PRP']);
+
 const COORDINATING_CONJUNCTIONS = new Set(['and', 'or', 'but', 'nor']);
 
 const SUBORDINATING_MARKERS = new Set([
@@ -560,6 +600,7 @@ const CHILD_OVERREGULARIZED_VERBS = new Set([
 
 function prepareSpokenTextForClauseAnalysis(body: string): string {
   const withoutClauseAndMazes = body
+    .replace(/\{[^}]*\}/g, ' ')
     .replace(SI_CODE_GLOBAL_REGEX, ' ')
     .replace(INLINE_CLAUSE_CODE_GLOBAL_REGEX, ' ')
     .replace(/\([^)]*\)/g, ' ')
@@ -727,11 +768,33 @@ export function estimateUtteranceClauses(body: string): ClauseEstimate {
       prevTok !== null &&
       NOMINATIVE_SUBJECT_PRONOUNS.has(prevLower);
 
+    // Tagger fix-up: "we like it" (like/IN), "I need ..." after a subject pronoun
+    const isMistaggedVerbAfterSubject =
+      !pos.startsWith('VB') &&
+      pos !== 'MD' &&
+      prevTok !== null &&
+      NOMINATIVE_SUBJECT_PRONOUNS.has(prevLower) &&
+      COMMON_VERBS_AFTER_SUBJECT.has(lower);
+
+    // Tagger fix-up: verb right after a relative pronoun following a noun,
+    // e.g. "the toy that fell" (fell/VBN), "the dog that barks" (barks/NNS)
+    const nextTok = i + 1 < tokens.length ? tokens[i + 1] : null;
+    const isRelativeClauseVerb =
+      prevTok !== null &&
+      prevPrevTok !== null &&
+      RELATIVE_PRONOUNS.has(prevLower) &&
+      NOUN_LIKE_POS.has(prevPrevTok.pos) &&
+      (pos === 'VBN' ||
+        pos === 'VBD' ||
+        (pos === 'NNS' && /s$/.test(lower) && !(nextTok && /^(VB|MD)/.test(nextTok.pos))));
+
     if (
       !isStandardFiniteVerb &&
       !isChildOverregularizedVerb &&
       !isImperative &&
-      !isBarePresentAfterSubject
+      !isBarePresentAfterSubject &&
+      !isMistaggedVerbAfterSubject &&
+      !isRelativeClauseVerb
     ) {
       i += 1;
       continue;

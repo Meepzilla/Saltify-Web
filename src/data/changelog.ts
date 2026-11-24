@@ -26,10 +26,39 @@ export const CHANGELOG_RELEASES: readonly ChangelogRelease[] = [
   {
     version: '1.3.4',
     date: '2026-11-24',
-    title: 'iPad & Android Transcription Stability',
+    title: 'Transcription Stability & SALT Accuracy Fixes',
     summary:
-      'Fixes the iPad Safari worker crash and recovers automatically when WebGPU fails mid-transcription on Android.',
+      'Fixes the iPad Safari worker crash, recovers from WebGPU failures on Android, corrects MLU and word counts, improves clause estimates, and codes Whisper fillers as SALT mazes.',
     changes: [
+      {
+        category: 'fixed',
+        summary: 'MLU now uses complete & intelligible utterances for both numerator and denominator',
+        detail:
+          'Previously words from abandoned (>), interrupted (^) and unintelligible utterances were added to the MLU numerator while being excluded from the denominator, inflating MLUw and MLUm.',
+      },
+      {
+        category: 'fixed',
+        summary: 'Unintelligible X/XX/XXX, {comments} and bracket codes are no longer counted as words',
+        detail:
+          'XXX was counted in TNW and NDW, and SALT comments like {laughs} were counted as spoken words. Single X now also marks an utterance as not intelligible.',
+      },
+      {
+        category: 'fixed',
+        summary: 'Adjacent mazes count as one maze',
+        detail: '"(um) (I) I want" is one maze with two maze words, matching SALT.',
+      },
+      {
+        category: 'improved',
+        summary: 'More accurate automatic clause (SI) estimates',
+        detail:
+          'Fixes tagger mistakes that dropped clauses: "like" after a pronoun ("we like it" was excluded as SI-X) and relative clauses such as "the toy that fell" or "the dog that barks".',
+      },
+      {
+        category: 'improved',
+        summary: 'Whisper fillers and stutters are coded as SALT mazes automatically',
+        detail:
+          '"Um, I, I want, uh, the ball." becomes "(Um I) I want, (uh) the ball." Only fillers and repeated short function words are coded; emphatic repeats like "very very" are left alone. Sentences no longer split after "Mr." or "Dr.", and filler-only utterances are dropped.',
+      },
       {
         category: 'fixed',
         summary: 'Whisper worker crash on iPad Safari ("Maximum call stack size exceeded")',
