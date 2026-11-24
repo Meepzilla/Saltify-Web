@@ -135,24 +135,73 @@ async function canUseWebGpu(): Promise<boolean> {
   }
 }
 
+let cachedHasLocalAsyncify: { ortBase: string; available: boolean } | null = null;
+
+async function hasSelfHostedAsyncifyWasm(ortBase: string): Promise<boolean> {
+  if (cachedHasLocalAsyncify && cachedHasLocalAsyncify.ortBase === ortBase) {
+    return cachedHasLocalAsyncify.available;
+  }
+  try {
+    const resp = await fetch(`${ortBase}ort-wasm-simd-threaded.asyncify.wasm`, {
+      method: 'HEAD',
+      cache: 'no-cache',
+    });
+    const ct = resp.headers.get('content-type') || '';
+    const available = resp.ok && !ct.includes('text/html');
+    cachedHasLocalAsyncify = { ortBase, available };
+    return available;
+  } catch {
+    cachedHasLocalAsyncify = { ortBase, available: false };
+    return false;
+  }
+}
+
 /**
- * Configures ONNX Runtime Web to load its WASM + JS factory from THIS server's
- * `/ort/` directory (zero jsDelivr CDN requests) and configures Whisper model
- * resolution for self-hosted, air-gapped, custom-host, or Hugging Face modes.
+ * Configures ONNX Runtime Web WASM paths (preferring self-hosted `/ort/` binaries,
+ * with automatic fallback when static hosts like Cloudflare Workers cap assets at 25 MiB)
+ * and resolves Whisper model hosting for self-hosted, custom-host, or Hugging Face modes.
  */
-function configureSelfHostedRuntime(
+async function configureSelfHostedRuntime(
   appBaseUrl: string,
   modelSource: ModelSource,
-  customModelBaseUrl: string
-): { manifestBaseUrl: string; useLocalFilesOnly: boolean } {
+  customModelBaseUrl: string,
+  requestedDevice: ComputeDevice
+): Promise<{ manifestBaseUrl: string; useLocalFilesOnly: boolean }> {
   const ortBase = new URL('ort/', appBaseUrl).href;
-  const suffix = isSafariBrowser() ? '' : '.asyncify';
 
   if (env.backends?.onnx?.wasm) {
-    env.backends.onnx.wasm.wasmPaths = {
-      mjs: `${ortBase}ort-wasm-simd-threaded${suffix}.mjs`,
-      wasm: `${ortBase}ort-wasm-simd-threaded${suffix}.wasm`,
-    };
+    const wantsAsyncify = !isSafariBrowser();
+    const hasLocalAsyncify =
+      wantsAsyncify && (await hasSelfHostedAsyncifyWasm(ortBase));
+
+    if (hasLocalAsyncify) {
+      env.backends.onnx.wasm.wasmPaths = {
+        mjs: `${ortBase}ort-wasm-simd-threaded.asyncify.mjs`,
+        wasm: `${ortBase}ort-wasm-simd-threaded.asyncify.wasm`,
+      };
+    } else if (
+      !wantsAsyncify ||
+      modelSource === 'local-only' ||
+      requestedDevice === 'wasm'
+    ) {
+      // Compact 13.6 MiB self-hosted binary (works on Cloudflare Workers & air-gapped servers)
+      env.backends.onnx.wasm.wasmPaths = {
+        mjs: `${ortBase}ort-wasm-simd-threaded.mjs`,
+        wasm: `${ortBase}ort-wasm-simd-threaded.wasm`,
+      };
+    } else {
+      // Static hosts with 25 MiB per-file limits (e.g. Cloudflare Workers) cannot host the
+      // 25.6 MiB asyncify WASM needed for WebGPU; load it from jsDelivr (cached via useWasmCache)
+      // or fall back to the local 13.6 MiB WASM binary if offline.
+      const ortVersion =
+        (env.backends.onnx as { versions?: { web?: string } }).versions?.web ||
+        '1.24.3';
+      const cdnBase = `https://cdn.jsdelivr.net/npm/onnxruntime-web@${ortVersion}/dist/`;
+      env.backends.onnx.wasm.wasmPaths = {
+        mjs: `${cdnBase}ort-wasm-simd-threaded.asyncify.mjs`,
+        wasm: `${cdnBase}ort-wasm-simd-threaded.asyncify.wasm`,
+      };
+    }
   }
 
   const trimmedCustom = customModelBaseUrl.trim();
@@ -226,10 +275,11 @@ async function ensurePipeline(
   transcriber: AutomaticSpeechRecognitionPipeline;
   backendUsed: 'webgpu' | 'wasm';
 }> {
-  const { manifestBaseUrl, useLocalFilesOnly } = configureSelfHostedRuntime(
+  const { manifestBaseUrl, useLocalFilesOnly } = await configureSelfHostedRuntime(
     appBaseUrl,
     modelSource,
-    customModelBaseUrl
+    customModelBaseUrl,
+    requestedDevice
   );
 
   // If self-hosted server has q8 WASM weights (without larger WebGPU fp32/q4 weights),
