@@ -5,6 +5,7 @@ import {
   type ProgressInfo,
 } from '@huggingface/transformers';
 import { sliceAudioIntoPauseAwareChunks } from '../engine/audioProcessing';
+import { purgeHtmlModelCacheEntries } from '../engine/modelCache';
 import { autoAssignSpeakersInTranscript } from '../engine/speakerDiarizer';
 import { formatWhisperChunks } from '../engine/transcriptFormat';
 import type {
@@ -350,6 +351,11 @@ async function ensurePipeline(
     loadedKey = null;
     loadedBackend = null;
   }
+
+  // Remove SPA index.html responses cached by earlier builds under /models/... keys.
+  // Transformers.js checks the cache by local path even when allowLocalModels=false,
+  // so a stale HTML entry would otherwise cause `Unexpected token '<'` forever.
+  await purgeHtmlModelCacheEntries();
 
   const fileProgress = new Map<string, { loaded: number; total: number }>();
   const sourceLabel =
