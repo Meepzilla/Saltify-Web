@@ -22,7 +22,8 @@ export function parseTimestampToSeconds(timestamp: string): number | null {
 }
 
 /** SALT filler words that are always coded as mazes. */
-const FILLER_WORDS = new Set(['um', 'uh', 'uhm', 'umm', 'uhh', 'er', 'erm', 'ah', 'hmm', 'hm', 'mm']);
+// SALT filled-pause words: AH, EH, ER, HM, HMM, UH, UM, MM (plus common Whisper spellings).
+const FILLER_WORDS = new Set(['um', 'uh', 'uhm', 'umm', 'uhh', 'er', 'erm', 'ah', 'eh', 'hmm', 'hm', 'mm']);
 
 /**
  * Short function words whose immediate repetition ("I I want", "the the dog") is a
@@ -139,7 +140,13 @@ export function formatWhisperChunks(
     if (!cleaned) continue;
 
     const ts = formatTimestamp(startSec);
-    for (const sentence of splitIntoUtterances(cleaned)) {
+    for (const rawSentence of splitIntoUtterances(cleaned)) {
+      // SALT: periods are not legal word characters, so "Mr." -> "Mr"
+      const sentence = rawSentence.replace(
+        /\b(Mr|Mrs|Ms|Dr|St|Jr|Sr|Mt)\.(?=\s|$)/g,
+        (m, abbr: string, offset: number, full: string) =>
+          offset + m.length >= full.length ? `${abbr}.` : abbr
+      );
       const coded = applyAutoMazes(sentence.trim());
       // Skip utterances that are only fillers, e.g. "(Um.)" — not a countable utterance
       if (!coded || /^\([^)]*\)[.!?]*$/.test(coded)) continue;

@@ -132,6 +132,9 @@ export interface SpeakerMetrics {
   ciWords: number;
   /** Morphemes in complete & intelligible utterances only (MLUm numerator). */
   ciMorphemes: number;
+  /** Words outside mazes in ALL utterances (used for maze % and words/minute). */
+  allWords: number;
+  /** NTW: words outside mazes in C&I verbal utterances (SALT analysis set). */
   totalWords: number;
   uniqueWords: number;
   typeTokenRatio: number;

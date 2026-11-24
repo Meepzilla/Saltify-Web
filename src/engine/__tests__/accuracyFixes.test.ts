@@ -14,14 +14,16 @@ describe('SALT metrics accuracy', () => {
     expect(m.completeIntelligibleUtterances).toBe(2);
     expect(m.mluWords).toBe(3); // 6 words / 2 C&I utterances (abandoned utterance excluded)
     expect(m.mluMorphemes).toBe(4); // (6 + 2 bound) / 2
-    expect(m.totalWords).toBe(16); // TNW still counts every utterance
+    expect(m.totalWords).toBe(6); // NTW is based on C&I verbal utterances (SALT)
+    expect(m.allWords).toBe(16); // every utterance, used for maze % and words/minute
   });
 
   it('does not count unintelligible X/XX/XXX as words', () => {
     const m = computeSaltMetrics('C I want XXX.\nC the dog run/3s.\nC X go home.', ALIASES).speaker1;
     expect(m.completeIntelligibleUtterances).toBe(1);
-    expect(m.totalWords).toBe(7);
-    expect(m.uniqueWords).toBe(7);
+    expect(m.totalWords).toBe(3); // only "the dog run/3s" is C&I
+    expect(m.uniqueWords).toBe(3);
+    expect(m.allWords).toBe(7); // X/XXX never counted as words
   });
 
   it('counts adjacent mazes as a single maze', () => {
@@ -29,6 +31,28 @@ describe('SALT metrics accuracy', () => {
     expect(m.mazeCount).toBe(1);
     expect(m.mazeWords).toBe(2);
     expect(m.totalWords).toBe(3);
+  });
+
+  it('excludes nonverbal utterances from the C&I verbal set', () => {
+    const m = computeSaltMetrics('C {nods}.\nC I want it.', ALIASES).speaker1;
+    expect(m.totalUtterances).toBe(2);
+    expect(m.completeIntelligibleUtterances).toBe(1);
+    expect(m.mluWords).toBe(3);
+  });
+
+  it('uses the root after | and keeps _ linked words as one word', () => {
+    const m = computeSaltMetrics(
+      'C He goed|go[EO:went] home.\nC He go/3s home.\nC The boy ran very very_very|very fast.',
+      ALIASES
+    ).speaker1;
+    // roots: he, go, home, the, boy, ran, very, fast ('goed|go' and 'go/3s' share 'go')
+    expect(m.uniqueWords).toBe(8);
+    expect(m.totalWords).toBe(12);
+  });
+
+  it('computes words/minute from all words including mazes', () => {
+    const m = computeSaltMetrics('C (um) I want it.\nC and the >', ALIASES, 60).speaker1;
+    expect(m.wordsPerMinute).toBe(6); // 3 + 2 words + 1 maze word in 1 minute
   });
 
   it('ignores {comments} and bracket codes when counting', () => {
@@ -70,6 +94,6 @@ describe('Whisper post-processing', () => {
       { timestamp: [0, 3], text: ' Mr. Smith has a dog. He is big!' },
       { timestamp: [4, 5], text: ' Uh.' },
     ]);
-    expect(out).toBe('[0:00] Mr. Smith has a dog.\n[0:00] He is big!');
+    expect(out).toBe('[0:00] Mr Smith has a dog.\n[0:00] He is big!');
   });
 });

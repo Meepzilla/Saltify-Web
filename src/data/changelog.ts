@@ -24,6 +24,42 @@ export const APP_VERSION: string = __APP_VERSION__;
  */
 export const CHANGELOG_RELEASES: readonly ChangelogRelease[] = [
   {
+    version: '1.3.5',
+    date: '2026-11-24',
+    title: 'Metrics Aligned with SALT Standard Measures',
+    summary:
+      'NTW, NDW and TTR now use complete, intelligible, verbal utterances as in the SALT Standard Measures Report; words/minute includes maze words; root and linked-word conventions are supported.',
+    changes: [
+      {
+        category: 'fixed',
+        summary: 'NTW, NDW and TTR use the C&I verbal utterance set',
+        detail:
+          'Matches the SALT Guide to the Standard Measures Report, where MLU, NTW and NDW are based on complete, intelligible, verbal utterances (excluding mazes). Maze % and words/minute still use all utterances.',
+      },
+      {
+        category: 'fixed',
+        summary: 'Nonverbal utterances are excluded from C&I verbal utterances',
+        detail: 'An utterance like "C {nods}." no longer counts toward the MLU denominator.',
+      },
+      {
+        category: 'fixed',
+        summary: 'Words/minute counts all words produced, including maze words',
+        detail: 'Matches SALT Words/Minute: ratio of all words produced to the elapsed time.',
+      },
+      {
+        category: 'added',
+        summary: 'Root identification (|) and linked words (_) are understood in metrics',
+        detail:
+          '"goed|go[EO:went]" counts under the root "go", and emphatic repeats coded as "very very_very|very" count as single words, per SALT conventions.',
+      },
+      {
+        category: 'improved',
+        summary: 'Whisper abbreviations drop the period ("Mr Smith"), and EH is coded as a filled pause',
+        detail: 'SALT treats periods as utterance punctuation only, never as part of a word.',
+      },
+    ],
+  },
+  {
     version: '1.3.4',
     date: '2026-11-24',
     title: 'Transcription Stability & SALT Accuracy Fixes',

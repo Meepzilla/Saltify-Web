@@ -17,6 +17,21 @@ const UNINTELLIGIBLE_IN_TEXT_RE = /(?:^|\s)X{1,3}(?=[\s.,!?>^]|$)/;
 /** SALT comments, e.g. {laughs} or {points to picture}, are not spoken words. */
 const COMMENT_RE = /\{[^}]*\}/g;
 
+/**
+ * Returns the countable word root for a SALT token, or '' if it is not a countable word.
+ * - Root identification: "goed|go" -> "go", "very_very|very" -> "very"
+ * - Bound morphemes:     "walk/ed" -> "walk"
+ * - Linked words:        "Beauty_and_the_Beast" stays one word
+ * - Sound effects:       "%woof_woof" -> "woof_woof"
+ */
+function wordRoot(tok: string): string {
+  let core = tok;
+  const bar = core.lastIndexOf('|');
+  if (bar !== -1) core = core.slice(bar + 1);
+  core = core.split('/')[0].replace(/^%/, '');
+  return core.replace(/[^a-zA-Z0-9'_-]/g, '');
+}
+
 function createEmptySiDistribution(): SiDistribution {
   return {
     si0: 0,
@@ -34,6 +49,7 @@ function createEmptySpeakerMetrics(speaker: string): SpeakerMetrics {
     completeIntelligibleUtterances: 0,
     ciWords: 0,
     ciMorphemes: 0,
+    allWords: 0,
     totalWords: 0,
     uniqueWords: 0,
     typeTokenRatio: 0,
@@ -70,8 +86,9 @@ function analyzeUtteranceSet(
   let completeIntelligible = 0;
   let ciWords = 0;
   let ciMorphemes = 0;
-  let totalWords = 0;
-  let totalMorphemes = 0;
+  /** Words outside mazes across ALL utterances (fallback when no C&I utterances). */
+  let allWords = 0;
+  let allMorphemes = 0;
   let boundMorphemes = 0;
   let mazeCount = 0;
   let mazeWords = 0;
@@ -82,7 +99,8 @@ function analyzeUtteranceSet(
   let clauseExcludedUtterances = 0;
   let complexUtterances = 0;
   const siDistribution = createEmptySiDistribution();
-  const vocab = new Set<string>();
+  const ciVocab = new Set<string>();
+  const allVocab = new Set<string>();
 
   for (const u of nonEmpty) {
     let body = u.body.replace(COMMENT_RE, ' ').trim();
@@ -129,12 +147,9 @@ function analyzeUtteranceSet(
       body = body.replace(/\([^)]*\)/g, ' ');
     }
 
-    // Check completeness / intelligibility (SALT: abandoned `>`, interrupted `^`, unintelligible `XXX`/`XX`)
+    // Completeness / intelligibility (SALT: abandoned `>`, interrupted `^`, unintelligible X/XX/XXX)
     const isAbandonedOrUnintelligible =
       /[>^]\s*$/.test(body) || UNINTELLIGIBLE_IN_TEXT_RE.test(body);
-    if (!isAbandonedOrUnintelligible) {
-      completeIntelligible += 1;
-    }
 
     // Remove bracket codes (e.g. [EW:told], [SI-1]) before counting words and morphemes
     const strippedBrackets = body.replace(/\[[^\]]*\]/g, '');
@@ -156,6 +171,7 @@ function analyzeUtteranceSet(
       .filter(Boolean);
 
     let uttWords = 0;
+    const uttRoots: string[] = [];
     for (const tok of tokens) {
       // Skip omitted words (e.g. "*to" or "*is" were NOT spoken by the child)
       if (tok.startsWith('*') || tok.endsWith('*')) {
@@ -165,29 +181,40 @@ function analyzeUtteranceSet(
       if (UNINTELLIGIBLE_TOKEN_RE.test(tok)) {
         continue;
       }
-      // Extract root word before any SALT slash bound morpheme (e.g. "walk/ed" -> "walk")
-      const root = tok.split('/')[0].replace(/[^a-zA-Z0-9'-]/g, '');
+      const root = wordRoot(tok);
       if (!root) continue;
 
       uttWords += 1;
-      vocab.add(root.toLowerCase());
+      uttRoots.push(root.toLowerCase());
     }
 
-    totalWords += uttWords;
-    totalMorphemes += uttWords + uttBound;
-    if (!isAbandonedOrUnintelligible) {
+    allWords += uttWords;
+    allMorphemes += uttWords + uttBound;
+    for (const r of uttRoots) allVocab.add(r);
+
+    // SALT analysis set = Complete & Intelligible *Verbal* utterances. A nonverbal utterance
+    // such as "C {nods}." (no words after removing comments/mazes/codes) is not verbal.
+    const isCompleteIntelligibleVerbal = !isAbandonedOrUnintelligible && uttWords > 0;
+    if (isCompleteIntelligibleVerbal) {
+      completeIntelligible += 1;
       ciWords += uttWords;
       ciMorphemes += uttWords + uttBound;
+      for (const r of uttRoots) ciVocab.add(r);
     }
   }
 
-  // SALT MLU: numerator AND denominator use complete & intelligible utterances only.
-  // (Falls back to all utterances only when none are complete & intelligible.)
+  // SALT Standard Measures: MLUw, MLUm, NTW, NDW are based on the C&I Verbal Utts
+  // (complete, intelligible, verbal utterances), excluding mazes. Falls back to all
+  // utterances only when there are no C&I verbal utterances at all.
   const useCi = completeIntelligible > 0;
   const denomUtterances = useCi ? completeIntelligible : nonEmpty.length;
-  const mluWordNumerator = useCi ? ciWords : totalWords;
-  const mluMorphNumerator = useCi ? ciMorphemes : totalMorphemes;
-  const totalSpokenWithMazes = totalWords + mazeWords;
+  const mluWordNumerator = useCi ? ciWords : allWords;
+  const mluMorphNumerator = useCi ? ciMorphemes : allMorphemes;
+  const totalWords = mluWordNumerator;
+  const totalMorphemes = mluMorphNumerator;
+  const vocab = useCi ? ciVocab : allVocab;
+  // Maze Words as % of Total Words and Words/Minute use ALL utterances (SALT: not C&I-based).
+  const totalSpokenWithMazes = allWords + mazeWords;
   const durationMinutes =
     durationSeconds && durationSeconds > 0 ? durationSeconds / 60 : null;
   const clausalDensity =
@@ -205,6 +232,7 @@ function analyzeUtteranceSet(
     completeIntelligibleUtterances: completeIntelligible,
     ciWords: mluWordNumerator,
     ciMorphemes: mluMorphNumerator,
+    allWords,
     totalWords,
     uniqueWords: vocab.size,
     typeTokenRatio: totalWords > 0 ? Number((vocab.size / totalWords).toFixed(2)) : 0,
@@ -222,9 +250,10 @@ function analyzeUtteranceSet(
         : 0,
     errorCount,
     omissionCount,
+    // SALT Words/Minute: all words produced (including maze words) ÷ elapsed minutes
     wordsPerMinute:
-      durationMinutes && totalWords > 0
-        ? Math.round(totalWords / durationMinutes)
+      durationMinutes && totalSpokenWithMazes > 0
+        ? Math.round(totalSpokenWithMazes / durationMinutes)
         : null,
     totalClauses,
     clauseScoredUtterances,
@@ -297,7 +326,7 @@ export function describeMetricCalculation(
   const usesCiDenom = stats.completeIntelligibleUtterances > 0;
   const denomUtt = usesCiDenom ? stats.completeIntelligibleUtterances : stats.totalUtterances;
   const denomLabel = usesCiDenom ? 'C&I utterances' : 'utterances';
-  const totalSpokenWithMazes = stats.totalWords + stats.mazeWords;
+  const totalSpokenWithMazes = stats.allWords + stats.mazeWords;
 
   switch (key) {
     case 'mluMorphemes':
@@ -328,33 +357,30 @@ export function describeMetricCalculation(
       return {
         key,
         title: 'TTR — Type-Token Ratio',
-        formula: 'Unique Root Words (NDW) ÷ Total Spoken Words (TNW)',
+        formula: 'NDW ÷ NTW (C&I verbal utterances)',
         calculation:
           stats.totalWords > 0
             ? `${stats.uniqueWords} unique ÷ ${stats.totalWords} total = ${stats.typeTokenRatio.toFixed(2)}`
             : 'No spoken words to compute TTR yet.',
-        note: 'Lexical diversity ratio (0.00–1.00) using case-insensitive root words before bound morpheme slashes.',
+        note: 'Lexical diversity ratio (0.00–1.00) using case-insensitive word roots from complete & intelligible verbal utterances. Sensitive to sample length; compare samples of similar size.',
       };
 
     case 'totalWords':
       return {
         key,
         title: 'TNW — Total Number of Words',
-        formula: 'Count of spoken root words outside mazes',
-        calculation:
-          stats.mazeWords > 0
-            ? `${stats.totalWords} spoken words across ${stats.totalUtterances} utterances (${stats.mazeWords} maze words excluded)`
-            : `${stats.totalWords} spoken words across ${stats.totalUtterances} utterances`,
-        note: 'Counts words in all utterances. Excludes mazes (…), comments {…}, bracketed SALT codes […], omitted words (*word), and unintelligible X/XX/XXX.',
+        formula: 'Words outside mazes in C&I verbal utterances',
+        calculation: `${stats.totalWords} words across ${stats.completeIntelligibleUtterances} C&I verbal utterances (of ${stats.totalUtterances} total)`,
+        note: 'SALT NTW: based on complete, intelligible, verbal utterances. Excludes mazes (…), comments {…}, bracketed codes […], omitted words (*word), part words (w*) and unintelligible X/XX/XXX.',
       };
 
     case 'uniqueWords':
       return {
         key,
         title: 'NDW — Number of Different Words',
-        formula: 'Count of distinct spoken root words (case-insensitive)',
-        calculation: `${stats.uniqueWords} unique root words out of ${stats.totalWords} total spoken words`,
-        note: 'Bound morpheme inflections sharing a root (e.g., walk and walk/ed) count as 1 unique root word.',
+        formula: 'Distinct word roots in C&I verbal utterances (case-insensitive)',
+        calculation: `${stats.uniqueWords} different word roots out of ${stats.totalWords} words`,
+        note: 'SALT NDW: counts different word roots, so walk and walk/ed count once, and goed|go counts as go. Excludes mazes.',
       };
 
     case 'boundMorphemes':
@@ -373,9 +399,9 @@ export function describeMetricCalculation(
         formula: 'Maze Words ÷ (Spoken Words + Maze Words) × 100',
         calculation:
           totalSpokenWithMazes > 0
-            ? `${stats.mazeWords} maze words ÷ (${stats.totalWords} + ${stats.mazeWords} = ${totalSpokenWithMazes}) × 100 = ${stats.mazeWordPercent}% (${stats.mazeCount} ${stats.mazeCount === 1 ? 'maze' : 'mazes'})`
+            ? `${stats.mazeWords} maze words ÷ (${stats.allWords} + ${stats.mazeWords} = ${totalSpokenWithMazes}) × 100 = ${stats.mazeWordPercent}% (${stats.mazeCount} ${stats.mazeCount === 1 ? 'maze' : 'mazes'})`
             : '0 mazes recorded.',
-        note: 'Counts parenthetical fillers, repetitions, and revisions enclosed in (…).',
+        note: 'SALT Maze Words as % of Total Words, across all utterances. Mazes are filled pauses, false starts, repetitions and reformulations in (…); adjacent mazes count as one.',
       };
 
     case 'errorAndOmissionCount':
@@ -393,12 +419,12 @@ export function describeMetricCalculation(
       return {
         key,
         title: 'WPM — Speaking Rate (Words Per Minute)',
-        formula: 'Total Spoken Words ÷ (Audio Duration in Seconds ÷ 60)',
+        formula: 'All Words Including Mazes ÷ (Audio Duration in Seconds ÷ 60)',
         calculation:
           validDuration && mins && stats.wordsPerMinute !== null
-            ? `${stats.totalWords} words ÷ (${validDuration.toFixed(1)}s ÷ 60 = ${mins.toFixed(2)} min) = ${stats.wordsPerMinute} WPM`
+            ? `${stats.allWords + stats.mazeWords} words ÷ (${validDuration.toFixed(1)}s ÷ 60 = ${mins.toFixed(2)} min) = ${stats.wordsPerMinute} WPM`
             : 'Requires audio duration and spoken words to calculate WPM.',
-        note: 'Uses total spoken words outside mazes divided by total session audio length in minutes.',
+        note: 'SALT Words/Minute: all words produced in all utterances, including maze words, divided by the audio length in minutes.',
       };
     }
 
