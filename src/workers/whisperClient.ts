@@ -37,6 +37,22 @@ class CancelledError extends Error {
   }
 }
 
+/** An error from the Whisper worker, carrying full diagnostics for the Error Log. */
+export class WhisperWorkerError extends Error {
+  details?: string;
+  constructor(message: string, details?: string) {
+    super(message);
+    this.name = 'WhisperWorkerError';
+    this.details = details;
+  }
+}
+
+export function getErrorDetails(error: unknown): string | undefined {
+  if (error instanceof WhisperWorkerError) return error.details;
+  if (error instanceof Error) return error.stack || `${error.name}: ${error.message}`;
+  return undefined;
+}
+
 export function isCancelledError(error: unknown): boolean {
   return error instanceof CancelledError || (error instanceof Error && error.name === 'CancelledError');
 }
@@ -166,7 +182,7 @@ export class WhisperWorkerClient {
           } as T);
         } else if (msg.type === 'error') {
           cleanup();
-          reject(new Error(msg.message));
+          reject(new WhisperWorkerError(msg.message, msg.details));
         }
       };
 
@@ -176,10 +192,21 @@ export class WhisperWorkerClient {
           worker.terminate();
           this.worker = null;
         }
+        const where = event.filename
+          ? `${event.filename}:${event.lineno}:${event.colno}`
+          : 'unknown location';
+        const raw = event.message || 'no message from the browser';
         reject(
-          new Error(
-            event.message ||
-              'The on-device transcription worker stopped unexpectedly. Try Whisper Tiny (.en) or retry.'
+          new WhisperWorkerError(
+            `The on-device transcription worker crashed.\nCause: ${raw} (at ${where})`,
+            [
+              `Worker crash: ${raw}`,
+              `Location: ${where}`,
+              event.error instanceof Error && event.error.stack ? `Stack:\n${event.error.stack}` : '',
+              `Browser: ${typeof navigator !== 'undefined' ? navigator.userAgent : 'unknown'}`,
+            ]
+              .filter(Boolean)
+              .join('\n')
           )
         );
       };

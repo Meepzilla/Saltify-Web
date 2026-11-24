@@ -24,6 +24,27 @@ export const APP_VERSION: string = __APP_VERSION__;
  */
 export const CHANGELOG_RELEASES: readonly ChangelogRelease[] = [
   {
+    version: '1.3.2',
+    date: '2026-11-24',
+    title: 'Clearer Model Errors & Stale Cache Repair',
+    summary:
+      'Model download and transcription errors now say exactly what failed and where, and stale cached web pages no longer break model loading.',
+    changes: [
+      {
+        category: 'fixed',
+        summary: 'Stale cached web pages breaking Whisper model loading',
+        detail:
+          'Removes index.html responses that older builds saved into the model cache, which caused "Unexpected token <" errors even after the 1.3.1 fix.',
+      },
+      {
+        category: 'improved',
+        summary: 'Model and transcription errors show the real cause',
+        detail:
+          'Errors now include the browser error, the step that failed, and the exact URL that could not be downloaded. The Error Log keeps full technical details and the stack trace.',
+      },
+    ],
+  },
+  {
     version: '1.3.1',
     date: '2026-11-23',
     title: 'On-Device Error Log & Cloudflare Model Download Fix',

@@ -89,7 +89,7 @@ import {
   type ToastMessage,
   type WhisperModelId,
 } from './types/saltify';
-import { isCancelledError, whisperClient } from './workers/whisperClient';
+import { getErrorDetails, isCancelledError, whisperClient } from './workers/whisperClient';
 
 type MobileTab = 'audio' | 'transcript' | 'salt' | 'metrics';
 
@@ -225,7 +225,8 @@ export default function App() {
       tone: ToastMessage['tone'],
       title: string,
       description?: string,
-      retry?: { label?: string; onRetry: () => void }
+      retry?: { label?: string; onRetry: () => void },
+      details?: string
     ) => {
       if (tone === 'error' || tone === 'warning') {
         const ctx = runtimeCtxRef.current;
@@ -234,6 +235,7 @@ export default function App() {
           source: 'App',
           title,
           message: description || title,
+          details,
           context: {
             version: APP_VERSION,
             model: ctx.modelId,
@@ -856,8 +858,11 @@ export default function App() {
       pushToast(
         'error',
         'Transcription failed',
-        err instanceof Error ? err.message : 'Unexpected error during Whisper inference.',
-        { label: 'Retry', onRetry: () => void startTranscriptionRef.current() }
+        err instanceof Error
+          ? err.message
+          : `Unexpected error during Whisper inference: ${String(err)}`,
+        { label: 'Retry', onRetry: () => void startTranscriptionRef.current() },
+        getErrorDetails(err)
       );
     }
   }, [
@@ -918,7 +923,9 @@ export default function App() {
           pushToast(
             'error',
             'Model load failed',
-            err instanceof Error ? err.message : 'Check your server or network connection.'
+            err instanceof Error ? err.message : `Unexpected error: ${String(err)}`,
+            undefined,
+            getErrorDetails(err)
           );
         }
       }

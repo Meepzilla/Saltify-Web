@@ -91,6 +91,40 @@ interface SelfHostedManifestEntry {
 }
 
 let activePipeline: AutomaticSpeechRecognitionPipeline | null = null;
+let activeJobId: string | null = null;
+
+/** Diagnostics: what the worker was doing when something failed. */
+const diag: {
+  stage: string;
+  file?: string;
+  lastUrl?: string;
+  backend?: 'webgpu' | 'wasm';
+  webgpuError?: string;
+} = { stage: 'starting worker' };
+
+function setStage(stage: string): void {
+  diag.stage = stage;
+}
+
+function errorText(err: unknown): string {
+  if (err instanceof Error) return `${err.name}: ${err.message}`;
+  return String(err);
+}
+
+// Wrap fetch so network failures say WHICH URL failed (browsers only say "Failed to fetch"/"Load failed").
+const originalFetch = env.fetch ?? fetch.bind(self);
+env.fetch = async (input: string | URL, init?: RequestInit) => {
+  const url = typeof input === 'string' ? input : input.href;
+  diag.lastUrl = url;
+  try {
+    return await originalFetch(input, init);
+  } catch (err) {
+    const wrapped = new Error(`${errorText(err)} — while fetching ${url}`);
+    wrapped.name = 'DownloadError';
+    (wrapped as Error & { cause?: unknown }).cause = err;
+    throw wrapped;
+  }
+};
 let loadedKey: string | null = null;
 let loadedBackend: 'webgpu' | 'wasm' | null = null;
 
@@ -299,6 +333,9 @@ async function ensurePipeline(
   transcriber: AutomaticSpeechRecognitionPipeline;
   backendUsed: 'webgpu' | 'wasm';
 }> {
+  diag.file = undefined;
+  diag.webgpuError = undefined;
+  setStage('checking for self-hosted models');
   const manifestBaseUrl = resolveManifestBaseUrl(appBaseUrl, customModelBaseUrl);
 
   // If self-hosted server has q8 WASM weights (without larger WebGPU fp32/q4 weights),
@@ -326,6 +363,7 @@ async function ensurePipeline(
 
   const targetBackend: 'webgpu' | 'wasm' = preferWebGpu ? 'webgpu' : 'wasm';
 
+  setStage('configuring the ONNX runtime');
   const { useLocalFilesOnly } = await configureSelfHostedRuntime(
     appBaseUrl,
     modelSource,
@@ -355,6 +393,7 @@ async function ensurePipeline(
   // Remove SPA index.html responses cached by earlier builds under /models/... keys.
   // Transformers.js checks the cache by local path even when allowLocalModels=false,
   // so a stale HTML entry would otherwise cause `Unexpected token '<'` forever.
+  setStage('cleaning the model cache');
   await purgeHtmlModelCacheEntries();
 
   const fileProgress = new Map<string, { loaded: number; total: number }>();
@@ -364,6 +403,13 @@ async function ensurePipeline(
       : 'and caching locally for offline use';
 
   const onModelProgress = (info: ProgressInfo) => {
+    if ((info.status === 'initiate' || info.status === 'download') && info.file) {
+      diag.file = `${info.name}/${info.file}`;
+      setStage('downloading model files');
+    } else if (info.status === 'ready') {
+      diag.file = undefined;
+      setStage(`starting the ${diag.backend?.toUpperCase() ?? ''} inference session`);
+    }
     if (info.status === 'progress' && info.file) {
       fileProgress.set(info.file, {
         loaded: info.loaded ?? 0,
@@ -399,6 +445,8 @@ async function ensurePipeline(
 
   const lowMemory = isLowMemoryDevice();
   const loadWithBackend = async (backend: 'webgpu' | 'wasm') => {
+    diag.backend = backend;
+    setStage(`loading the model (${backend.toUpperCase()})`);
     const dtype =
       backend === 'webgpu'
         ? ({ encoder_model: 'fp32', decoder_model_merged: 'q4' } as const)
@@ -432,6 +480,7 @@ async function ensurePipeline(
     activePipeline = await loadWithBackend(targetBackend);
   } catch (err) {
     if (targetBackend === 'webgpu') {
+      diag.webgpuError = errorText(err);
       post({
         type: 'progress',
         jobId,
@@ -451,65 +500,100 @@ async function ensurePipeline(
   return { transcriber: activePipeline, backendUsed };
 }
 
+function buildDiagnosticDetails(error: unknown, modelId: WhisperModelId, modelSource: ModelSource): string {
+  const stack = error instanceof Error ? error.stack : undefined;
+  const cause =
+    error instanceof Error && (error as Error & { cause?: unknown }).cause
+      ? errorText((error as Error & { cause?: unknown }).cause)
+      : undefined;
+  const wasmPaths = env.backends?.onnx?.wasm?.wasmPaths;
+  const lines = [
+    `Error: ${errorText(error)}`,
+    cause ? `Underlying cause: ${cause}` : '',
+    `Failed while: ${diag.stage}`,
+    diag.file ? `Model file: ${diag.file}` : '',
+    diag.lastUrl ? `Last URL requested: ${diag.lastUrl}` : '',
+    `Model: ${modelId} (hosting=${modelSource}, backend=${diag.backend ?? 'not chosen yet'})`,
+    diag.webgpuError ? `WebGPU attempt failed first: ${diag.webgpuError}` : '',
+    `Model host: ${env.remoteHost} (remote=${env.allowRemoteModels}, local=${env.allowLocalModels} at ${env.localModelPath})`,
+    wasmPaths ? `ONNX runtime files: ${typeof wasmPaths === 'string' ? wasmPaths : JSON.stringify(wasmPaths)}` : '',
+    `Browser: ${typeof navigator !== 'undefined' ? navigator.userAgent : 'unknown'}`,
+    stack ? `Stack:\n${stack}` : '',
+  ];
+  return lines.filter(Boolean).join('\n');
+}
+
 function describeWorkerError(
   error: unknown,
   modelId: WhisperModelId,
   modelSource: ModelSource
 ): { message: string; details: string } {
+  const name = error instanceof Error ? error.name : '';
   const raw = error instanceof Error ? error.message : String(error);
-  const details = error instanceof Error ? error.stack || raw : raw;
-  const lower = raw.toLowerCase();
+  const details = buildDiagnosticDetails(error, modelId, modelSource);
+  const lower = `${name} ${raw}`.toLowerCase();
+  const where = diag.file ? ` (${diag.stage}: ${diag.file})` : ` (while ${diag.stage})`;
+  const cause = `Cause: ${name ? `${name}: ` : ''}${raw}${where}`;
 
-  if (
+  let summary: string;
+  if (lower.includes('maximum call stack')) {
+    summary =
+      "The browser's speech engine ran out of stack space. This is a known limit in Safari on iPad; try Whisper Tiny (.en) and send the Error Log details.";
+  } else if (
     lower.includes('out of memory') ||
     lower.includes('oom') ||
     lower.includes('allocation') ||
-    (lower.includes('wasm') && lower.includes('memory')) ||
-    lower.includes('rangeerror')
+    (lower.includes('wasm') && lower.includes('memory'))
   ) {
-    return {
-      message:
-        'This device ran out of browser memory while transcribing. Switch to "Whisper Tiny (.en)" in AI Models or try a shorter clip.',
-      details,
-    };
-  }
-  if (
+    summary =
+      'This device ran out of browser memory. Switch to "Whisper Tiny (.en)" in AI Models or try a shorter clip.';
+  } else if (
     modelSource === 'local-only' &&
     (lower.includes('not found locally') ||
       lower.includes('local_files_only') ||
       lower.includes('404'))
   ) {
-    const shortKey = modelId.includes('tiny')
-      ? 'tiny'
-      : modelId.includes('base')
-      ? 'base'
-      : 'small';
-    return {
-      message: `Model "${modelId}" was not found on your self-hosted server. Run "npm run models:download -- --models=${shortKey}" on your host (or switch Model Hosting to Auto).`,
-      details,
-    };
-  }
-  if (
+    const shortKey = modelId.includes('tiny') ? 'tiny' : modelId.includes('base') ? 'base' : 'small';
+    summary = `Model "${modelId}" was not found on your self-hosted server. Run "npm run models:download -- --models=${shortKey}" on your host (or switch Model Hosting to Auto).`;
+  } else if (
     lower.includes('failed to fetch') ||
     lower.includes('load failed') ||
-    lower.includes('network') ||
-    lower.includes('offline') ||
+    lower.includes('networkerror') ||
+    lower.includes('network error') ||
+    lower.includes('importing a module script failed') ||
     lower.includes('err_internet')
   ) {
-    return {
-      message:
-        'The Whisper speech model has not been cached yet and could not be downloaded. Connect to your server or Wi-Fi once to cache it for offline use.',
-      details,
-    };
+    summary =
+      'A model or runtime file could not be downloaded. The address below may be blocked by your network (e.g. a school content filter) or you may be offline.';
+  } else if (/\b(401|403|451)\b/.test(lower)) {
+    summary = 'The download was refused by the server or a network filter.';
+  } else {
+    summary = 'On-device transcription failed.';
   }
-  return {
-    message: `On-device transcription failed: ${raw}`,
-    details,
-  };
+
+  return { message: `${summary}\n${cause}`, details };
 }
+
+// Catch errors that escape the try/catch below (e.g. thrown inside ONNX Runtime callbacks).
+let lastRequest: WorkerRequest | null = null;
+function reportEscapedError(error: unknown): void {
+  if (!activeJobId || !lastRequest) return;
+  const { message, details } = describeWorkerError(error, lastRequest.modelId, lastRequest.modelSource);
+  post({ type: 'error', jobId: activeJobId, message, details });
+}
+self.addEventListener('error', (event: ErrorEvent) => {
+  reportEscapedError(
+    event.error ?? new Error(`${event.message} at ${event.filename}:${event.lineno}:${event.colno}`)
+  );
+});
+self.addEventListener('unhandledrejection', (event: PromiseRejectionEvent) => {
+  reportEscapedError(event.reason);
+});
 
 self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
   const req = event.data;
+  activeJobId = req.jobId;
+  lastRequest = req;
 
   try {
     if (req.type === 'preload') {
@@ -587,6 +671,7 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
         // Whisper 448-token hallucination loops on iPad/mobile browsers.
         const maxNewTokens = Math.min(224, Math.max(64, Math.ceil(segDurationSec * 6)));
 
+        setStage(`transcribing segment ${i + 1} of ${slices.length}`);
         const output = await transcriber(slice.samples, {
           return_timestamps: true,
           max_new_tokens: maxNewTokens,
@@ -631,6 +716,7 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
         progress: 0.96,
       });
 
+      setStage('assigning speakers');
       const formatted = formatWhisperChunks(allChunks);
       const diarized = formatted.trim()
         ? autoAssignSpeakersInTranscript(formatted, req.aliases, req.audio, 16000)

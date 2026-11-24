@@ -46,6 +46,8 @@ export function ToastStack({ toasts, onDismiss }: ToastStackProps) {
                   fontSize: '0.79rem',
                   color: 'var(--text-secondary)',
                   marginTop: 2,
+                  whiteSpace: 'pre-line',
+                  overflowWrap: 'anywhere',
                 }}
               >
                 {toast.description}
