@@ -171,6 +171,10 @@ export interface ProcessingState {
   detail?: string;
 }
 
+export type AppView = 'workspace' | 'settings';
+
+export type SettingsTab = 'general' | 'models' | 'salt' | 'changelog';
+
 export interface AppSettings {
   theme: ThemeMode;
   modelId: WhisperModelId;
@@ -182,6 +186,7 @@ export interface AppSettings {
   useOverregularizationTag: boolean;
   includeSaltHeadersOnExport: boolean;
   stripTimestampsOnExport: boolean;
+  defaultSpeakerAliases: SpeakerAliases;
 }
 
 export const DEFAULT_APP_SETTINGS: AppSettings = {
@@ -195,6 +200,7 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   useOverregularizationTag: false,
   includeSaltHeadersOnExport: true,
   stripTimestampsOnExport: true,
+  defaultSpeakerAliases: { ...DEFAULT_SPEAKER_ALIASES },
 };
 
 export interface ToastMessage {

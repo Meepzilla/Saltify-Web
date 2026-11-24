@@ -4,14 +4,11 @@ import {
   Download,
   HardDrive,
   Server,
+  Settings,
   Trash2,
   X,
 } from 'lucide-react';
-import { useEffect, useState } from 'react';
-import {
-  clearCachedWhisperModels,
-  inspectCachedWhisperModels,
-} from '../engine/storage';
+import { useWhisperModelStatus } from '../hooks/useWhisperModelStatus';
 import {
   WHISPER_MODELS,
   type AppSettings,
@@ -28,15 +25,8 @@ interface ModelManagerModalProps {
   onUpdateSettings: (partial: Partial<AppSettings>) => void;
   onPreloadModel: (modelId: WhisperModelId) => void;
   onNotify: (title: string, description?: string) => void;
+  onOpenSettings?: () => void;
   onClose: () => void;
-}
-
-interface SelfHostedManifest {
-  models?: Array<{
-    id: string;
-    wasmQ8: boolean;
-    webgpu: boolean;
-  }>;
 }
 
 export function ModelManagerModal({
@@ -46,59 +36,19 @@ export function ModelManagerModal({
   onUpdateSettings,
   onPreloadModel,
   onNotify,
+  onOpenSettings,
   onClose,
 }: ModelManagerModalProps) {
-  const [cachedModels, setCachedModels] = useState<string[]>([]);
-  const [cacheBytes, setCacheBytes] = useState(0);
-  const [selfHostedModels, setSelfHostedModels] = useState<string[]>([]);
-
-  useEffect(() => {
-    if (!open) return;
-    let cancelled = false;
-
-    void inspectCachedWhisperModels().then((info) => {
-      if (cancelled) return;
-      setCachedModels(info.cachedModelIds);
-      setCacheBytes(info.estimatedBytes);
-    });
-
-    const base = settings.customModelBaseUrl.trim()
-      ? settings.customModelBaseUrl.trim().replace(/\/?$/, '/')
-      : './models/';
-
-    void fetch(`${base}manifest.json`, { cache: 'no-cache' })
-      .then(async (resp) => {
-        if (!resp.ok) return [];
-        const ct = resp.headers.get('content-type') || '';
-        if (!ct.includes('json')) return [];
-        const data = (await resp.json()) as SelfHostedManifest;
-        return (data.models ?? []).map((m) => m.id);
-      })
-      .catch(() => [] as string[])
-      .then((ids) => {
-        if (!cancelled) setSelfHostedModels(ids);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [open, processing, settings.customModelBaseUrl]);
+  const { cachedModels, cacheBytes, selfHostedModels, clearCache } =
+    useWhisperModelStatus(open, settings.customModelBaseUrl, processing);
 
   if (!open) return null;
 
   const handleClearCache = async () => {
-    if (
-      !window.confirm(
-        'Remove cached on-device Whisper models from browser storage? You can re-download them anytime from your server or Wi-Fi.'
-      )
-    ) {
-      return;
+    const cleared = await clearCache();
+    if (cleared) {
+      onNotify('Model cache cleared', 'Local browser storage has been freed.');
     }
-    await clearCachedWhisperModels();
-    const info = await inspectCachedWhisperModels();
-    setCachedModels(info.cachedModelIds);
-    setCacheBytes(info.estimatedBytes);
-    onNotify('Model cache cleared', 'Local browser storage has been freed.');
   };
 
   return (
@@ -348,7 +298,23 @@ export function ModelManagerModal({
           </div>
         </div>
 
-        <div className="modal-footer">
+        <div
+          className="modal-footer"
+          style={{ justifyContent: onOpenSettings ? 'space-between' : 'flex-end' }}
+        >
+          {onOpenSettings && (
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm"
+              onClick={() => {
+                onClose();
+                onOpenSettings();
+              }}
+            >
+              <Settings size={14} />
+              <span>All Settings</span>
+            </button>
+          )}
           <button type="button" className="btn btn-primary btn-sm" onClick={onClose}>
             Done
           </button>

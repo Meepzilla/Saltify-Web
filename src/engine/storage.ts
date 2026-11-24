@@ -95,11 +95,28 @@ export async function loadAudioBlob(sessionId: string): Promise<Blob | null> {
 export function loadAppSettings(): AppSettings {
   try {
     const raw = localStorage.getItem(SETTINGS_KEY);
-    if (!raw) return { ...DEFAULT_APP_SETTINGS };
+    if (!raw) {
+      return {
+        ...DEFAULT_APP_SETTINGS,
+        defaultSpeakerAliases: { ...DEFAULT_APP_SETTINGS.defaultSpeakerAliases },
+      };
+    }
     const parsed = JSON.parse(raw) as Partial<AppSettings>;
-    return { ...DEFAULT_APP_SETTINGS, ...parsed };
+    const speaker1 = parsed.defaultSpeakerAliases?.speaker1?.trim();
+    const speaker2 = parsed.defaultSpeakerAliases?.speaker2?.trim();
+    return {
+      ...DEFAULT_APP_SETTINGS,
+      ...parsed,
+      defaultSpeakerAliases: {
+        speaker1: speaker1 || DEFAULT_APP_SETTINGS.defaultSpeakerAliases.speaker1,
+        speaker2: speaker2 || DEFAULT_APP_SETTINGS.defaultSpeakerAliases.speaker2,
+      },
+    };
   } catch {
-    return { ...DEFAULT_APP_SETTINGS };
+    return {
+      ...DEFAULT_APP_SETTINGS,
+      defaultSpeakerAliases: { ...DEFAULT_APP_SETTINGS.defaultSpeakerAliases },
+    };
   }
 }
 
@@ -108,6 +125,33 @@ export function saveAppSettings(settings: AppSettings): void {
     localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
   } catch {
     // Ignore private browsing quota errors
+  }
+}
+
+export function resetAppSettings(): AppSettings {
+  const defaults: AppSettings = {
+    ...DEFAULT_APP_SETTINGS,
+    defaultSpeakerAliases: { ...DEFAULT_APP_SETTINGS.defaultSpeakerAliases },
+  };
+  saveAppSettings(defaults);
+  return defaults;
+}
+
+export async function estimateLocalStorageUsage(): Promise<{
+  usageBytes: number | null;
+  quotaBytes: number | null;
+}> {
+  if (typeof navigator === 'undefined' || !navigator.storage?.estimate) {
+    return { usageBytes: null, quotaBytes: null };
+  }
+  try {
+    const est = await navigator.storage.estimate();
+    return {
+      usageBytes: typeof est.usage === 'number' ? est.usage : null,
+      quotaBytes: typeof est.quota === 'number' ? est.quota : null,
+    };
+  } catch {
+    return { usageBytes: null, quotaBytes: null };
   }
 }
 

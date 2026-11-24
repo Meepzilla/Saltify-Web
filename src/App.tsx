@@ -1,5 +1,6 @@
 import {
   Activity,
+  ArrowLeft,
   BarChart3,
   Download,
   FileText,
@@ -7,6 +8,7 @@ import {
   Mic,
   Pause,
   Play,
+  Settings,
   Share,
   SpellCheck,
   UserRound,
@@ -21,11 +23,13 @@ import { ExportModal } from './components/ExportModal';
 import { HelpModal } from './components/HelpModal';
 import { MetricsPanel } from './components/MetricsPanel';
 import { ModelManagerModal } from './components/ModelManagerModal';
+import { SettingsPage } from './components/SettingsPage';
 import { Sidebar } from './components/Sidebar';
 import { LabelSpeakersModal, SpeakerAliasesModal } from './components/SpeakerModals';
 import { ToastStack } from './components/Toast';
 import { TranscriptionPane } from './components/TranscriptionPane';
 import { WaveformModal } from './components/WaveformCanvas';
+import { APP_VERSION } from './data/changelog';
 import {
   applySoftLimitedGain,
   decodeAudioBlob,
@@ -50,6 +54,7 @@ import {
   loadAllSessions,
   loadAppSettings,
   loadAudioBlob,
+  resetAppSettings,
   saveAppSettings,
   saveAudioBlob,
   saveSessionRecord,
@@ -67,9 +72,11 @@ import {
   DEFAULT_SPEAKER_ALIASES,
   EMPTY_CLIENT_INFO,
   type AppSettings,
+  type AppView,
   type ClientInfo,
   type ProcessingState,
   type SessionRecord,
+  type SettingsTab,
   type SpeakerAliases,
   type ToastMessage,
   type WhisperModelId,
@@ -78,7 +85,27 @@ import { isCancelledError, whisperClient } from './workers/whisperClient';
 
 type MobileTab = 'audio' | 'transcript' | 'salt' | 'metrics';
 
-function createFreshSession(number: number): SessionRecord {
+function parseHashRoute(hash: string): { view: AppView; tab: SettingsTab } {
+  const clean = hash.replace(/^#\/?/, '').toLowerCase();
+  if (clean === 'changelog' || clean === 'settings/changelog') {
+    return { view: 'settings', tab: 'changelog' };
+  }
+  if (clean === 'settings/models') {
+    return { view: 'settings', tab: 'models' };
+  }
+  if (clean === 'settings/salt') {
+    return { view: 'settings', tab: 'salt' };
+  }
+  if (clean === 'settings' || clean === 'settings/general') {
+    return { view: 'settings', tab: 'general' };
+  }
+  return { view: 'workspace', tab: 'general' };
+}
+
+function createFreshSession(
+  number: number,
+  defaultAliases: SpeakerAliases = DEFAULT_SPEAKER_ALIASES
+): SessionRecord {
   const now = Date.now();
   const stamp = new Date(now).toISOString().replace('T', ' ').slice(0, 19);
   return {
@@ -87,7 +114,10 @@ function createFreshSession(number: number): SessionRecord {
     createdAt: now,
     updatedAt: now,
     clientInfo: { ...EMPTY_CLIENT_INFO, dateOfSample: stamp.slice(0, 10) },
-    speakerAliases: { ...DEFAULT_SPEAKER_ALIASES },
+    speakerAliases: {
+      speaker1: defaultAliases.speaker1.trim() || DEFAULT_SPEAKER_ALIASES.speaker1,
+      speaker2: defaultAliases.speaker2.trim() || DEFAULT_SPEAKER_ALIASES.speaker2,
+    },
     audioMeta: null,
     hasAudioBlob: false,
     transcriptionText: '',
@@ -100,10 +130,20 @@ function createFreshSession(number: number): SessionRecord {
 
 export default function App() {
   const [settings, setSettings] = useState<AppSettings>(() => loadAppSettings());
-  useTheme(settings.theme);
+  const resolvedTheme = useTheme(settings.theme);
   const pwa = usePwaInstall();
 
-  const [sessions, setSessions] = useState<SessionRecord[]>(() => [createFreshSession(1)]);
+  const initialRoute = useMemo(
+    () =>
+      parseHashRoute(typeof window !== 'undefined' ? window.location.hash : ''),
+    []
+  );
+  const [activeView, setActiveView] = useState<AppView>(initialRoute.view);
+  const [settingsTab, setSettingsTab] = useState<SettingsTab>(initialRoute.tab);
+
+  const [sessions, setSessions] = useState<SessionRecord[]>(() => [
+    createFreshSession(1, loadAppSettings().defaultSpeakerAliases),
+  ]);
   const [activeSessionId, setActiveSessionId] = useState<string>('');
   const [hydrated, setHydrated] = useState(false);
 
@@ -242,6 +282,96 @@ export default function App() {
     });
   }, []);
 
+  const syncHash = useCallback((view: AppView, tab: SettingsTab) => {
+    if (typeof window === 'undefined') return;
+    const targetHash =
+      view === 'workspace'
+        ? ''
+        : tab === 'general'
+        ? '#settings'
+        : `#settings/${tab}`;
+    if (window.location.hash !== targetHash) {
+      const nextUrl = targetHash
+        ? `${window.location.pathname}${window.location.search}${targetHash}`
+        : `${window.location.pathname}${window.location.search}`;
+      window.history.pushState(null, '', nextUrl);
+    }
+  }, []);
+
+  const openSettings = useCallback(
+    (tab: SettingsTab = 'general') => {
+      setSettingsTab(tab);
+      setActiveView('settings');
+      syncHash('settings', tab);
+    },
+    [syncHash]
+  );
+
+  const closeSettings = useCallback(() => {
+    setActiveView('workspace');
+    syncHash('workspace', settingsTab);
+  }, [syncHash, settingsTab]);
+
+  // Keep view state synchronized with browser Back/Forward hash changes
+  useEffect(() => {
+    const onRouteChange = () => {
+      const next = parseHashRoute(window.location.hash);
+      setActiveView(next.view);
+      setSettingsTab(next.tab);
+    };
+    window.addEventListener('hashchange', onRouteChange);
+    window.addEventListener('popstate', onRouteChange);
+    return () => {
+      window.removeEventListener('hashchange', onRouteChange);
+      window.removeEventListener('popstate', onRouteChange);
+    };
+  }, []);
+
+  // Update browser document title to match active page
+  useEffect(() => {
+    if (activeView === 'settings') {
+      document.title =
+        settingsTab === 'changelog'
+          ? `Change Log — Saltify Web v${APP_VERSION}`
+          : `Settings — Saltify Web v${APP_VERSION}`;
+    } else {
+      document.title = 'Saltify — On-Device SALT Speech Transcription & Analysis';
+    }
+  }, [activeView, settingsTab]);
+
+  const anyModalOpen =
+    showClientModal ||
+    showExportModal ||
+    showModelModal ||
+    showHelpModal ||
+    showLabelSpeakersModal ||
+    showAliasesModal ||
+    showClauseModal ||
+    showWaveformModal;
+
+  useEffect(() => {
+    if (activeView !== 'settings' || anyModalOpen) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      const target = e.target as HTMLElement | null;
+      const tag = target?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+      closeSettings();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [activeView, anyModalOpen, closeSettings]);
+
+  const handleResetSettings = useCallback(() => {
+    const defaults = resetAppSettings();
+    setSettings(defaults);
+    pushToast(
+      'info',
+      'Preferences restored',
+      'App settings were reset to factory defaults. Saved sessions were kept.'
+    );
+  }, [pushToast]);
+
   const handleVolumeChange = useCallback(
     (playbackVolume: number) => {
       updateSettings({ playbackVolume });
@@ -294,16 +424,36 @@ export default function App() {
     resetGrammarReview();
     player.pause();
 
-    const fresh = createFreshSession(sessions.length + 1);
+    const fresh = createFreshSession(
+      sessions.length + 1,
+      settings.defaultSpeakerAliases
+    );
     setSessions((prev) => [fresh, ...prev]);
     setActiveSessionId(fresh.id);
     setActiveAudioBlob(null);
+    if (activeView !== 'workspace') {
+      closeSettings();
+    }
     void saveSessionRecord(fresh).catch(() => {});
-  }, [isRecording, processing, resetGrammarReview, player, sessions.length]);
+  }, [
+    isRecording,
+    processing,
+    resetGrammarReview,
+    player,
+    sessions.length,
+    settings.defaultSpeakerAliases,
+    activeView,
+    closeSettings,
+  ]);
 
   const handleSelectSession = useCallback(
     (id: string) => {
-      if (id === activeId) return;
+      if (id === activeId) {
+        if (activeView !== 'workspace') {
+          closeSettings();
+        }
+        return;
+      }
       if (isRecording) {
         pushToast('warning', 'Recording in progress', 'Stop recording before switching sessions.');
         return;
@@ -315,8 +465,20 @@ export default function App() {
       resetGrammarReview();
       player.pause();
       setActiveSessionId(id);
+      if (activeView !== 'workspace') {
+        closeSettings();
+      }
     },
-    [activeId, isRecording, processing, resetGrammarReview, player, pushToast]
+    [
+      activeId,
+      activeView,
+      closeSettings,
+      isRecording,
+      processing,
+      resetGrammarReview,
+      player,
+      pushToast,
+    ]
   );
 
   const handleRenameSession = useCallback((id: string, nextName: string) => {
@@ -351,7 +513,7 @@ export default function App() {
       setSessions((prev) => {
         const remaining = prev.filter((s) => s.id !== id);
         if (remaining.length === 0) {
-          const fallback = createFreshSession(1);
+          const fallback = createFreshSession(1, settings.defaultSpeakerAliases);
           setActiveSessionId(fallback.id);
           setActiveAudioBlob(null);
           void saveSessionRecord(fallback).catch(() => {});
@@ -363,7 +525,14 @@ export default function App() {
         return remaining;
       });
     },
-    [sessions, activeId, processing, resetGrammarReview, player]
+    [
+      sessions,
+      activeId,
+      processing,
+      resetGrammarReview,
+      player,
+      settings.defaultSpeakerAliases,
+    ]
   );
 
   const handleImportSessionJson = useCallback(
@@ -380,7 +549,7 @@ export default function App() {
         }
         const now = Date.now();
         const record: SessionRecord = {
-          ...createFreshSession(sessions.length + 1),
+          ...createFreshSession(sessions.length + 1, settings.defaultSpeakerAliases),
           ...imported,
           id: `sess_${now}_${Math.random().toString(36).slice(2, 7)}`,
           createdAt: imported.createdAt ?? now,
@@ -391,6 +560,9 @@ export default function App() {
         setSessions((prev) => [record, ...prev]);
         setActiveSessionId(record.id);
         setActiveAudioBlob(null);
+        if (activeView !== 'workspace') {
+          closeSettings();
+        }
         await saveSessionRecord(record);
         pushToast('success', 'Session imported', `Loaded "${record.name}".`);
       } catch (err) {
@@ -401,7 +573,13 @@ export default function App() {
         );
       }
     },
-    [sessions.length, pushToast]
+    [
+      sessions.length,
+      settings.defaultSpeakerAliases,
+      activeView,
+      closeSettings,
+      pushToast,
+    ]
   );
 
   // Audio Ingest (Upload or Recording stop)
@@ -1036,6 +1214,9 @@ export default function App() {
         setDragOver(false);
         const file = e.dataTransfer.files?.[0];
         if (file && (file.type.startsWith('audio/') || /\.(wav|mp3|m4a|mp4|webm|ogg|flac)$/i.test(file.name))) {
+          if (activeView !== 'workspace') {
+            closeSettings();
+          }
           handleUploadFile(file);
         }
       }}
@@ -1048,6 +1229,9 @@ export default function App() {
       <Sidebar
         sessions={sessions}
         activeSessionId={activeSession.id}
+        activeView={activeView}
+        settingsTab={settingsTab}
+        appVersion={APP_VERSION}
         theme={settings.theme}
         isOnline={pwa.isOnline}
         canPromptInstall={pwa.canPromptInstall}
@@ -1057,10 +1241,11 @@ export default function App() {
         onDeleteSession={handleDeleteSession}
         onImportSessionJson={(file) => void handleImportSessionJson(file)}
         onChangeTheme={(theme) => updateSettings({ theme })}
-        onOpenModels={() => setShowModelModal(true)}
+        onOpenSettings={(tab) => openSettings(tab ?? 'general')}
         onOpenHelp={() => setShowHelpModal(true)}
         onPromptInstall={() => void pwa.promptInstall()}
-        onCloseMobileDrawer={() => {
+        onCloseMobileDrawer={() => setMobileDrawerOpen(false)}
+        onCollapseSidebar={() => {
           setMobileDrawerOpen(false);
           if (window.innerWidth > 1040) {
             setSidebarCollapsed(true);
@@ -1069,269 +1254,364 @@ export default function App() {
       />
 
       <div className="workspace">
-        {/* Top Clinical Header Bar */}
-        <header className="topbar no-print">
-          <div className="topbar-left">
-            <button
-              id="toggle-sidebar-btn"
-              type="button"
-              className="btn btn-ghost btn-icon"
-              aria-label="Toggle sessions sidebar"
-              onClick={() => {
-                if (window.innerWidth <= 1040) {
-                  setMobileDrawerOpen((v) => !v);
-                } else {
-                  setSidebarCollapsed((v) => !v);
-                }
-              }}
-            >
-              <Menu size={19} />
-            </button>
+        {activeView === 'settings' ? (
+          <>
+            {/* Settings Page Header Bar */}
+            <header className="topbar no-print">
+              <div className="topbar-left">
+                <button
+                  id="toggle-sidebar-btn"
+                  type="button"
+                  className="btn btn-ghost btn-icon"
+                  aria-label="Toggle sessions sidebar"
+                  onClick={() => {
+                    if (window.innerWidth <= 1040) {
+                      setMobileDrawerOpen((v) => !v);
+                    } else {
+                      setSidebarCollapsed((v) => !v);
+                    }
+                  }}
+                >
+                  <Menu size={19} />
+                </button>
 
-            <h2 className="topbar-session-title" title={activeSession.name}>
-              {activeSession.name}
-            </h2>
+                <button
+                  id="settings-back-btn"
+                  type="button"
+                  className="btn btn-subtle btn-sm"
+                  onClick={closeSettings}
+                  title={`Return to ${activeSession.name}`}
+                >
+                  <ArrowLeft size={15} />
+                  <span>Back to Session</span>
+                </button>
 
-            <button
-              id="client-info-btn"
-              type="button"
-              className="topbar-client-chip"
-              onClick={() => setShowClientModal(true)}
-              title="Edit Client Info and SALT Header fields"
-            >
-              <UserRound size={14} />
-              <span>{clientChipSummary}</span>
-            </button>
-          </div>
+                <div className="settings-topbar-breadcrumb">
+                  <span className="topbar-session-title">
+                    {settingsTab === 'changelog' ? 'Change Log' : 'Settings'}
+                  </span>
+                </div>
+              </div>
 
-          <div className="topbar-right">
-            <button
-              type="button"
-              className="btn btn-ghost btn-icon"
-              title="Client & Sample Info"
-              aria-label="Edit Client Info"
-              onClick={() => setShowClientModal(true)}
-            >
-              <UserRound size={17} />
-            </button>
+              <div className="topbar-right">
+                {isRecording && (
+                  <button
+                    type="button"
+                    className="btn btn-danger btn-sm"
+                    onClick={closeSettings}
+                    title="Live microphone recording is active — return to audio studio"
+                  >
+                    <span className="rec-dot" />
+                    <span className="mono">{formatDurationPadded(recordingSeconds)}</span>
+                  </button>
+                )}
 
-            <button
-              id="open-export-btn"
-              type="button"
-              className="btn btn-secondary btn-sm"
-              onClick={() => setShowExportModal(true)}
-            >
-              <Download size={15} />
-              <span>Export</span>
-            </button>
-          </div>
-        </header>
+                <button
+                  id="topbar-version-btn"
+                  type="button"
+                  className={`version-pill version-pill-btn ${
+                    settingsTab === 'changelog' ? 'current' : ''
+                  }`}
+                  title="Current Saltify Web version — view Change Log"
+                  onClick={() => openSettings('changelog')}
+                >
+                  v{APP_VERSION}
+                </button>
+              </div>
+            </header>
 
-        {/* iPadOS Safari Install Helper Banner */}
-        {pwa.isIosOrIpad && !pwa.isStandalone && !iosBannerDismissed && (
-          <div className="install-banner no-print">
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
-              <Share size={15} />
-              <span>
-                Install Saltify on your iPad: tap Safari&apos;s <strong>Share</strong>{' '}
-                button → <strong>Add to Home Screen</strong> for full-screen offline use.
-              </span>
-            </span>
-            <div className="install-banner-actions">
-              <button
-                type="button"
-                className="btn btn-ghost btn-icon"
-                style={{ width: 28, height: 28, minWidth: 28, minHeight: 28 }}
-                aria-label="Dismiss iPad install tip"
-                onClick={() => setIosBannerDismissed(true)}
-              >
-                <X size={14} />
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* Mobile Sticky Mini Audio Bar when viewing Transcript or SALT on Phones */}
-        {activeAudioBlob && mobileTab !== 'audio' && (
-          <div className="mobile-mini-player no-print">
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
-              <button
-                type="button"
-                className="transport-play-btn"
-                style={{ width: 34, height: 34 }}
-                onClick={() => void player.togglePlayPause()}
-                aria-label={player.isPlaying ? 'Pause' : 'Play'}
-              >
-                {player.isPlaying ? <Pause size={15} /> : <Play size={15} />}
-              </button>
-              <span
-                style={{
-                  fontSize: '0.8rem',
-                  fontWeight: 600,
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  whiteSpace: 'nowrap',
-                }}
-              >
-                {activeSession.audioMeta?.fileName || 'Recording'}
-              </span>
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
-              <button
-                type="button"
-                className={`boost-pill ${!player.muted && player.volume > 1.05 ? 'boosted' : ''}`}
-                onClick={player.cycleBoost}
-                title="Cycle output volume boost"
-              >
-                {player.muted ? 'Mute' : `${Math.round(player.volume * 100)}%`}
-              </button>
-              <span className="transport-time">
-                {formatDurationPadded(player.currentTime)} /{' '}
-                {formatDurationPadded(player.duration)}
-              </span>
-            </div>
-          </div>
-        )}
-
-        {/* Main Workspace Body */}
-        <main className="workspace-body">
-          <div className={mobileTab !== 'audio' ? 'mobile-hidden' : 'mobile-scroll-slot'}>
-            <AudioStudio
-              audioMeta={activeSession.audioMeta}
-              hasAudio={Boolean(activeAudioBlob)}
-              player={player}
-              isRecording={isRecording}
-              isRecordingPaused={isRecordingPaused}
-              recordingSeconds={recordingSeconds}
-              recordingLevel={recordingLevel}
+            <SettingsPage
+              activeTab={settingsTab}
+              settings={settings}
+              resolvedTheme={resolvedTheme}
               processing={processing}
-              modelId={settings.modelId}
-              utteranceTimestamps={utteranceTimestamps}
-              onFileNameChange={(fileName) =>
-                updateActiveSession((s) =>
-                  s.audioMeta ? { ...s, audioMeta: { ...s.audioMeta, fileName } } : s
-                )
-              }
-              onUploadFile={handleUploadFile}
-              onStartRecording={() => void handleStartRecording()}
-              onTogglePauseRecording={handleTogglePauseRecording}
-              onStopRecording={() => void handleStopRecording()}
-              onDownloadAudio={() => void handleDownloadAudio()}
-              onToggleTranscribe={handleToggleTranscribe}
-              onOpenModelManager={() => setShowModelModal(true)}
-              onExpandWaveform={() => setShowWaveformModal(true)}
-              onLoadDemoSample={handleLoadDemoSample}
+              sessionCount={sessions.length}
+              pwa={pwa}
+              onSelectTab={(tab) => openSettings(tab)}
+              onUpdateSettings={updateSettings}
+              onResetSettings={handleResetSettings}
+              onPreloadModel={(id) => void handlePreloadModel(id)}
+              onNotify={(title, desc) => pushToast('info', title, desc)}
             />
-          </div>
+          </>
+        ) : (
+          <>
+            {/* Top Clinical Header Bar */}
+            <header className="topbar no-print">
+              <div className="topbar-left">
+                <button
+                  id="toggle-sidebar-btn"
+                  type="button"
+                  className="btn btn-ghost btn-icon"
+                  aria-label="Toggle sessions sidebar"
+                  onClick={() => {
+                    if (window.innerWidth <= 1040) {
+                      setMobileDrawerOpen((v) => !v);
+                    } else {
+                      setSidebarCollapsed((v) => !v);
+                    }
+                  }}
+                >
+                  <Menu size={19} />
+                </button>
 
-          <div
-            className={`editor-panes ${
-              mobileTab === 'audio' || mobileTab === 'metrics' ? 'mobile-hidden' : ''
-            }`}
-          >
-            <div
-              className={mobileTab !== 'transcript' ? 'mobile-hidden' : ''}
-              style={{ display: 'flex', minHeight: 0 }}
-            >
-              <TranscriptionPane
-                text={activeSession.transcriptionText}
-                aliases={activeSession.speakerAliases}
-                hasAudio={Boolean(activeAudioBlob)}
-                currentTime={player.currentTime}
-                disabled={processing !== null}
-                onChangeText={(transcriptionText) =>
-                  updateActiveSession((s) => ({ ...s, transcriptionText }))
-                }
-                onSeekToTime={(sec) => player.seek(sec, player.isPlaying)}
-                onOpenLabelSpeakers={() => setShowLabelSpeakersModal(true)}
-                onOpenAliases={() => setShowAliasesModal(true)}
-                onLoadDemoSample={handleLoadDemoSample}
-              />
-            </div>
+                <h2 className="topbar-session-title" title={activeSession.name}>
+                  {activeSession.name}
+                </h2>
 
-            <div
-              className={mobileTab !== 'salt' ? 'mobile-hidden' : ''}
-              style={{ display: 'flex', minHeight: 0 }}
-            >
-              <ConventionPane
-                text={activeSession.conventionText}
-                hasTranscript={activeSession.transcriptionText.trim().length > 0}
-                aliases={activeSession.speakerAliases}
-                grammarActive={grammarActive}
-                grammarCheckPerformed={activeSession.grammarCheckPerformed}
-                morphemesApplied={activeSession.morphemesApplied}
-                currentOriginalLine={currentOriginalLine}
-                correctionDraft={correctionDraft}
-                grammarRemaining={grammarProgress.remaining}
-                grammarTotal={grammarProgress.total}
-                checkAllSentences={checkAllSentences}
-                disabled={processing !== null}
-                onChangeText={(conventionText) =>
-                  updateActiveSession((s) => ({ ...s, conventionText }))
-                }
-                onToggleCheckAll={setCheckAllSentences}
-                onStartOrCancelGrammarCheck={handleStartOrCancelGrammarCheck}
-                onChangeCorrectionDraft={setCorrectionDraft}
-                onSubmitCorrection={handleSubmitCorrection}
-                onSkipCorrection={handleSkipCorrection}
-                onAutoApplyAllRemaining={handleAutoApplyAllRemaining}
-                onAddMorphemes={handleAddMorphemes}
-                onOpenClauseCoder={() => setShowClauseModal(true)}
-                onQuickCycleLineSi={handleQuickCycleLineSi}
-                onSeekToTime={(sec) => player.seek(sec, player.isPlaying)}
-              />
-            </div>
-          </div>
+                <button
+                  id="client-info-btn"
+                  type="button"
+                  className="topbar-client-chip"
+                  onClick={() => setShowClientModal(true)}
+                  title="Edit Client Info and SALT Header fields"
+                >
+                  <UserRound size={14} />
+                  <span>{clientChipSummary}</span>
+                </button>
+              </div>
 
-          <div className={mobileTab !== 'metrics' ? 'mobile-hidden' : 'mobile-scroll-slot'}>
-            <MetricsPanel
-              metrics={metrics}
-              alwaysExpanded={mobileTab === 'metrics'}
-              canMarkClauses={
-                !grammarActive &&
-                processing === null &&
-                Boolean(activeSession.conventionText.trim() || activeSession.transcriptionText.trim())
-              }
-              onOpenClauseCoder={() => setShowClauseModal(true)}
-            />
-          </div>
-        </main>
+              <div className="topbar-right">
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-icon"
+                  title="Client & Sample Info"
+                  aria-label="Edit Client Info"
+                  onClick={() => setShowClientModal(true)}
+                >
+                  <UserRound size={17} />
+                </button>
 
-        {/* Android / Mobile Bottom Tab Navigation */}
-        <nav className="mobile-nav no-print" aria-label="Mobile workspace tabs">
-          <button
-            type="button"
-            className={`mobile-nav-btn ${mobileTab === 'audio' ? 'active' : ''}`}
-            onClick={() => setMobileTab('audio')}
-          >
-            {isRecording ? <Activity size={18} /> : <Mic size={18} />}
-            <span>Audio</span>
-          </button>
-          <button
-            type="button"
-            className={`mobile-nav-btn ${mobileTab === 'transcript' ? 'active' : ''}`}
-            onClick={() => setMobileTab('transcript')}
-          >
-            <FileText size={18} />
-            <span>Transcript</span>
-          </button>
-          <button
-            type="button"
-            className={`mobile-nav-btn ${mobileTab === 'salt' ? 'active' : ''}`}
-            onClick={() => setMobileTab('salt')}
-          >
-            <SpellCheck size={18} />
-            <span>SALT</span>
-          </button>
-          <button
-            type="button"
-            className={`mobile-nav-btn ${mobileTab === 'metrics' ? 'active' : ''}`}
-            onClick={() => setMobileTab('metrics')}
-          >
-            <BarChart3 size={18} />
-            <span>Metrics</span>
-          </button>
-        </nav>
+                <button
+                  id="topbar-settings-btn"
+                  type="button"
+                  className="btn btn-ghost btn-icon"
+                  title={`Settings & Change Log (v${APP_VERSION})`}
+                  aria-label="Open Settings and Change Log"
+                  onClick={() => openSettings('general')}
+                >
+                  <Settings size={17} />
+                </button>
+
+                <button
+                  id="open-export-btn"
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  onClick={() => setShowExportModal(true)}
+                >
+                  <Download size={15} />
+                  <span>Export</span>
+                </button>
+              </div>
+            </header>
+
+            {/* iPadOS Safari Install Helper Banner */}
+            {pwa.isIosOrIpad && !pwa.isStandalone && !iosBannerDismissed && (
+              <div className="install-banner no-print">
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
+                  <Share size={15} />
+                  <span>
+                    Install Saltify on your iPad: tap Safari&apos;s <strong>Share</strong>{' '}
+                    button → <strong>Add to Home Screen</strong> for full-screen offline use.
+                  </span>
+                </span>
+                <div className="install-banner-actions">
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-icon"
+                    style={{ width: 28, height: 28, minWidth: 28, minHeight: 28 }}
+                    aria-label="Dismiss iPad install tip"
+                    onClick={() => setIosBannerDismissed(true)}
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Mobile Sticky Mini Audio Bar when viewing Transcript or SALT on Phones */}
+            {activeAudioBlob && mobileTab !== 'audio' && (
+              <div className="mobile-mini-player no-print">
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+                  <button
+                    type="button"
+                    className="transport-play-btn"
+                    style={{ width: 34, height: 34 }}
+                    onClick={() => void player.togglePlayPause()}
+                    aria-label={player.isPlaying ? 'Pause' : 'Play'}
+                  >
+                    {player.isPlaying ? <Pause size={15} /> : <Play size={15} />}
+                  </button>
+                  <span
+                    style={{
+                      fontSize: '0.8rem',
+                      fontWeight: 600,
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {activeSession.audioMeta?.fileName || 'Recording'}
+                  </span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+                  <button
+                    type="button"
+                    className={`boost-pill ${!player.muted && player.volume > 1.05 ? 'boosted' : ''}`}
+                    onClick={player.cycleBoost}
+                    title="Cycle output volume boost"
+                  >
+                    {player.muted ? 'Mute' : `${Math.round(player.volume * 100)}%`}
+                  </button>
+                  <span className="transport-time">
+                    {formatDurationPadded(player.currentTime)} /{' '}
+                    {formatDurationPadded(player.duration)}
+                  </span>
+                </div>
+              </div>
+            )}
+
+            {/* Main Workspace Body */}
+            <main className="workspace-body">
+              <div className={mobileTab !== 'audio' ? 'mobile-hidden' : 'mobile-scroll-slot'}>
+                <AudioStudio
+                  audioMeta={activeSession.audioMeta}
+                  hasAudio={Boolean(activeAudioBlob)}
+                  player={player}
+                  isRecording={isRecording}
+                  isRecordingPaused={isRecordingPaused}
+                  recordingSeconds={recordingSeconds}
+                  recordingLevel={recordingLevel}
+                  processing={processing}
+                  modelId={settings.modelId}
+                  utteranceTimestamps={utteranceTimestamps}
+                  onFileNameChange={(fileName) =>
+                    updateActiveSession((s) =>
+                      s.audioMeta ? { ...s, audioMeta: { ...s.audioMeta, fileName } } : s
+                    )
+                  }
+                  onUploadFile={handleUploadFile}
+                  onStartRecording={() => void handleStartRecording()}
+                  onTogglePauseRecording={handleTogglePauseRecording}
+                  onStopRecording={() => void handleStopRecording()}
+                  onDownloadAudio={() => void handleDownloadAudio()}
+                  onToggleTranscribe={handleToggleTranscribe}
+                  onOpenModelManager={() => setShowModelModal(true)}
+                  onExpandWaveform={() => setShowWaveformModal(true)}
+                  onLoadDemoSample={handleLoadDemoSample}
+                />
+              </div>
+
+              <div
+                className={`editor-panes ${
+                  mobileTab === 'audio' || mobileTab === 'metrics' ? 'mobile-hidden' : ''
+                }`}
+              >
+                <div
+                  className={mobileTab !== 'transcript' ? 'mobile-hidden' : ''}
+                  style={{ display: 'flex', minHeight: 0 }}
+                >
+                  <TranscriptionPane
+                    text={activeSession.transcriptionText}
+                    aliases={activeSession.speakerAliases}
+                    hasAudio={Boolean(activeAudioBlob)}
+                    currentTime={player.currentTime}
+                    disabled={processing !== null}
+                    onChangeText={(transcriptionText) =>
+                      updateActiveSession((s) => ({ ...s, transcriptionText }))
+                    }
+                    onSeekToTime={(sec) => player.seek(sec, player.isPlaying)}
+                    onOpenLabelSpeakers={() => setShowLabelSpeakersModal(true)}
+                    onOpenAliases={() => setShowAliasesModal(true)}
+                    onLoadDemoSample={handleLoadDemoSample}
+                  />
+                </div>
+
+                <div
+                  className={mobileTab !== 'salt' ? 'mobile-hidden' : ''}
+                  style={{ display: 'flex', minHeight: 0 }}
+                >
+                  <ConventionPane
+                    text={activeSession.conventionText}
+                    hasTranscript={activeSession.transcriptionText.trim().length > 0}
+                    aliases={activeSession.speakerAliases}
+                    grammarActive={grammarActive}
+                    grammarCheckPerformed={activeSession.grammarCheckPerformed}
+                    morphemesApplied={activeSession.morphemesApplied}
+                    currentOriginalLine={currentOriginalLine}
+                    correctionDraft={correctionDraft}
+                    grammarRemaining={grammarProgress.remaining}
+                    grammarTotal={grammarProgress.total}
+                    checkAllSentences={checkAllSentences}
+                    disabled={processing !== null}
+                    onChangeText={(conventionText) =>
+                      updateActiveSession((s) => ({ ...s, conventionText }))
+                    }
+                    onToggleCheckAll={setCheckAllSentences}
+                    onStartOrCancelGrammarCheck={handleStartOrCancelGrammarCheck}
+                    onChangeCorrectionDraft={setCorrectionDraft}
+                    onSubmitCorrection={handleSubmitCorrection}
+                    onSkipCorrection={handleSkipCorrection}
+                    onAutoApplyAllRemaining={handleAutoApplyAllRemaining}
+                    onAddMorphemes={handleAddMorphemes}
+                    onOpenClauseCoder={() => setShowClauseModal(true)}
+                    onQuickCycleLineSi={handleQuickCycleLineSi}
+                    onSeekToTime={(sec) => player.seek(sec, player.isPlaying)}
+                  />
+                </div>
+              </div>
+
+              <div className={mobileTab !== 'metrics' ? 'mobile-hidden' : 'mobile-scroll-slot'}>
+                <MetricsPanel
+                  metrics={metrics}
+                  alwaysExpanded={mobileTab === 'metrics'}
+                  canMarkClauses={
+                    !grammarActive &&
+                    processing === null &&
+                    Boolean(activeSession.conventionText.trim() || activeSession.transcriptionText.trim())
+                  }
+                  onOpenClauseCoder={() => setShowClauseModal(true)}
+                />
+              </div>
+            </main>
+
+            {/* Android / Mobile Bottom Tab Navigation */}
+            <nav className="mobile-nav no-print" aria-label="Mobile workspace tabs">
+              <button
+                type="button"
+                className={`mobile-nav-btn ${mobileTab === 'audio' ? 'active' : ''}`}
+                onClick={() => setMobileTab('audio')}
+              >
+                {isRecording ? <Activity size={18} /> : <Mic size={18} />}
+                <span>Audio</span>
+              </button>
+              <button
+                type="button"
+                className={`mobile-nav-btn ${mobileTab === 'transcript' ? 'active' : ''}`}
+                onClick={() => setMobileTab('transcript')}
+              >
+                <FileText size={18} />
+                <span>Transcript</span>
+              </button>
+              <button
+                type="button"
+                className={`mobile-nav-btn ${mobileTab === 'salt' ? 'active' : ''}`}
+                onClick={() => setMobileTab('salt')}
+              >
+                <SpellCheck size={18} />
+                <span>SALT</span>
+              </button>
+              <button
+                type="button"
+                className={`mobile-nav-btn ${mobileTab === 'metrics' ? 'active' : ''}`}
+                onClick={() => setMobileTab('metrics')}
+              >
+                <BarChart3 size={18} />
+                <span>Metrics</span>
+              </button>
+            </nav>
+          </>
+        )}
       </div>
 
       {/* Drag-and-Drop Audio Overlay */}
@@ -1423,6 +1703,7 @@ export default function App() {
         onUpdateSettings={updateSettings}
         onPreloadModel={(id) => void handlePreloadModel(id)}
         onNotify={(title, desc) => pushToast('info', title, desc)}
+        onOpenSettings={() => openSettings('models')}
         onClose={() => setShowModelModal(false)}
       />
 
