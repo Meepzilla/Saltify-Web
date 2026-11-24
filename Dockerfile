@@ -9,6 +9,7 @@ COPY package.json package-lock.json ./
 RUN npm ci
 
 COPY . .
+ENV SALTIFY_SELF_HOSTED_ORT=1
 RUN npm run build
 
 FROM caddy:2-alpine

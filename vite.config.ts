@@ -1,11 +1,37 @@
 import { readFileSync } from 'node:fs';
 import react from '@vitejs/plugin-react';
-import { defineConfig } from 'vite';
+import { defineConfig, type Plugin } from 'vite';
 import { VitePWA } from 'vite-plugin-pwa';
 
 const packageJson = JSON.parse(
   readFileSync(new URL('./package.json', import.meta.url), 'utf8')
 ) as { version: string };
+
+const CLOUDFLARE_MAX_ASSET_BYTES = 25 * 1024 * 1024;
+
+/**
+ * Transformers.js contains a fallback `new URL("ort-wasm-simd-threaded.asyncify.wasm", import.meta.url)`
+ * that causes Vite to emit a duplicate 25.6 MiB WASM asset into `dist/assets/`.
+ * Because `whisper.worker.ts` always sets `env.backends.onnx.wasm.wasmPaths` explicitly,
+ * that emitted asset is unused and breaks Cloudflare Workers' 25 MiB per-file static asset limit.
+ */
+function stripOversizedOrtWasmAsset(): Plugin {
+  return {
+    name: 'strip-oversized-ort-wasm-asset',
+    generateBundle(_options, bundle) {
+      if (process.env.SALTIFY_SELF_HOSTED_ORT === '1') return;
+      for (const [fileName, item] of Object.entries(bundle)) {
+        if (
+          item.type === 'asset' &&
+          /ort-wasm-.*\.wasm$/i.test(fileName) &&
+          item.source.length >= CLOUDFLARE_MAX_ASSET_BYTES
+        ) {
+          delete bundle[fileName];
+        }
+      }
+    },
+  };
+}
 
 // https://vite.dev/config/
 export default defineConfig({
@@ -15,6 +41,7 @@ export default defineConfig({
   },
   plugins: [
     react(),
+    stripOversizedOrtWasmAsset(),
     VitePWA({
       registerType: 'autoUpdate',
       includeAssets: [
