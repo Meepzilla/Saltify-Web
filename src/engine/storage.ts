@@ -3,6 +3,7 @@ import {
   type AppSettings,
   type SessionRecord,
 } from '../types/saltify';
+import { isHtmlCacheResponse } from './modelCache';
 
 const DB_NAME = 'saltify-web-db';
 const DB_VERSION = 1;
@@ -177,12 +178,15 @@ export async function inspectCachedWhisperModels(): Promise<{
       const cache = await caches.open(name);
       const requests = await cache.keys();
       for (const req of requests) {
+        const resp = await cache.match(req);
+        // Skip SPA index.html fallbacks cached by older builds — they are not model files.
+        if (isHtmlCacheResponse(resp)) continue;
+
         const url = req.url;
         if (url.includes('whisper-tiny.en')) modelIds.add('onnx-community/whisper-tiny.en');
         if (url.includes('whisper-base.en')) modelIds.add('onnx-community/whisper-base.en');
         if (url.includes('whisper-small.en')) modelIds.add('onnx-community/whisper-small.en');
 
-        const resp = await cache.match(req);
         const len = resp?.headers.get('content-length');
         if (len) {
           totalBytes += parseInt(len, 10) || 0;
