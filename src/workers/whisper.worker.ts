@@ -108,13 +108,18 @@ function errorText(err: unknown): string {
   return String(err);
 }
 
-// Wrap fetch so network failures say WHICH URL failed (browsers only say "Failed to fetch"/"Load failed").
+// Wrap fetch so network failures say WHICH URL failed (browsers only say "Failed to fetch"/"Load failed")
+// and omit Referer headers, since Hugging Face's CloudFront returns HTTP 404 (without CORS headers)
+// when requests include a `*.workers.dev` Referer.
 const originalFetch = env.fetch ?? fetch.bind(self);
 env.fetch = async (input: string | URL, init?: RequestInit) => {
   const url = typeof input === 'string' ? input : input.href;
   diag.lastUrl = url;
   try {
-    return await originalFetch(input, init);
+    return await originalFetch(input, {
+      ...init,
+      referrerPolicy: 'no-referrer',
+    });
   } catch (err) {
     const wrapped = new Error(`${errorText(err)} — while fetching ${url}`);
     wrapped.name = 'DownloadError';
@@ -148,6 +153,22 @@ function isLowMemoryDevice(): boolean {
   const devMem = (navigator as unknown as { deviceMemory?: number }).deviceMemory;
   return isIosOrMobile || (typeof devMem === 'number' && devMem <= 4);
 }
+
+/** Phones/tablets (Android, iPhone, iPad). Mobile WebGPU drivers are unreliable for Whisper. */
+function isMobileDevice(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  const ua = navigator.userAgent || '';
+  return (
+    /iPad|iPhone|iPod|Android|Mobile/i.test(ua) ||
+    (isSafariBrowser() && typeof navigator.maxTouchPoints === 'number' && navigator.maxTouchPoints > 1)
+  );
+}
+
+/**
+ * Set once WebGPU has failed in this worker (at load or mid-inference). From then on the
+ * worker uses WASM, even if WebGPU was requested, so transcription keeps working.
+ */
+let webGpuFailed = false;
 
 function yieldToEventLoop(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
@@ -350,9 +371,12 @@ async function ensurePipeline(
       !isCustomExternalUrl &&
       (await probeLocalModelConfig(manifestBaseUrl, modelId)));
 
+  // Auto mode uses WASM on phones/tablets: mobile WebGPU drivers can fail mid-inference
+  // (e.g. ONNX Runtime "Cannot read properties of undefined (reading 'destroy')" on Android).
   const webGpuSupported =
-    requestedDevice === 'webgpu' ||
-    (requestedDevice === 'auto' && (await canUseWebGpu()));
+    !webGpuFailed &&
+    (requestedDevice === 'webgpu' ||
+      (requestedDevice === 'auto' && !isMobileDevice() && (await canUseWebGpu())));
 
   const preferWebGpu =
     webGpuSupported &&
@@ -477,6 +501,7 @@ async function ensurePipeline(
     activePipeline = await loadWithBackend(targetBackend);
   } catch (err) {
     if (targetBackend === 'webgpu') {
+      webGpuFailed = true;
       diag.webgpuError = errorText(err);
       post({
         type: 'progress',
@@ -625,7 +650,7 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
         progress: 0.05,
       });
 
-      const { transcriber, backendUsed } = await ensurePipeline(
+      let { transcriber, backendUsed } = await ensurePipeline(
         req.jobId,
         req.modelId,
         req.device,
@@ -668,10 +693,38 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
         const maxNewTokens = Math.min(224, Math.max(64, Math.ceil(segDurationSec * 6)));
 
         setStage(`transcribing segment ${i + 1} of ${slices.length}`);
-        const output = await transcriber(slice.samples, {
-          return_timestamps: true,
-          max_new_tokens: maxNewTokens,
-        });
+        const runSegment = (pipe: AutomaticSpeechRecognitionPipeline) =>
+          pipe(slice.samples, {
+            return_timestamps: true,
+            max_new_tokens: maxNewTokens,
+          });
+
+        let output: Awaited<ReturnType<typeof runSegment>>;
+        try {
+          output = await runSegment(transcriber);
+        } catch (err) {
+          if (backendUsed !== 'webgpu') throw err;
+          // WebGPU failed mid-inference: switch this worker to WASM and retry the same segment.
+          webGpuFailed = true;
+          diag.webgpuError = errorText(err);
+          post({
+            type: 'progress',
+            jobId: req.jobId,
+            stage: 'Switching to WASM engine',
+            progress: baseProgress,
+            detail: 'WebGPU failed on this device. Retrying with the universal WASM engine.',
+          });
+          ({ transcriber, backendUsed } = await ensurePipeline(
+            req.jobId,
+            req.modelId,
+            req.device,
+            req.modelSource,
+            req.customModelBaseUrl,
+            req.appBaseUrl
+          ));
+          setStage(`transcribing segment ${i + 1} of ${slices.length} (WASM retry)`);
+          output = await runSegment(transcriber);
+        }
 
         const singleOutput = Array.isArray(output) ? output[0] : output;
         if (singleOutput?.chunks && singleOutput.chunks.length > 0) {

@@ -24,17 +24,38 @@ export const APP_VERSION: string = __APP_VERSION__;
  */
 export const CHANGELOG_RELEASES: readonly ChangelogRelease[] = [
   {
-    version: '1.3.3',
+    version: '1.3.4',
     date: '2026-11-24',
-    title: 'iPad Transcription Crash Fix',
+    title: 'iPad & Android Transcription Stability',
     summary:
-      'Fixes "Maximum call stack size exceeded" when loading or using the Whisper model in Safari on iPad.',
+      'Fixes the iPad Safari worker crash and recovers automatically when WebGPU fails mid-transcription on Android.',
     changes: [
       {
         category: 'fixed',
         summary: 'Whisper worker crash on iPad Safari ("Maximum call stack size exceeded")',
         detail:
           'Speaker assignment now runs on the main page, so the large grammar dictionary is no longer loaded inside the speech worker, where it overflowed Safari\'s small worker stack. The worker download shrank from 2.6 MB to 0.56 MB.',
+      },
+      {
+        category: 'fixed',
+        summary: 'WebGPU errors during transcription on Android ("reading \'destroy\'")',
+        detail:
+          'Phones and tablets now use the stable WASM engine in Auto mode, and if WebGPU fails while transcribing, Saltify switches to WASM and retries automatically instead of failing.',
+      },
+    ],
+  },
+  {
+    version: '1.3.3',
+    date: '2026-11-24',
+    title: 'Fix Model Downloads on Cloudflare Workers',
+    summary:
+      'Omits outbound Referer headers on model downloads so Hugging Face no longer blocks requests originating from *.workers.dev domains.',
+    changes: [
+      {
+        category: 'fixed',
+        summary: 'Whisper model downloads failing with CORS / Failed to fetch on workers.dev',
+        detail:
+          'Hugging Face CloudFront returns HTTP 404 (without CORS headers) when a request carries a *.workers.dev Referer header. Saltify now sets referrerPolicy: "no-referrer" and Referrer-Policy: no-referrer so model downloads succeed reliably.',
       },
     ],
   },
