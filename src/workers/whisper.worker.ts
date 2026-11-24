@@ -6,14 +6,13 @@ import {
 } from '@huggingface/transformers';
 import { sliceAudioIntoPauseAwareChunks } from '../engine/audioProcessing';
 import { purgeHtmlModelCacheEntries } from '../engine/modelCache';
-import { autoAssignSpeakersInTranscript } from '../engine/speakerDiarizer';
 import { formatWhisperChunks } from '../engine/transcriptFormat';
-import type {
-  ComputeDevice,
-  ModelSource,
-  SpeakerAliases,
-  WhisperModelId,
-} from '../types/saltify';
+import type { ComputeDevice, ModelSource, WhisperModelId } from '../types/saltify';
+
+// IMPORTANT: do not import speakerDiarizer / childGrammarEngine (or anything that pulls in
+// wink-pos-tagger / wink-lexicon) into this worker. Those multi-MB CommonJS data modules overflow
+// Safari's small Web Worker stack on load ("RangeError: Maximum call stack size exceeded").
+// Speaker assignment runs on the main thread in whisperClient.ts instead.
 
 // Enable local Cache Storage for offline model + WASM reuse
 env.useBrowserCache = true;
@@ -47,7 +46,6 @@ export type WorkerRequest =
       modelSource: ModelSource;
       customModelBaseUrl: string;
       appBaseUrl: string;
-      aliases: SpeakerAliases;
       audio: Float32Array;
     };
 
@@ -75,7 +73,6 @@ export type WorkerResponse =
       jobId: string;
       transcript: string;
       backendUsed: 'webgpu' | 'wasm';
-      speakerCount: 1 | 2;
     }
   | {
       type: 'error';
@@ -648,7 +645,6 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
           jobId: req.jobId,
           transcript: '',
           backendUsed,
-          speakerCount: 1,
         });
         return;
       }
@@ -710,24 +706,10 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
       }
 
       post({
-        type: 'progress',
-        jobId: req.jobId,
-        stage: 'Assigning speakers locally',
-        progress: 0.96,
-      });
-
-      setStage('assigning speakers');
-      const formatted = formatWhisperChunks(allChunks);
-      const diarized = formatted.trim()
-        ? autoAssignSpeakersInTranscript(formatted, req.aliases, req.audio, 16000)
-        : { transcript: '', speakerCount: 1 as const };
-
-      post({
         type: 'done',
         jobId: req.jobId,
-        transcript: diarized.transcript,
+        transcript: formatWhisperChunks(allChunks),
         backendUsed,
-        speakerCount: diarized.speakerCount,
       });
     }
   } catch (err) {

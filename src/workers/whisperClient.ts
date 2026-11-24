@@ -4,6 +4,7 @@ import type {
   SpeakerAliases,
   WhisperModelId,
 } from '../types/saltify';
+import { autoAssignSpeakersInTranscript } from '../engine/speakerDiarizer';
 import type { WorkerRequest, WorkerResponse } from './whisper.worker';
 
 export interface TranscribeCallbacks {
@@ -98,13 +99,13 @@ export class WhisperWorkerClient {
     );
   }
 
-  transcribe(
+  async transcribe(
     audio16k: Float32Array,
     options: WhisperModelRuntimeOptions,
     callbacks: TranscribeCallbacks = {}
   ): Promise<TranscribeResult> {
     const copy = new Float32Array(audio16k);
-    return this.runJob<TranscribeResult>(
+    const raw = await this.runJob<{ transcript: string; backendUsed: 'webgpu' | 'wasm' }>(
       (jobId) => ({
         type: 'transcribe',
         jobId,
@@ -113,12 +114,31 @@ export class WhisperWorkerClient {
         modelSource: options.modelSource,
         customModelBaseUrl: options.customModelBaseUrl,
         appBaseUrl: getAppBaseUrl(),
-        aliases: options.aliases ?? { speaker1: 'C', speaker2: 'E' },
         audio: copy,
       }),
       callbacks,
       [copy.buffer]
     );
+
+    if (!raw.transcript.trim()) {
+      return { transcript: '', backendUsed: raw.backendUsed, speakerCount: 1 };
+    }
+
+    // Speaker assignment runs here on the main thread (not in the worker) because it uses the
+    // wink grammar lexicon, which overflows Safari's Web Worker stack when loaded there.
+    callbacks.onProgress?.('Assigning speakers locally', 0.96);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const diarized = autoAssignSpeakersInTranscript(
+      raw.transcript,
+      options.aliases ?? { speaker1: 'C', speaker2: 'E' },
+      audio16k,
+      16000
+    );
+    return {
+      transcript: diarized.transcript,
+      backendUsed: raw.backendUsed,
+      speakerCount: diarized.speakerCount,
+    };
   }
 
   cancel(): void {
@@ -178,7 +198,6 @@ export class WhisperWorkerClient {
           resolve({
             transcript: msg.transcript,
             backendUsed: msg.backendUsed,
-            speakerCount: msg.speakerCount,
           } as T);
         } else if (msg.type === 'error') {
           cleanup();

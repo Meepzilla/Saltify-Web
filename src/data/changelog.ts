@@ -24,6 +24,21 @@ export const APP_VERSION: string = __APP_VERSION__;
  */
 export const CHANGELOG_RELEASES: readonly ChangelogRelease[] = [
   {
+    version: '1.3.3',
+    date: '2026-11-24',
+    title: 'iPad Transcription Crash Fix',
+    summary:
+      'Fixes "Maximum call stack size exceeded" when loading or using the Whisper model in Safari on iPad.',
+    changes: [
+      {
+        category: 'fixed',
+        summary: 'Whisper worker crash on iPad Safari ("Maximum call stack size exceeded")',
+        detail:
+          'Speaker assignment now runs on the main page, so the large grammar dictionary is no longer loaded inside the speech worker, where it overflowed Safari\'s small worker stack. The worker download shrank from 2.6 MB to 0.56 MB.',
+      },
+    ],
+  },
+  {
     version: '1.3.2',
     date: '2026-11-24',
     title: 'Clearer Model Errors & Stale Cache Repair',
