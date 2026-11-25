@@ -42,6 +42,20 @@
   --speaker2: hsl(13, 78%, 48%);
   --speaker2-soft: hsla(13, 78%, 48%, 0.11);
 
+  /* Parts of speech (color-coded utterances) — darker hues for contrast on light surfaces */
+  --pos-noun: hsl(214, 80%, 40%);
+  --pos-verb: hsl(0, 72%, 42%);
+  --pos-aux: hsl(326, 66%, 40%);
+  --pos-pronoun: hsl(270, 52%, 46%);
+  --pos-adjective: hsl(140, 62%, 28%);
+  --pos-adverb: hsl(28, 92%, 34%);
+  --pos-determiner: hsl(205, 16%, 42%);
+  --pos-preposition: hsl(180, 72%, 26%);
+  --pos-conjunction: hsl(45, 95%, 27%);
+  --pos-number: hsl(20, 48%, 34%);
+  --pos-interjection: hsl(160, 36%, 34%);
+  --pos-other: var(--text-secondary);
+
   /* SALT Code Syntax Highlighting */
   --salt-morpheme: hsl(172, 74%, 28%);
   --salt-morpheme-bg: hsla(172, 74%, 28%, 0.10);
@@ -109,6 +123,20 @@
   --speaker1-soft: hsla(199, 92%, 62%, 0.16);
   --speaker2: hsl(15, 88%, 64%);
   --speaker2-soft: hsla(15, 88%, 64%, 0.16);
+
+  /* Parts of speech — lighter hues for contrast on dark surfaces */
+  --pos-noun: hsl(212, 92%, 72%);
+  --pos-verb: hsl(0, 88%, 72%);
+  --pos-aux: hsl(326, 78%, 75%);
+  --pos-pronoun: hsl(270, 80%, 78%);
+  --pos-adjective: hsl(140, 55%, 62%);
+  --pos-adverb: hsl(30, 92%, 64%);
+  --pos-determiner: hsl(205, 16%, 70%);
+  --pos-preposition: hsl(178, 62%, 58%);
+  --pos-conjunction: hsl(48, 88%, 62%);
+  --pos-number: hsl(25, 52%, 68%);
+  --pos-interjection: hsl(160, 40%, 64%);
+  --pos-other: var(--text-secondary);
 
   --salt-morpheme: hsl(170, 72%, 58%);
   --salt-morpheme-bg: hsla(170, 72%, 58%, 0.14);

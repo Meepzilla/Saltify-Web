@@ -132,6 +132,9 @@ export interface SpeakerMetrics {
   ciWords: number;
   /** Morphemes in complete & intelligible utterances only (MLUm numerator). */
   ciMorphemes: number;
+  /** Words outside mazes in ALL utterances (used for maze % and words/minute). */
+  allWords: number;
+  /** NTW: words outside mazes in C&I verbal utterances (SALT analysis set). */
   totalWords: number;
   uniqueWords: number;
   typeTokenRatio: number;
@@ -191,6 +194,8 @@ export interface AppSettings {
   includeSaltHeadersOnExport: boolean;
   stripTimestampsOnExport: boolean;
   defaultSpeakerAliases: SpeakerAliases;
+  /** Color each word in utterance lines by part of speech (display only). */
+  colorCodePartsOfSpeech: boolean;
 }
 
 export const DEFAULT_APP_SETTINGS: AppSettings = {
@@ -205,6 +210,7 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   includeSaltHeadersOnExport: true,
   stripTimestampsOnExport: true,
   defaultSpeakerAliases: { ...DEFAULT_SPEAKER_ALIASES },
+  colorCodePartsOfSpeech: false,
 };
 
 export interface ToastMessage {

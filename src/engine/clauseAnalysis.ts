@@ -1,5 +1,6 @@
 import posTagger from 'wink-pos-tagger';
 import type { InlineClauseTag, SpeakerAliases } from '../types/saltify';
+import { stripPosCodes } from './posCodes';
 import { conjugateThirdPersonSingular } from './saltConventions';
 import { parseUtteranceLines } from './transcriptFormat';
 
@@ -599,7 +600,7 @@ const CHILD_OVERREGULARIZED_VERBS = new Set([
 ]);
 
 function prepareSpokenTextForClauseAnalysis(body: string): string {
-  const withoutClauseAndMazes = body
+  const withoutClauseAndMazes = stripPosCodes(body)
     .replace(/\{[^}]*\}/g, ' ')
     .replace(SI_CODE_GLOBAL_REGEX, ' ')
     .replace(INLINE_CLAUSE_CODE_GLOBAL_REGEX, ' ')

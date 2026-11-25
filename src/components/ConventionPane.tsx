@@ -7,6 +7,7 @@ import {
   GitBranch,
   Lock,
   SpellCheck,
+  Palette,
   SplitSquareHorizontal,
   Trash2,
   Unlock,
@@ -14,8 +15,10 @@ import {
 } from 'lucide-react';
 import { useMemo, useRef, useState } from 'react';
 import { parseUtteranceClauseCoding } from '../engine/clauseAnalysis';
+import { hasPosCodes } from '../engine/posCodes';
 import { parseUtteranceLines } from '../engine/transcriptFormat';
 import type { SpeakerAliases } from '../types/saltify';
+import { PosColoredText, PosLegend } from './PartsOfSpeech';
 
 interface ConventionPaneProps {
   text: string;
@@ -38,6 +41,10 @@ interface ConventionPaneProps {
   onSkipCorrection: () => void;
   onAutoApplyAllRemaining: () => void;
   onAddMorphemes: () => void;
+  /** Inserts part-of-speech codes (dog[N]) on every word, or removes them if present. */
+  onTogglePosCodes: () => void;
+  /** Color each word by part of speech (Settings → SALT & Export). */
+  colorPartsOfSpeech?: boolean;
   onOpenClauseCoder: () => void;
   onQuickCycleLineSi: (lineIndex: number) => void;
   onSeekToTime?: (seconds: number) => void;
@@ -73,7 +80,7 @@ const SALT_TOUCH_CHIPS = [
  */
 function renderSaltTokens(body: string) {
   const tokenRegex =
-    /(\([^)]*\)|\[SI-(?:\d+|X)\]|\[(?:MC|SC|RC|AC|NC|CL)\]|[A-Za-z']*\[[^\]]+\][.,!?;:]*|\*[A-Za-z']+|[A-Za-z']+\/\*[A-Za-z0-9']+|[A-Za-z']+\/(?:s|z|ed|3s|ing|n't|'t|'s|'m|'re|'ll|'d|'ve)\b)/gi;
+    /(\([^)]*\)|\[SI-(?:\d+|X)\]|\[(?:MC|SC|RC|AC|NC|CL)\]|\[(?:N|V|AUX|PRO|ADJ|ADV|DET|PREP|CONJ|NUM|INT|OTH)\]|[A-Za-z']*\[(?!(?:N|V|AUX|PRO|ADJ|ADV|DET|PREP|CONJ|NUM|INT|OTH)\])[^\]]+\][.,!?;:]*|\*[A-Za-z']+|[A-Za-z']+\/\*[A-Za-z0-9']+|[A-Za-z']+\/(?:s|z|ed|3s|ing|n't|'t|'s|'m|'re|'ll|'d|'ve)\b)/gi;
 
   const parts = body.split(tokenRegex);
   return parts.map((part, idx) => {
@@ -88,6 +95,13 @@ function renderSaltTokens(body: string) {
     if (/^\[SI-X\]$/i.test(part)) {
       return (
         <span key={idx} className="salt-tok-clause excluded">
+          {part}
+        </span>
+      );
+    }
+    if (/^\[(?:N|V|AUX|PRO|ADJ|ADV|DET|PREP|CONJ|NUM|INT|OTH)\]$/.test(part)) {
+      return (
+        <span key={idx} className="salt-tok-pos">
           {part}
         </span>
       );
@@ -140,6 +154,8 @@ export function ConventionPane({
   onSkipCorrection,
   onAutoApplyAllRemaining,
   onAddMorphemes,
+  onTogglePosCodes,
+  colorPartsOfSpeech = false,
   onOpenClauseCoder,
   onQuickCycleLineSi,
   onSeekToTime,
@@ -294,6 +310,26 @@ export function ConventionPane({
             <GitBranch size={14} />
             <span>Mark Clauses</span>
           </button>
+
+          <button
+            id="pos-codes-btn"
+            type="button"
+            className="btn btn-secondary btn-sm"
+            disabled={
+              grammarActive ||
+              disabled ||
+              (!text.trim() && !hasTranscript)
+            }
+            onClick={onTogglePosCodes}
+            title={
+              hasPosCodes(text)
+                ? 'Remove part-of-speech codes ([N], [V], …) from every word'
+                : 'Insert part-of-speech codes after every word, e.g. dog[N] run/3s[V]'
+            }
+          >
+            <Palette size={14} />
+            <span>{hasPosCodes(text) ? 'Remove POS Codes' : 'POS Codes'}</span>
+          </button>
         </div>
 
         <label
@@ -335,6 +371,7 @@ export function ConventionPane({
           />
         ) : (
           <div className="utterance-list">
+            {colorPartsOfSpeech && <PosLegend compact />}
             {lines.map((line) => {
               const clauseCoding = parseUtteranceClauseCoding(line.body);
               const siLabel = clauseCoding.isExcluded
@@ -365,7 +402,13 @@ export function ConventionPane({
                     </span>
                   )}
 
-                  <span className="utterance-text">{renderSaltTokens(line.body)}</span>
+                  <span className="utterance-text">
+                    {colorPartsOfSpeech ? (
+                      <PosColoredText body={line.body} renderToken={renderSaltTokens} />
+                    ) : (
+                      renderSaltTokens(line.body)
+                    )}
+                  </span>
 
                   <button
                     type="button"

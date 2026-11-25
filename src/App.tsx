@@ -54,6 +54,8 @@ import {
   addInflectionalMorphemes,
   formatCorrectionForConventionBox,
 } from './engine/saltConventions';
+import { insertPosCodes } from './engine/partsOfSpeech';
+import { hasPosCodes, stripPosCodes } from './engine/posCodes';
 import { computeSaltMetrics } from './engine/saltMetrics';
 import { DEMO_CLIENT_INFO, DEMO_TRANSCRIPT } from './engine/sampleData';
 import { autoAssignSpeakersInTranscript } from './engine/speakerDiarizer';
@@ -1082,10 +1084,14 @@ export default function App() {
       activeSession.conventionText.trim() || activeSession.transcriptionText.trim();
     if (!sourceText) return;
 
-    const coded = addInflectionalMorphemes(sourceText, [
+    const morphemeCoded = addInflectionalMorphemes(sourceText, [
       activeSession.speakerAliases.speaker1,
       activeSession.speakerAliases.speaker2,
     ]);
+    // Keep part-of-speech codes if the user had inserted them (morpheme coding strips them)
+    const coded = hasPosCodes(sourceText)
+      ? insertPosCodes(morphemeCoded, activeSession.speakerAliases)
+      : morphemeCoded;
 
     updateActiveSession((s) => ({
       ...s,
@@ -1097,6 +1103,33 @@ export default function App() {
       'success',
       'Inflectional morphemes coded',
       'Applied SALT /s, /z, /ed, /3s, /ing, and contraction conventions.'
+    );
+  }, [activeSession, updateActiveSession, pushToast]);
+
+  // Part-of-speech codes: insert dog[N] run/3s[V] on every word, or remove them
+  const handleTogglePosCodes = useCallback(() => {
+    if (!activeSession) return;
+    const sourceText =
+      activeSession.conventionText.trim() || activeSession.transcriptionText.trim();
+    if (!sourceText) return;
+
+    if (hasPosCodes(sourceText)) {
+      const cleaned = stripPosCodes(sourceText)
+        .split(/\r?\n/)
+        .map((l) => l.replace(/[ \t]{2,}/g, ' ').trimEnd())
+        .join('\n');
+      updateActiveSession((s) => ({ ...s, conventionText: cleaned }));
+      pushToast('info', 'Part-of-speech codes removed', 'All other SALT coding was kept.');
+      return;
+    }
+
+    const coded = insertPosCodes(sourceText, activeSession.speakerAliases);
+    updateActiveSession((s) => ({ ...s, conventionText: coded }));
+    setMobileTab('salt');
+    pushToast(
+      'success',
+      'Part-of-speech codes inserted',
+      'Each spoken word now has a code such as [N], [V] or [PRO]. Mazes, comments and SALT codes were left as they were. Review them before exporting.'
     );
   }, [activeSession, updateActiveSession, pushToast]);
 
@@ -1588,6 +1621,7 @@ export default function App() {
                     hasAudio={Boolean(activeAudioBlob)}
                     currentTime={player.currentTime}
                     disabled={processing !== null}
+                    colorPartsOfSpeech={settings.colorCodePartsOfSpeech}
                     onChangeText={(transcriptionText) =>
                       updateActiveSession((s) => ({ ...s, transcriptionText }))
                     }
@@ -1625,6 +1659,8 @@ export default function App() {
                     onSkipCorrection={handleSkipCorrection}
                     onAutoApplyAllRemaining={handleAutoApplyAllRemaining}
                     onAddMorphemes={handleAddMorphemes}
+                    onTogglePosCodes={handleTogglePosCodes}
+                    colorPartsOfSpeech={settings.colorCodePartsOfSpeech}
                     onOpenClauseCoder={() => setShowClauseModal(true)}
                     onQuickCycleLineSi={handleQuickCycleLineSi}
                     onSeekToTime={(sec) => player.seek(sec, player.isPlaying)}
