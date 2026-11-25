@@ -26,10 +26,22 @@ export const CHANGELOG_RELEASES: readonly ChangelogRelease[] = [
   {
     version: '1.3.5',
     date: '2026-11-24',
-    title: 'Metrics Aligned with SALT Standard Measures',
+    title: 'Parts of Speech & SALT Standard Measures',
     summary:
-      'NTW, NDW and TTR now use complete, intelligible, verbal utterances as in the SALT Standard Measures Report; words/minute includes maze words; root and linked-word conventions are supported.',
+      'Adds part-of-speech color coding and optional POS word codes, and aligns NTW, NDW, TTR and words/minute with the SALT Standard Measures Report.',
     changes: [
+      {
+        category: 'added',
+        summary: 'Color-code parts of speech in utterances (Settings → SALT & Export)',
+        detail:
+          'Colors each word in the Transcription and SALT Convention boxes as noun, verb, auxiliary, pronoun, adjective, adverb, determiner, preposition, conjunction, number or interjection, with a color key. Display only: transcript text and metrics are unchanged.',
+      },
+      {
+        category: 'added',
+        summary: 'POS Codes button inserts part-of-speech word codes',
+        detail:
+          'Adds codes such as dog[N], run/3s[V] and he[PRO] after every spoken word in the SALT Convention box (tap again to remove). Mazes, comments, omitted words and SALT codes are skipped, and the codes never affect metrics, clause estimates, morpheme coding or Grammar Check.',
+      },
       {
         category: 'fixed',
         summary: 'NTW, NDW and TTR use the C&I verbal utterance set',

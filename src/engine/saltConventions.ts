@@ -1,5 +1,6 @@
 import posTagger from 'wink-pos-tagger';
 import lemmatizer from 'wink-lemmatizer';
+import { stripPosCodes } from './posCodes';
 
 const tagger = posTagger();
 
@@ -105,7 +106,7 @@ export function extractLinePrefix(
  * improved handling for single-word mazes like `(He)` and trailing punctuation.
  */
 export function removeErrorCoding(input: string): string {
-  const words = input.trim().split(/\s+/).filter(Boolean);
+  const words = stripPosCodes(input).trim().split(/\s+/).filter(Boolean);
   if (words.length === 0) return '';
 
   const output: string[] = [];
@@ -524,7 +525,9 @@ export function addInflectionalMorphemesToLine(
   line: string,
   speakerAliases: readonly string[] = ['C', 'E']
 ): string {
-  const { prefix, body } = extractLinePrefix(line, speakerAliases);
+  const { prefix, body: codedBody } = extractLinePrefix(line, speakerAliases);
+  // POS codes are re-inserted by the caller after morpheme coding
+  const body = stripPosCodes(codedBody).replace(/\s{2,}/g, ' ').trim();
   if (!body) return line.trim();
 
   const hasErrorCoding =

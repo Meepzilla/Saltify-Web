@@ -39,6 +39,7 @@ import {
 } from '../types/saltify';
 import { ChangelogPage } from './ChangelogPage';
 import { ErrorLogPage } from './ErrorLogPage';
+import { PosLegend } from './PartsOfSpeech';
 
 interface SettingsPageProps {
   activeTab: SettingsTab;
@@ -816,6 +817,46 @@ export function SettingsPage({
                       }
                     />
                   </label>
+                </div>
+              </div>
+
+              {/* Parts of Speech */}
+              <div className="settings-card">
+                <div className="settings-card-header">
+                  <h3 className="settings-card-title">Parts of Speech</h3>
+                </div>
+                <p className="settings-card-desc">
+                  Color each word in the Transcription and SALT Convention boxes by part of
+                  speech. Tagging runs on this device. Mazes, comments, omitted words and SALT
+                  codes are not colored. To add codes such as <code>dog[N]</code> to the text
+                  itself, use <strong>POS Codes</strong> in the SALT Convention box.
+                </p>
+
+                <div className="settings-row-list">
+                  <label className="settings-toggle-row" htmlFor="setting-color-pos">
+                    <div className="settings-row-info">
+                      <div className="settings-row-title">
+                        Color-code parts of speech in utterances
+                      </div>
+                      <div className="settings-row-desc">
+                        Display only. Your transcript text, exports and SALT metrics are not
+                        changed. Hover or long-press a word to see its part of speech.
+                      </div>
+                    </div>
+                    <input
+                      id="setting-color-pos"
+                      type="checkbox"
+                      className="settings-toggle-input"
+                      checked={settings.colorCodePartsOfSpeech}
+                      onChange={(e) =>
+                        onUpdateSettings({ colorCodePartsOfSpeech: e.target.checked })
+                      }
+                    />
+                  </label>
+                </div>
+
+                <div style={{ marginTop: 12 }}>
+                  <PosLegend />
                 </div>
               </div>
 

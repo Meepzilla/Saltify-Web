@@ -14,6 +14,7 @@ import {
   parseUtteranceLines,
 } from '../engine/transcriptFormat';
 import type { SpeakerAliases } from '../types/saltify';
+import { PosColoredText, PosLegend } from './PartsOfSpeech';
 
 interface TranscriptionPaneProps {
   text: string;
@@ -21,6 +22,8 @@ interface TranscriptionPaneProps {
   hasAudio: boolean;
   currentTime: number;
   disabled?: boolean;
+  /** Color each word by part of speech (Settings → SALT & Export). */
+  colorPartsOfSpeech?: boolean;
   onChangeText: (nextText: string) => void;
   onSeekToTime: (seconds: number) => void;
   onOpenLabelSpeakers: () => void;
@@ -34,6 +37,7 @@ export function TranscriptionPane({
   hasAudio,
   currentTime,
   disabled = false,
+  colorPartsOfSpeech = false,
   onChangeText,
   onSeekToTime,
   onOpenLabelSpeakers,
@@ -216,6 +220,7 @@ export function TranscriptionPane({
           />
         ) : (
           <div className="utterance-list">
+            {colorPartsOfSpeech && <PosLegend compact />}
             {nonEmptyLines.map((line) => (
               <div
                 key={line.index}
@@ -263,7 +268,7 @@ export function TranscriptionPane({
                         : 'var(--text-primary)',
                   }}
                 >
-                  {line.body}
+                  {colorPartsOfSpeech ? <PosColoredText body={line.body} /> : line.body}
                 </span>
               </div>
             ))}

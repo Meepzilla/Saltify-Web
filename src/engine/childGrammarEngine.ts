@@ -1,5 +1,6 @@
 import posTagger from 'wink-pos-tagger';
 import type { GrammarCheckOptions } from '../types/saltify';
+import { stripPosCodes } from './posCodes';
 import { extractLinePrefix } from './saltConventions';
 
 const tagger = posTagger();
@@ -298,7 +299,9 @@ export function correctSentence(
   options: Partial<GrammarCheckOptions> = {},
   speakerAliases: readonly string[] = ['C', 'E']
 ): string {
-  const { prefix, body } = extractLinePrefix(input, speakerAliases);
+  const { prefix, body: codedBody } = extractLinePrefix(input, speakerAliases);
+  // Ignore inserted part-of-speech codes (dog[N]) so they aren't read as SALT error codes
+  const body = stripPosCodes(codedBody).replace(/\s{2,}/g, ' ').trim();
   if (!body) return input.trim();
 
   const codeFillers = options.codeFillerMazes ?? false;

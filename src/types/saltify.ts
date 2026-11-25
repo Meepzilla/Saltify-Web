@@ -194,6 +194,8 @@ export interface AppSettings {
   includeSaltHeadersOnExport: boolean;
   stripTimestampsOnExport: boolean;
   defaultSpeakerAliases: SpeakerAliases;
+  /** Color each word in utterance lines by part of speech (display only). */
+  colorCodePartsOfSpeech: boolean;
 }
 
 export const DEFAULT_APP_SETTINGS: AppSettings = {
@@ -208,6 +210,7 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   includeSaltHeadersOnExport: true,
   stripTimestampsOnExport: true,
   defaultSpeakerAliases: { ...DEFAULT_SPEAKER_ALIASES },
+  colorCodePartsOfSpeech: false,
 };
 
 export interface ToastMessage {
