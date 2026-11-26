@@ -1,9 +1,10 @@
 import {
   Cpu,
   Download,
-  FileAudio,
+  Maximize2,
   Mic,
   Pause,
+  Pencil,
   Play,
   RotateCcw,
   SkipBack,
@@ -17,6 +18,7 @@ import {
   XCircle,
 } from 'lucide-react';
 import { useRef } from 'react';
+import { OverflowMenu, type OverflowMenuItem } from './OverflowMenu';
 import { formatDurationPadded } from '../engine/transcriptFormat';
 import {
   MAX_PLAYBACK_BOOST,
@@ -89,76 +91,121 @@ export function AudioStudio({
     player.setPlaybackRate(next);
   };
 
-  return (
-    <section className="audio-studio" aria-label="Audio recording and playback studio">
-      <div className="audio-studio-top">
-        {/* Left: File name + Capture / Upload */}
-        <div className="audio-source-block">
-          <div className="audio-filename-row">
-            <FileAudio size={15} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
-            <input
-              id="audio-filename-input"
-              type="text"
-              className="audio-filename-input"
-              value={audioMeta?.fileName ?? ''}
-              placeholder="Recording or audio file name..."
-              aria-label="Audio file name"
-              disabled={!hasAudio}
-              onChange={(e) => onFileNameChange(e.target.value)}
-            />
-            {hasAudio && (
-              <button
-                id="download-audio-btn"
-                type="button"
-                className="btn btn-subtle btn-icon"
-                title="Download normalized WAV audio"
-                aria-label="Download WAV audio"
-                disabled={isRecording || processing !== null}
-                onClick={onDownloadAudio}
-              >
-                <Download size={16} />
-              </button>
-            )}
-          </div>
+  const canPlay = hasAudio && !isRecording;
+  const boosted = !player.muted && player.volume > 1.05;
 
+  const audioMenuItems: OverflowMenuItem[] = [
+    {
+      key: 'volume',
+      label: 'Volume',
+      render: () => (
+        <div className="audio-menu-volume" aria-label="Output volume and boost">
+          <button
+            id="audio-mute-btn"
+            type="button"
+            className="btn btn-ghost btn-icon"
+            title={player.muted || player.volume === 0 ? 'Unmute audio' : 'Mute audio'}
+            aria-label={player.muted || player.volume === 0 ? 'Unmute audio' : 'Mute audio'}
+            disabled={!canPlay}
+            onClick={player.toggleMute}
+          >
+            {player.muted || player.volume === 0 ? (
+              <VolumeX size={15} />
+            ) : player.volume <= 1 ? (
+              <Volume1 size={15} />
+            ) : (
+              <Volume2 size={15} style={{ color: 'var(--warning)' }} />
+            )}
+          </button>
+          <input
+            id="audio-volume-slider"
+            type="range"
+            className={`volume-slider ${boosted ? 'boosted' : ''}`}
+            min={0}
+            max={MAX_PLAYBACK_BOOST}
+            step={0.1}
+            value={player.muted ? 0 : player.volume}
+            disabled={!canPlay}
+            aria-label="Output volume boost from 0% to 400%"
+            onChange={(e) => player.setVolume(parseFloat(e.target.value))}
+          />
+          <span className="mono audio-menu-volume-val">
+            {player.muted ? 'Mute' : `${Math.round(player.volume * 100)}%`}
+          </span>
+        </div>
+      ),
+    },
+    {
+      key: 'restart',
+      label: 'Restart from beginning',
+      icon: <RotateCcw size={15} />,
+      disabled: !canPlay,
+      onSelect: player.restart,
+      dividerBefore: true,
+    },
+    {
+      key: 'expand',
+      label: 'Large waveform',
+      icon: <Maximize2 size={15} />,
+      disabled: !hasAudio,
+      onSelect: onExpandWaveform,
+    },
+    {
+      key: 'rename',
+      label: 'Rename audio',
+      icon: <Pencil size={15} />,
+      disabled: !hasAudio,
+      onSelect: () => {
+        const next = window.prompt('Audio file name', audioMeta?.fileName ?? '');
+        if (next !== null && next.trim()) onFileNameChange(next.trim());
+      },
+    },
+    {
+      key: 'download',
+      label: 'Download WAV',
+      icon: <Download size={15} />,
+      disabled: !hasAudio || isRecording || processing !== null,
+      onSelect: onDownloadAudio,
+    },
+    {
+      key: 'sample',
+      label: 'Load demo sample',
+      icon: <Sparkles size={15} />,
+      dividerBefore: true,
+      disabled: processing !== null || isRecording,
+      onSelect: onLoadDemoSample,
+    },
+  ];
+
+  return (
+    <section className="audio-studio" aria-label="Audio recording and playback">
+      <div className="audio-bar">
+        {/* Capture: record / upload, or live recording meter */}
+        <div className="audio-bar-capture">
           {!isRecording ? (
-            <div className="audio-capture-row">
+            <>
               <button
                 id="record-audio-btn"
                 type="button"
                 className="btn btn-danger-soft btn-sm"
                 disabled={processing !== null}
                 onClick={onStartRecording}
+                title={hasAudio ? 'Record again (replaces current audio)' : 'Record from microphone'}
               >
                 <Mic size={15} />
-                <span>{hasAudio ? 'Re-Record' : 'Record'}</span>
+                <span>{hasAudio ? 'Re-record' : 'Record'}</span>
               </button>
-
               <button
                 id="upload-audio-btn"
                 type="button"
                 className="btn btn-secondary btn-sm"
                 disabled={processing !== null}
                 onClick={() => fileInputRef.current?.click()}
+                title={hasAudio ? 'Replace audio with a file' : 'Upload an audio file'}
               >
                 <Upload size={15} />
-                <span>{hasAudio ? 'Replace Audio' : 'Upload Audio'}</span>
+                <span>{hasAudio ? 'Replace' : 'Upload'}</span>
               </button>
-
-              {!hasAudio && (
-                <button
-                  id="load-demo-sample-btn"
-                  type="button"
-                  className="btn btn-ghost btn-sm"
-                  disabled={processing !== null}
-                  onClick={onLoadDemoSample}
-                  title="Load a sample child language transcript to try SALT coding immediately"
-                >
-                  <Sparkles size={14} />
-                  <span>Try Sample</span>
-                </button>
-              )}
-
               <input
                 ref={fileInputRef}
                 type="file"
@@ -172,7 +219,7 @@ export function AudioStudio({
                   }
                 }}
               />
-            </div>
+            </>
           ) : (
             <div className="live-meter-wrap" role="status" aria-live="polite">
               <span className="rec-dot" />
@@ -205,172 +252,109 @@ export function AudioStudio({
           )}
         </div>
 
-        {/* Center: Interactive Waveform + Transport */}
-        <div className="audio-playback-block">
+        {/* Transport */}
+        <div className="audio-bar-transport">
+          <button
+            id="audio-rewind-btn"
+            type="button"
+            className="btn btn-ghost btn-icon"
+            title="Back 5 seconds"
+            aria-label="Rewind 5 seconds"
+            disabled={!canPlay}
+            onClick={() => player.skip(-5)}
+          >
+            <SkipBack size={16} />
+          </button>
+          <button
+            id="audio-play-pause-btn"
+            type="button"
+            className="transport-play-btn"
+            title={player.isPlaying ? 'Pause' : 'Play'}
+            aria-label={player.isPlaying ? 'Pause audio' : 'Play audio'}
+            disabled={!canPlay}
+            onClick={() => void player.togglePlayPause()}
+          >
+            {player.isPlaying ? (
+              <Pause size={17} fill="currentColor" />
+            ) : (
+              <Play size={17} fill="currentColor" style={{ marginLeft: 2 }} />
+            )}
+          </button>
+          <button
+            id="audio-forward-btn"
+            type="button"
+            className="btn btn-ghost btn-icon"
+            title="Forward 5 seconds"
+            aria-label="Forward 5 seconds"
+            disabled={!canPlay}
+            onClick={() => player.skip(5)}
+          >
+            <SkipForward size={16} />
+          </button>
+          <span className="transport-time">
+            {formatDurationPadded(player.currentTime)} /{' '}
+            {hasAudio ? formatDurationPadded(player.duration) : '--:--'}
+          </span>
+        </div>
+
+        {/* Waveform (tap to seek) */}
+        <div className="audio-bar-wave" title={audioMeta?.fileName || undefined}>
           <WaveformCanvas
             peaks={audioMeta?.waveformPeaks ?? []}
             currentTime={player.currentTime}
             duration={player.duration}
             markers={utteranceTimestamps}
             onSeek={(sec) => player.seek(sec)}
-            disabled={!hasAudio || isRecording}
-            onExpand={hasAudio ? onExpandWaveform : undefined}
+            disabled={!canPlay}
           />
-
-          <div className="transport-row">
-            <div className="transport-buttons">
-              <button
-                id="audio-restart-btn"
-                type="button"
-                className="btn btn-ghost btn-icon"
-                title="Restart (00:00)"
-                aria-label="Restart audio"
-                disabled={!hasAudio || isRecording}
-                onClick={player.restart}
-              >
-                <RotateCcw size={16} />
-              </button>
-              <button
-                id="audio-rewind-btn"
-                type="button"
-                className="btn btn-ghost btn-icon"
-                title="Rewind 5 seconds"
-                aria-label="Rewind 5 seconds"
-                disabled={!hasAudio || isRecording}
-                onClick={() => player.skip(-5)}
-              >
-                <SkipBack size={16} />
-              </button>
-              <button
-                id="audio-play-pause-btn"
-                type="button"
-                className="transport-play-btn"
-                title={player.isPlaying ? 'Pause' : 'Play'}
-                aria-label={player.isPlaying ? 'Pause audio' : 'Play audio'}
-                disabled={!hasAudio || isRecording}
-                onClick={() => void player.togglePlayPause()}
-              >
-                {player.isPlaying ? (
-                  <Pause size={17} fill="currentColor" />
-                ) : (
-                  <Play size={17} fill="currentColor" style={{ marginLeft: 2 }} />
-                )}
-              </button>
-              <button
-                id="audio-forward-btn"
-                type="button"
-                className="btn btn-ghost btn-icon"
-                title="Forward 5 seconds"
-                aria-label="Forward 5 seconds"
-                disabled={!hasAudio || isRecording}
-                onClick={() => player.skip(5)}
-              >
-                <SkipForward size={16} />
-              </button>
-            </div>
-
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <button
-                id="playback-speed-btn"
-                type="button"
-                className="speed-pill"
-                disabled={!hasAudio || isRecording}
-                onClick={cycleSpeed}
-                title="Adjust playback speed for clinical verification"
-              >
-                {player.playbackRate}x
-              </button>
-              <span className="transport-time">
-                {formatDurationPadded(player.currentTime)} /{' '}
-                {hasAudio ? formatDurationPadded(player.duration) : '--:--'}
-              </span>
-            </div>
-          </div>
-
-          {/* Output Volume & Loudness Boost (0%–400% / up to +12 dB with soft limiter) */}
-          <div className="volume-control-row" aria-label="Output volume and boost">
-            <button
-              id="audio-mute-btn"
-              type="button"
-              className="btn btn-ghost btn-icon"
-              style={{ width: 28, height: 28, minWidth: 28, minHeight: 28 }}
-              title={player.muted || player.volume === 0 ? 'Unmute audio' : 'Mute audio'}
-              aria-label={player.muted || player.volume === 0 ? 'Unmute audio' : 'Mute audio'}
-              disabled={!hasAudio || isRecording}
-              onClick={player.toggleMute}
-            >
-              {player.muted || player.volume === 0 ? (
-                <VolumeX size={15} />
-              ) : player.volume <= 1 ? (
-                <Volume1 size={15} />
-              ) : (
-                <Volume2 size={15} style={{ color: 'var(--warning)' }} />
-              )}
-            </button>
-
-            <input
-              id="audio-volume-slider"
-              type="range"
-              className={`volume-slider ${!player.muted && player.volume > 1.05 ? 'boosted' : ''}`}
-              min={0}
-              max={MAX_PLAYBACK_BOOST}
-              step={0.1}
-              value={player.muted ? 0 : player.volume}
-              disabled={!hasAudio || isRecording}
-              aria-label="Output volume boost from 0% to 400%"
-              onChange={(e) => player.setVolume(parseFloat(e.target.value))}
-            />
-
-            <button
-              id="audio-boost-pill-btn"
-              type="button"
-              className={`boost-pill ${!player.muted && player.volume > 1.05 ? 'boosted' : ''}`}
-              disabled={!hasAudio || isRecording}
-              onClick={player.cycleBoost}
-              title="Tap to cycle output volume boost (100% / 150% / 200% / 300% / 400% with soft clipping protection)"
-            >
-              {player.muted ? 'Mute' : `${Math.round(player.volume * 100)}%`}
-            </button>
-          </div>
         </div>
 
-        {/* Right: On-Device Transcribe Action */}
-        <div className="transcribe-cta-block">
+        {/* Speed, volume, more, transcribe */}
+        <div className="audio-bar-end">
           <button
-            id="transcribe-btn"
+            id="playback-speed-btn"
             type="button"
-            className={`btn transcribe-main-btn ${
-              isTranscribing ? 'btn-danger' : 'btn-primary'
-            }`}
-            disabled={(!hasAudio && !isTranscribing) || isRecording || isBusyOther}
-            onClick={onToggleTranscribe}
+            className="speed-pill"
+            disabled={!canPlay}
+            onClick={cycleSpeed}
+            title="Playback speed (tap to change)"
           >
-            {isTranscribing ? (
-              <>
-                <XCircle size={18} />
-                <span>Cancel</span>
-              </>
-            ) : (
-              <>
-                <Sparkles size={17} />
-                <span>Transcribe</span>
-              </>
-            )}
+            {player.playbackRate}x
           </button>
-
           <button
-            id="model-chip-btn"
+            id="audio-boost-pill-btn"
             type="button"
-            className="model-selector-chip"
-            onClick={onOpenModelManager}
-            title="Manage on-device Whisper speech model"
+            className={`boost-pill ${boosted ? 'boosted' : ''}`}
+            disabled={!canPlay}
+            onClick={player.cycleBoost}
+            title="Volume boost (tap to cycle 100–400%; fine control in the ⋯ menu)"
           >
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+            {player.muted ? 'Mute' : `${Math.round(player.volume * 100)}%`}
+          </button>
+          <OverflowMenu id="audio-menu-btn" label="Audio options" items={audioMenuItems} />
+
+          <div className="transcribe-group">
+            <button
+              id="transcribe-btn"
+              type="button"
+              className={`btn btn-sm transcribe-main-btn ${isTranscribing ? 'btn-danger' : 'btn-primary'}`}
+              disabled={(!hasAudio && !isTranscribing) || isRecording || isBusyOther}
+              onClick={onToggleTranscribe}
+            >
+              {isTranscribing ? <XCircle size={16} /> : <Sparkles size={15} />}
+              <span>{isTranscribing ? 'Cancel' : 'Transcribe'}</span>
+            </button>
+            <button
+              id="model-chip-btn"
+              type="button"
+              className="model-selector-chip"
+              onClick={onOpenModelManager}
+              title={`Speech model: ${currentModel.shortLabel} (${currentModel.sizeLabel}). Tap to change.`}
+            >
               <Cpu size={13} />
               <span>{currentModel.shortLabel}</span>
-            </span>
-            <span style={{ color: 'var(--text-muted)' }}>{currentModel.sizeLabel}</span>
-          </button>
+            </button>
+          </div>
         </div>
       </div>
 

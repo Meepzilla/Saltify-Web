@@ -186,19 +186,7 @@
   font-size: 0.85rem;
 }
 
-.sidebar-footer {
-  border-top: 1px solid var(--border-subtle);
-  padding: 12px 14px calc(12px + var(--safe-bottom));
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
 
-.sidebar-footer-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
 
 .theme-segmented {
   display: grid;
@@ -228,38 +216,10 @@
   box-shadow: var(--shadow-xs);
 }
 
-.sidebar-nav-btn.active {
-  background: var(--accent-soft);
-  border-color: var(--accent);
-  color: var(--accent-soft-text);
-}
 
-.sidebar-version-bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 5px 8px;
-  border-radius: 6px;
-  font-size: 0.73rem;
-  color: var(--text-muted);
-  transition: background-color 120ms ease, color 120ms ease;
-}
 
-.sidebar-version-bar:hover {
-  background: var(--bg-surface-subtle);
-  color: var(--text-primary);
-}
 
-.sidebar-version-label {
-  font-weight: 700;
-  color: var(--text-secondary);
-}
 
-.sidebar-version-link {
-  font-weight: 600;
-  color: var(--accent);
-}
 
 .sidebar-backdrop {
   display: none;
@@ -378,50 +338,11 @@
   flex-shrink: 0;
 }
 
-.audio-studio-top {
-  display: grid;
-  grid-template-columns: minmax(220px, 1.15fr) minmax(280px, 1.6fr) auto;
-  gap: 14px;
-  align-items: center;
-}
 
-.audio-source-block {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  min-width: 0;
-}
 
-.audio-filename-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
 
-.audio-filename-input {
-  flex: 1;
-  min-width: 0;
-  height: 34px;
-  padding: 0 10px;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border-subtle);
-  background: var(--bg-surface-subtle);
-  font-size: 0.84rem;
-  font-weight: 500;
-}
 
-.audio-filename-input:focus {
-  outline: none;
-  background: var(--bg-surface);
-  border-color: var(--accent);
-}
 
-.audio-capture-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
 
 .rec-dot {
   width: 9px;
@@ -464,12 +385,6 @@
 }
 
 /* Playback + Waveform Center */
-.audio-playback-block {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  min-width: 0;
-}
 
 .waveform-shell {
   position: relative;
@@ -526,11 +441,6 @@
   gap: 10px;
 }
 
-.transport-buttons {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
 
 .transport-play-btn {
   width: 38px;
@@ -576,12 +486,6 @@
   color: var(--text-primary);
 }
 
-.volume-control-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding-top: 2px;
-}
 
 .volume-slider {
   flex: 1;
@@ -627,13 +531,6 @@
 }
 
 /* Transcribe CTA Block */
-.transcribe-cta-block {
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 6px;
-  min-width: 196px;
-}
 
 .transcribe-main-btn {
   min-height: 46px;
@@ -2973,9 +2870,318 @@
   display: none;
 }
 
-/* Tablet / iPad Portrait & Smaller Laptops (<= 1040px) */
-@media (max-width: 1040px) {
-  .app-shell {
+/* ============================================================
+   Compact workspace layout (v1.4 UI overhaul)
+   ============================================================ */
+
+/* Overflow ⋯ menus */
+.overflow-menu {
+  position: fixed;
+  z-index: 120;
+  min-width: 220px;
+  max-width: min(320px, calc(100vw - 16px));
+  overflow-y: auto;
+  padding: 6px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  animation: overflow-menu-in 120ms ease-out;
+}
+
+@keyframes overflow-menu-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.overflow-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 40px;
+  padding: 0 10px;
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-size: 0.86rem;
+  font-weight: 500;
+  text-align: left;
+}
+
+.overflow-menu-item:hover:not(:disabled),
+.overflow-menu-item:focus-visible {
+  background: var(--bg-surface-hover);
+  outline: none;
+}
+
+.overflow-menu-item:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.overflow-menu-item.danger {
+  color: var(--danger);
+}
+
+.overflow-menu-icon {
+  width: 18px;
+  display: inline-flex;
+  justify-content: center;
+  color: var(--text-secondary);
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.overflow-menu-item.danger .overflow-menu-icon {
+  color: var(--danger);
+}
+
+.overflow-menu-label {
+  flex: 1;
+}
+
+.overflow-menu-hint {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.74rem;
+}
+
+.overflow-menu-divider {
+  height: 1px;
+  margin: 5px 4px;
+  background: var(--border-subtle);
+}
+
+.overflow-menu-custom {
+  padding: 4px 6px;
+}
+
+.audio-menu-volume {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.audio-menu-volume .volume-slider {
+  flex: 1;
+  min-width: 0;
+}
+
+.audio-menu-volume-val {
+  min-width: 42px;
+  text-align: right;
+  font-size: 0.76rem;
+  color: var(--text-secondary);
+}
+
+/* Compact audio bar: capture | transport | waveform | speed, volume, menu, transcribe */
+.audio-studio {
+  padding: 8px 10px;
+  gap: 8px;
+}
+
+.audio-bar {
+  display: grid;
+  grid-template-columns: auto auto minmax(160px, 1fr) auto;
+  grid-template-areas: 'capture transport wave end';
+  align-items: center;
+  gap: 10px;
+}
+
+.audio-bar-capture {
+  grid-area: capture;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.audio-bar-capture .live-meter-wrap {
+  min-width: 300px;
+  padding: 4px 8px;
+}
+
+.audio-bar-transport {
+  grid-area: transport;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.audio-bar-transport .transport-time {
+  margin-left: 6px;
+  white-space: nowrap;
+}
+
+.audio-bar-wave {
+  grid-area: wave;
+  min-width: 0;
+}
+
+.audio-bar-wave .waveform-shell {
+  height: 40px;
+}
+
+.audio-bar-end {
+  grid-area: end;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.transcribe-group {
+  display: inline-flex;
+  align-items: stretch;
+  margin-left: 4px;
+}
+
+.transcribe-group .transcribe-main-btn {
+  min-height: 38px;
+  padding: 0 14px;
+  font-size: 0.88rem;
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.transcribe-group .model-selector-chip {
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  border: 1px solid var(--border-subtle);
+  border-left: none;
+  padding: 0 9px;
+  white-space: nowrap;
+}
+
+/* Editor: Transcript / SALT tabs, or split side by side */
+.editor-panes.tabbed {
+  grid-template-columns: 1fr;
+}
+
+.editor-pane-slot {
+  display: flex;
+  min-height: 0;
+  min-width: 0;
+}
+
+.editor-pane-slot > .pane-card {
+  flex: 1;
+  min-width: 0;
+}
+
+.editor-panes.tabbed > .editor-pane-slot:not(.is-active) {
+  display: none;
+}
+
+.editor-tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.editor-tablist {
+  display: inline-flex;
+  padding: 3px;
+  gap: 2px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface-subtle);
+}
+
+.editor-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 0 12px;
+  border-radius: 6px;
+  color: var(--text-secondary);
+  font-size: 0.86rem;
+  font-weight: 600;
+}
+
+.editor-tab:hover:not(.active) {
+  color: var(--text-primary);
+}
+
+.editor-tab.active {
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-xs);
+}
+
+.editor-tab-count {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  color: var(--text-muted);
+}
+
+.split-toggle {
+  color: var(--text-muted);
+}
+
+/* One-row pane headers */
+.pane-header {
+  padding: 6px 8px 6px 10px;
+  min-height: 50px;
+  row-gap: 6px;
+}
+
+.pane-toolbar {
+  gap: 4px;
+}
+
+.pane-toolbar-wide {
+  min-width: 0;
+}
+
+.workflow-steps {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.workflow-steps .step-done {
+  color: var(--success, var(--accent));
+}
+
+/* Metrics bar: one line, scrolls sideways instead of wrapping */
+.metrics-bar-header {
+  padding: 4px 8px 4px 12px;
+  min-height: 42px;
+}
+
+.metrics-bar-main {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  flex: 1;
+}
+
+.metrics-bar-main .metrics-summary-pills {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  scrollbar-width: none;
+  min-width: 0;
+}
+
+.metrics-bar-main .metrics-summary-pills::-webkit-scrollbar {
+  display: none;
+}
+
+.metric-inline-btn {
+  white-space: nowrap;
+}
+
+.workspace-body {
+  gap: 8px;
+  padding: 8px 10px 10px;
+}
+
+/* Sessions sidebar becomes a slide-out drawer on iPad & laptops (keep in sync with DRAWER_MAX_WIDTH) */
+@media (max-width: 1440px) {
+  .app-shell,
+  .app-shell.sidebar-collapsed {
     grid-template-columns: 1fr;
   }
 
@@ -3001,20 +3207,6 @@
     inset: 0;
     background: hsla(219, 36%, 8%, 0.45);
     z-index: 35;
-  }
-
-  .audio-studio-top {
-    grid-template-columns: 1fr 1fr;
-  }
-
-  .transcribe-cta-block {
-    grid-column: 1 / -1;
-    flex-direction: row;
-    align-items: center;
-  }
-
-  .transcribe-main-btn {
-    flex: 1;
   }
 }
 
@@ -3071,16 +3263,6 @@
   .workspace-body {
     padding: 10px 10px 8px;
     gap: 10px;
-  }
-
-  .audio-studio-top {
-    grid-template-columns: 1fr;
-    gap: 10px;
-  }
-
-  .transcribe-cta-block {
-    flex-direction: column;
-    align-items: stretch;
   }
 
   .editor-panes {
@@ -3199,6 +3381,122 @@
   .changelog-item-row {
     flex-direction: column;
     gap: 5px;
+  }
+}
+
+/* Tablets / iPad portrait: audio bar on two rows (controls, then waveform) */
+@media (max-width: 1100px) and (min-width: 769px) {
+  .audio-bar {
+    grid-template-columns: auto 1fr auto;
+    grid-template-areas:
+      'capture transport end'
+      'wave wave wave';
+    row-gap: 6px;
+  }
+
+  .audio-bar-transport {
+    justify-content: center;
+  }
+
+  .audio-bar-wave .waveform-shell {
+    height: 34px;
+  }
+}
+
+/* Phones: the Audio tab gets a roomy stacked layout; editor tabs come from the bottom nav */
+@media (max-width: 768px) {
+  .audio-studio {
+    padding: 12px;
+  }
+
+  .audio-bar {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      'capture'
+      'wave'
+      'transport'
+      'end';
+    gap: 12px;
+  }
+
+  .audio-bar-capture > .btn {
+    flex: 1;
+    min-height: 44px;
+  }
+
+  .audio-bar-capture .live-meter-wrap {
+    min-width: 0;
+    flex: 1;
+  }
+
+  .audio-bar-wave .waveform-shell {
+    height: 72px;
+  }
+
+  .audio-bar-transport {
+    justify-content: center;
+    gap: 10px;
+  }
+
+  .audio-bar-transport .transport-play-btn {
+    width: 52px;
+    height: 52px;
+  }
+
+  .audio-bar-end {
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+
+  .transcribe-group {
+    flex: 1 1 100%;
+    margin-left: 0;
+  }
+
+  .transcribe-group .transcribe-main-btn {
+    flex: 1;
+    min-height: 48px;
+  }
+
+  .editor-tablist,
+  .split-toggle {
+    display: none;
+  }
+
+  .editor-panes.split,
+  .editor-panes.tabbed {
+    grid-template-columns: 1fr;
+  }
+
+  .editor-panes.tabbed > .editor-pane-slot:not(.is-active) {
+    display: flex;
+  }
+}
+
+/* Phones: SALT steps stay on one row (scroll sideways if needed); tabs live in the bottom nav */
+@media (max-width: 768px) {
+  .pane-title-group:has(> .editor-tabs) {
+    display: none;
+  }
+
+  .pane-toolbar-wide {
+    flex: 1;
+    flex-wrap: nowrap;
+  }
+
+  .workflow-steps {
+    flex: 1;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .workflow-steps::-webkit-scrollbar {
+    display: none;
+  }
+
+  .workflow-steps > .btn {
+    flex-shrink: 0;
   }
 }
 

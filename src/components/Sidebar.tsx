@@ -1,36 +1,21 @@
 import {
-  Cpu,
   Download,
   FileUp,
-  HelpCircle,
-  History,
-  Laptop,
-  Moon,
   Pencil,
   Plus,
-  Settings,
   ShieldCheck,
-  Sun,
   Trash2,
   WifiOff,
   X,
 } from 'lucide-react';
 import { useRef, useState } from 'react';
 import { formatDurationPadded } from '../engine/transcriptFormat';
-import type {
-  AppView,
-  SessionRecord,
-  SettingsTab,
-  ThemeMode,
-} from '../types/saltify';
+import type { AppView, SessionRecord } from '../types/saltify';
 
 interface SidebarProps {
   sessions: SessionRecord[];
   activeSessionId: string;
   activeView: AppView;
-  settingsTab: SettingsTab;
-  appVersion: string;
-  theme: ThemeMode;
   isOnline: boolean;
   canPromptInstall: boolean;
   onSelectSession: (id: string) => void;
@@ -38,9 +23,6 @@ interface SidebarProps {
   onRenameSession: (id: string, nextName: string) => void;
   onDeleteSession: (id: string) => void;
   onImportSessionJson: (file: File) => void;
-  onChangeTheme: (theme: ThemeMode) => void;
-  onOpenSettings: (tab?: SettingsTab) => void;
-  onOpenHelp: () => void;
   onPromptInstall: () => void;
   onCloseMobileDrawer: () => void;
   onCollapseSidebar: () => void;
@@ -50,9 +32,6 @@ export function Sidebar({
   sessions,
   activeSessionId,
   activeView,
-  settingsTab,
-  appVersion,
-  theme,
   isOnline,
   canPromptInstall,
   onSelectSession,
@@ -60,9 +39,6 @@ export function Sidebar({
   onRenameSession,
   onDeleteSession,
   onImportSessionJson,
-  onChangeTheme,
-  onOpenSettings,
-  onOpenHelp,
   onPromptInstall,
   onCloseMobileDrawer,
   onCollapseSidebar,
@@ -270,131 +246,6 @@ export function Sidebar({
         })}
       </div>
 
-      <div className="sidebar-footer">
-        <div className="sidebar-footer-row">
-          <button
-            id="sidebar-settings-btn"
-            type="button"
-            className={`btn btn-secondary btn-sm sidebar-nav-btn ${
-              activeView === 'settings' &&
-              (settingsTab === 'general' || settingsTab === 'salt')
-                ? 'active'
-                : ''
-            }`}
-            style={{ flex: 1 }}
-            aria-current={
-              activeView === 'settings' &&
-              (settingsTab === 'general' || settingsTab === 'salt')
-                ? 'page'
-                : undefined
-            }
-            onClick={() => {
-              onOpenSettings('general');
-              onCloseMobileDrawer();
-            }}
-          >
-            <Settings size={14} />
-            <span>Settings</span>
-          </button>
-
-          <button
-            id="sidebar-models-btn"
-            type="button"
-            className={`btn btn-secondary btn-sm sidebar-nav-btn ${
-              activeView === 'settings' && settingsTab === 'models' ? 'active' : ''
-            }`}
-            style={{ flex: 1 }}
-            aria-current={
-              activeView === 'settings' && settingsTab === 'models' ? 'page' : undefined
-            }
-            onClick={() => {
-              onOpenSettings('models');
-              onCloseMobileDrawer();
-            }}
-          >
-            <Cpu size={14} />
-            <span>AI Models</span>
-          </button>
-        </div>
-
-        <div className="sidebar-footer-row">
-          <button
-            id="sidebar-changelog-btn"
-            type="button"
-            className={`btn btn-secondary btn-sm sidebar-nav-btn ${
-              activeView === 'settings' && settingsTab === 'changelog' ? 'active' : ''
-            }`}
-            style={{ flex: 1 }}
-            aria-current={
-              activeView === 'settings' && settingsTab === 'changelog'
-                ? 'page'
-                : undefined
-            }
-            onClick={() => {
-              onOpenSettings('changelog');
-              onCloseMobileDrawer();
-            }}
-          >
-            <History size={14} />
-            <span>Change Log</span>
-          </button>
-
-          <button
-            id="sidebar-help-btn"
-            type="button"
-            className="btn btn-secondary btn-sm"
-            style={{ flex: 1 }}
-            onClick={() => {
-              onOpenHelp();
-              onCloseMobileDrawer();
-            }}
-          >
-            <HelpCircle size={14} />
-            <span>Help &amp; SALT</span>
-          </button>
-        </div>
-
-        <div className="theme-segmented" role="group" aria-label="Appearance theme">
-          <button
-            type="button"
-            className={theme === 'light' ? 'active' : ''}
-            onClick={() => onChangeTheme('light')}
-          >
-            <Sun size={13} />
-            <span>Light</span>
-          </button>
-          <button
-            type="button"
-            className={theme === 'dark' ? 'active' : ''}
-            onClick={() => onChangeTheme('dark')}
-          >
-            <Moon size={13} />
-            <span>Dark</span>
-          </button>
-          <button
-            type="button"
-            className={theme === 'system' ? 'active' : ''}
-            onClick={() => onChangeTheme('system')}
-          >
-            <Laptop size={13} />
-            <span>Auto</span>
-          </button>
-        </div>
-
-        <button
-          id="sidebar-version-btn"
-          type="button"
-          className="sidebar-version-bar"
-          title="View Saltify Web version & change log"
-          onClick={() => {
-            onOpenSettings('changelog');
-            onCloseMobileDrawer();
-          }}
-        >
-          <span className="sidebar-version-label mono">v{appVersion}</span>
-          <span className="sidebar-version-link">What&apos;s new</span>
-        </button>
-      </div>
     </aside>
   );
 }

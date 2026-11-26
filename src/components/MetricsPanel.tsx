@@ -1,4 +1,4 @@
-import { BarChart3, ChevronDown, ChevronUp, GitBranch } from 'lucide-react';
+import { BarChart3, ChevronDown, ChevronUp } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import {
   compareToNorms,
@@ -19,8 +19,6 @@ interface MetricsPanelProps {
   metrics: TranscriptMetrics;
   clientInfo?: ClientInfo;
   alwaysExpanded?: boolean;
-  canMarkClauses?: boolean;
-  onOpenClauseCoder?: () => void;
   onOpenClientInfo?: () => void;
 }
 
@@ -168,8 +166,6 @@ export function MetricsPanel({
   metrics,
   clientInfo,
   alwaysExpanded = false,
-  canMarkClauses = false,
-  onOpenClauseCoder,
   onOpenClientInfo,
 }: MetricsPanelProps) {
   const [expanded, setExpanded] = useState(alwaysExpanded);
@@ -300,9 +296,10 @@ export function MetricsPanel({
           }
         }}
       >
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+        <div className="metrics-bar-main">
           <span
             style={{
+              flexShrink: 0,
               display: 'inline-flex',
               alignItems: 'center',
               gap: 6,
@@ -312,7 +309,7 @@ export function MetricsPanel({
             }}
           >
             <BarChart3 size={15} />
-            <span>SALT Metrics ({primary.speaker})</span>
+            <span>Metrics ({primary.speaker})</span>
           </span>
 
           <div className="metrics-summary-pills">
@@ -349,20 +346,6 @@ export function MetricsPanel({
         </div>
 
         <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-          {canMarkClauses && onOpenClauseCoder && (
-            <button
-              type="button"
-              className="btn btn-subtle btn-sm"
-              onClick={(e) => {
-                e.stopPropagation();
-                onOpenClauseCoder();
-              }}
-              title="Open SALT Clause & Clausal Density Coder"
-            >
-              <GitBranch size={13} />
-              <span>{primary.clauseScoredUtterances > 0 ? 'Edit Clauses' : 'Mark Clauses'}</span>
-            </button>
-          )}
           {!alwaysExpanded && (
             <button
               id="metrics-toggle-expand-btn"
