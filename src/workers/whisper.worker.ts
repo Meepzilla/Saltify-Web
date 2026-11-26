@@ -1,11 +1,8 @@
 import {
   env,
-  LogitsProcessor,
-  LogitsProcessorList,
   pipeline,
   type AutomaticSpeechRecognitionPipeline,
   type ProgressInfo,
-  type Tensor,
 } from '@huggingface/transformers';
 import { sliceAudioIntoPauseAwareChunks } from '../engine/audioProcessing';
 import { purgeHtmlModelCacheEntries } from '../engine/modelCache';
@@ -14,60 +11,15 @@ import {
   formatWhisperChunks,
   type FormattedWhisperUtterance,
 } from '../engine/transcriptFormat';
+import { annotateDisagreements } from '../engine/modelFusion';
+import { buildWordConfidenceMap, type WordConfidenceMap, type WordProbability } from '../engine/wordConfidence';
 import {
-  buildWordConfidenceMap,
-  groupTokensIntoWords,
-  type TokenProbability,
-  type WordConfidenceMap,
-  type WordProbability,
-} from '../engine/wordConfidence';
+  RecorderLastProcessorList,
+  TokenConfidenceRecorder,
+  tokenSegmentsFromRecorder,
+} from './tokenConfidence';
 import type { ComputeDevice, ModelSource, WhisperModelId } from '../types/saltify';
 
-/**
- * Records the probability of the token Whisper picks at each decoding step (greedy decoding
- * picks the highest-scoring token after all logits processors, so p = softmax max).
- * Must run LAST so it sees Whisper's timestamp rules; see RecorderLastProcessorList.
- */
-class TokenConfidenceRecorder extends LogitsProcessor {
-  steps: Array<{ id: number; p: number }> = [];
-
-  _call(_inputIds: bigint[][], logits: Tensor) {
-    const row = (logits as unknown as Record<number, { data: Float32Array }>)[0];
-    const data = row?.data;
-    if (data && data.length > 0) {
-      let max = -Infinity;
-      let arg = -1;
-      for (let i = 0; i < data.length; i++) {
-        if (data[i] > max) {
-          max = data[i];
-          arg = i;
-        }
-      }
-      let sum = 0;
-      for (let i = 0; i < data.length; i++) {
-        const v = data[i];
-        if (v !== -Infinity) sum += Math.exp(v - max);
-      }
-      this.steps.push({ id: arg, p: sum > 0 ? 1 / sum : 0 });
-    }
-    return logits;
-  }
-}
-
-/**
- * A logits-processor list that keeps the confidence recorder at the end, even when Whisper's
- * generate() pushes its own timestamp processor onto the list.
- */
-class RecorderLastProcessorList extends LogitsProcessorList {
-  constructor(recorder: TokenConfidenceRecorder) {
-    super();
-    super.push(recorder);
-  }
-
-  push(item: LogitsProcessor) {
-    this.processors.splice(Math.max(0, this.processors.length - 1), 0, item);
-  }
-}
 
 // IMPORTANT: do not import speakerDiarizer / childGrammarEngine (or anything that pulls in
 // wink-pos-tagger / wink-lexicon) into this worker. Those multi-MB CommonJS data modules overflow
@@ -102,6 +54,8 @@ export type WorkerRequest =
       type: 'transcribe';
       jobId: string;
       modelId: WhisperModelId;
+      /** Optional second model to compare against (flags words where the two disagree). */
+      compareModelId?: WhisperModelId;
       device: ComputeDevice;
       modelSource: ModelSource;
       customModelBaseUrl: string;
@@ -135,6 +89,8 @@ export type WorkerResponse =
       utterances?: FormattedWhisperUtterance[];
       /** Uncertain words per line (Whisper token probability below threshold). */
       wordConfidence?: WordConfidenceMap;
+      /** The second-opinion model that was compared, when it ran successfully. */
+      secondOpinionModelId?: WhisperModelId;
       backendUsed: 'webgpu' | 'wasm';
     }
   | {
@@ -409,7 +365,10 @@ async function ensurePipeline(
   requestedDevice: ComputeDevice,
   modelSource: ModelSource,
   customModelBaseUrl: string,
-  appBaseUrl: string
+  appBaseUrl: string,
+  /** Where model-loading progress maps onto the job's 0–1 progress bar. */
+  progressRange: [number, number] = [0, 0.25],
+  stageLabel = 'Loading Whisper model'
 ): Promise<{
   transcriber: AutomaticSpeechRecognitionPipeline;
   backendUsed: 'webgpu' | 'wasm';
@@ -512,16 +471,16 @@ async function ensurePipeline(
       post({
         type: 'progress',
         jobId,
-        stage: 'Loading Whisper model',
-        progress: Math.max(0.02, frac * 0.25),
+        stage: stageLabel,
+        progress: Math.max(progressRange[0] + 0.02, progressRange[0] + frac * (progressRange[1] - progressRange[0])),
         detail: `${mbLoaded} MB${mbTotal} (${sourceLabel})`,
       });
     } else if (info.status === 'initiate') {
       post({
         type: 'progress',
         jobId,
-        stage: 'Loading Whisper model',
-        progress: 0.04,
+        stage: stageLabel,
+        progress: progressRange[0] + 0.04 * (progressRange[1] - progressRange[0]) * 4,
         detail: info.file ? `Preparing ${info.file}` : undefined,
       });
     }
@@ -583,28 +542,6 @@ async function ensurePipeline(
   loadedKey = cacheSignature;
   loadedBackend = backendUsed;
   return { transcriber: activePipeline, backendUsed };
-}
-
-/** Converts recorded token probabilities into words using the pipeline's tokenizer. */
-function tokenWordsFromRecorder(
-  pipe: AutomaticSpeechRecognitionPipeline,
-  recorder: TokenConfidenceRecorder
-): WordProbability[] {
-  try {
-    const tokenizer = pipe.tokenizer as unknown as {
-      timestamp_begin?: number;
-      decode: (ids: number[], opts?: { skip_special_tokens?: boolean }) => string;
-    };
-    const timestampBegin = tokenizer.timestamp_begin ?? Number.MAX_SAFE_INTEGER;
-    const tokens: TokenProbability[] = [];
-    for (const step of recorder.steps) {
-      if (step.id < 0 || step.id >= timestampBegin) continue; // timestamps & end-of-text
-      tokens.push({ text: tokenizer.decode([step.id], { skip_special_tokens: true }), p: step.p });
-    }
-    return groupTokensIntoWords(tokens);
-  } catch {
-    return [];
-  }
 }
 
 function buildDiagnosticDetails(error: unknown, modelId: WhisperModelId, modelSource: ModelSource): string {
@@ -761,11 +698,17 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
       }
 
       const allChunks: Array<{ timestamp: [number, number | null]; text: string }> = [];
-      const allWords: WordProbability[] = [];
+      const sliceWords: WordProbability[][] = [];
+      const compareModelId =
+        req.compareModelId && req.compareModelId !== req.modelId ? req.compareModelId : undefined;
+      // With a second opinion, the main pass uses 25–60% of the bar and the comparison 60–93%
+      const primaryEnd = compareModelId ? 0.6 : 0.93;
+      const maxTokensFor = (slice: { startSec: number; endSec: number }) =>
+        Math.min(224, Math.max(64, Math.ceil(Math.max(0.5, slice.endSec - slice.startSec) * 6)));
 
       for (let i = 0; i < slices.length; i++) {
         const slice = slices[i];
-        const baseProgress = 0.25 + (i / slices.length) * 0.68;
+        const baseProgress = 0.25 + (i / slices.length) * (primaryEnd - 0.25);
         post({
           type: 'progress',
           jobId: req.jobId,
@@ -817,7 +760,7 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
           output = await runSegment(transcriber);
         }
 
-        allWords.push(...tokenWordsFromRecorder(transcriber, recorder));
+        sliceWords[i] = tokenSegmentsFromRecorder(transcriber, recorder).flat();
 
         const singleOutput = Array.isArray(output) ? output[0] : output;
         if (singleOutput?.chunks && singleOutput.chunks.length > 0) {
@@ -851,6 +794,56 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
         }
       }
 
+      // Second opinion: run the other model over the same slices and mark where it disagrees.
+      // The transcript text stays the main model's; disagreements become review flags.
+      let secondOpinionModelId: WhisperModelId | undefined;
+      if (compareModelId) {
+        try {
+          const second = await ensurePipeline(
+            req.jobId,
+            compareModelId,
+            req.device,
+            req.modelSource,
+            req.customModelBaseUrl,
+            req.appBaseUrl,
+            [primaryEnd, primaryEnd + 0.05],
+            'Loading second-opinion model'
+          );
+          for (let i = 0; i < slices.length; i++) {
+            post({
+              type: 'progress',
+              jobId: req.jobId,
+              stage: `Second opinion: segment ${i + 1} of ${slices.length}`,
+              progress: primaryEnd + 0.05 + (i / slices.length) * (0.93 - primaryEnd - 0.05),
+              detail: 'Comparing with a second model to flag words worth re-checking',
+            });
+            setStage(`second-opinion segment ${i + 1} of ${slices.length}`);
+            const secondRecorder = new TokenConfidenceRecorder();
+            await second.transcriber(slices[i].samples, {
+              return_timestamps: true,
+              max_new_tokens: maxTokensFor(slices[i]),
+              logits_processor: new RecorderLastProcessorList(secondRecorder),
+            } as Parameters<AutomaticSpeechRecognitionPipeline>[1]);
+            const secondWords = tokenSegmentsFromRecorder(second.transcriber, secondRecorder).flat();
+            if (sliceWords[i] && secondWords.length > 0) {
+              sliceWords[i] = annotateDisagreements(sliceWords[i], secondWords);
+            }
+            if (i + 1 < slices.length) await yieldToEventLoop();
+          }
+          secondOpinionModelId = compareModelId;
+        } catch (err) {
+          // A second opinion is optional: keep the main transcript if it fails (e.g. low memory)
+          post({
+            type: 'progress',
+            jobId: req.jobId,
+            stage: 'Second opinion skipped',
+            progress: 0.93,
+            detail: `The comparison model could not run on this device (${errorText(err)}). Your transcript is unaffected.`,
+          });
+        }
+      }
+
+      const allWords = sliceWords.flat();
       const utterances = extractWhisperUtterances(allChunks);
       const transcript = utterances.map((u) => `[${u.timestampStr}] ${u.text}`).join('\n');
       let wordConfidence: WordConfidenceMap | undefined;
@@ -865,6 +858,7 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
         transcript,
         utterances,
         wordConfidence,
+        secondOpinionModelId,
         backendUsed,
       });
     }

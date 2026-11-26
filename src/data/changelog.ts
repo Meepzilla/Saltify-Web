@@ -24,6 +24,38 @@ export const APP_VERSION: string = __APP_VERSION__;
  */
 export const CHANGELOG_RELEASES: readonly ChangelogRelease[] = [
   {
+    version: '1.6.0',
+    date: '2026-11-26',
+    title: 'Second Opinion: Compare Two Whisper Models',
+    summary:
+      'Optionally transcribe with a second Whisper model and flag the words where the two disagree, with a one-tap way to use the other model\'s word.',
+    changes: [
+      {
+        category: 'added',
+        summary: 'Second Opinion setting (Settings → Speech & Models)',
+        detail:
+          'Runs a second model (e.g. Base alongside Small) over the same audio after the main transcription. On 90 benchmark clips (clean, noisy and child-like pitch + noise), this raised the share of Whisper Small\'s mistakes that get flagged from 57% to 66% with a similar number of flags. Adds about 50% to transcription time; off by default.',
+      },
+      {
+        category: 'added',
+        summary: 'Disagreement words show what the other model heard',
+        detail:
+          'Words where the models disagree get a dashed violet underline. Tap one to use the other model\'s word, remove a word the other model did not hear (often a hallucinated ending), keep your word, or open the spectrogram. Resolving one word keeps the line\'s other flags.',
+      },
+      {
+        category: 'improved',
+        summary: 'Why the transcript is not merged automatically',
+        detail:
+          'Automatically picking the more confident model\'s word did not beat Whisper Small alone in testing (the two models are each right about half the time when they disagree), so the choice is left to you.',
+      },
+      {
+        category: 'fixed',
+        summary: 'Menus near the left edge stay on screen',
+        detail: 'Pop-up menus now open to the right when there is no room to the left, which matters on phones.',
+      },
+    ],
+  },
+  {
     version: '1.5.0',
     date: '2026-11-26',
     title: 'Uncertain-Word Flags & Spectrogram View',

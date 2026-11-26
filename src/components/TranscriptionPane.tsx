@@ -1,6 +1,8 @@
 import {
   AlignLeft,
   AudioLines,
+  Check,
+  Replace,
   List,
   Lock,
   Sparkles,
@@ -49,6 +51,13 @@ interface TranscriptionPaneProps {
   onToggleHighlightUncertainWords?: () => void;
   /** Opens the spectrogram for a line (by line index). */
   onInspectLine?: (lineIndex: number) => void;
+  /** Short name of the second-opinion model ("Base .en"), for disagreement menus. */
+  secondOpinionLabel?: string;
+  /**
+   * Resolves a flagged word: replacement string swaps it in, '' removes the word,
+   * null keeps the word and dismisses the flag.
+   */
+  onResolveWord?: (lineIndex: number, wordIndex: number, replacement: string | null) => void;
 }
 
 export function TranscriptionPane({
@@ -70,6 +79,8 @@ export function TranscriptionPane({
   highlightUncertainWords = true,
   onToggleHighlightUncertainWords,
   onInspectLine,
+  secondOpinionLabel = 'Second model',
+  onResolveWord,
 }: TranscriptionPaneProps) {
   const [locked, setLocked] = useState(true);
   const [viewMode, setViewMode] = useState<'interactive' | 'raw'>('interactive');
@@ -109,6 +120,55 @@ export function TranscriptionPane({
       const f = flagged.get(wordIndex);
       if (!f) return node;
       const pct = Math.round(f.p * 100);
+      if (f.a !== undefined && onResolveWord) {
+        const altPct = Math.round((f.ap ?? 0) * 100);
+        const heardNothing = f.a === '';
+        return (
+          <OverflowMenu
+            label={
+              heardNothing
+                ? `“${f.w}”: ${secondOpinionLabel} heard no word here. Options`
+                : `“${f.w}”: ${secondOpinionLabel} heard “${f.a}”. Options`
+            }
+            trigger={node}
+            triggerClassName={`uncertain-word disagree ${f.p < VERY_LOW_CONFIDENCE_THRESHOLD ? 'very' : ''}`}
+            items={[
+              heardNothing
+                ? {
+                    key: 'remove',
+                    label: `Remove this word (${secondOpinionLabel} heard nothing)`,
+                    icon: <Trash2 size={15} />,
+                    onSelect: () => onResolveWord(lineIndex, wordIndex, ''),
+                  }
+                : {
+                    key: 'swap',
+                    label: `Use “${f.a.replace(/[.,!?;:]+$/, '')}”`,
+                    hint: `${secondOpinionLabel} ${altPct}%`,
+                    icon: <Replace size={15} />,
+                    onSelect: () => onResolveWord(lineIndex, wordIndex, f.a ?? ''),
+                  },
+              {
+                key: 'keep',
+                label: 'Keep this word',
+                hint: `${pct}%`,
+                icon: <Check size={15} />,
+                onSelect: () => onResolveWord(lineIndex, wordIndex, null),
+              },
+              ...(onInspectLine
+                ? [
+                    {
+                      key: 'spectrogram',
+                      label: 'Listen & spectrogram',
+                      icon: <AudioLines size={15} />,
+                      dividerBefore: true,
+                      onSelect: () => onInspectLine(lineIndex),
+                    },
+                  ]
+                : []),
+            ]}
+          />
+        );
+      }
       return (
         <button
           type="button"

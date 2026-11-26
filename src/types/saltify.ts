@@ -103,7 +103,9 @@ export interface SessionRecord {
   morphemesApplied: boolean;
   notes: string;
   /** Words Whisper was unsure about, per transcript line (see engine/wordConfidence). */
-  wordConfidence?: Record<string, Array<{ i: number; w: string; p: number }>>;
+  wordConfidence?: Record<string, Array<{ i: number; w: string; p: number; a?: string; ap?: number }>>;
+  /** The second-opinion model compared during the last transcription, if any. */
+  secondOpinionModelId?: WhisperModelId;
 }
 
 export interface UtteranceLine {
@@ -202,6 +204,8 @@ export interface AppSettings {
   showIpaTranscription: boolean;
   /** Underline words Whisper was unsure about in the Transcript box. */
   highlightUncertainWords: boolean;
+  /** Second model to compare against during transcription ('off' = single model). */
+  secondOpinionModelId: WhisperModelId | 'off';
 }
 
 export const DEFAULT_APP_SETTINGS: AppSettings = {
@@ -219,6 +223,7 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   colorCodePartsOfSpeech: false,
   showIpaTranscription: false,
   highlightUncertainWords: true,
+  secondOpinionModelId: 'off',
 };
 
 export interface ToastMessage {

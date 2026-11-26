@@ -24,13 +24,24 @@ export interface TokenProbability {
 export interface WordProbability {
   word: string;
   p: number;
+  /** Second-opinion model's word at this position ('' = it heard no word here). */
+  alt?: string;
+  /** Second-opinion model's confidence for `alt`. */
+  altP?: number;
 }
+
+/** When the second-opinion model disagrees, flag the word unless the primary was at least this sure. */
+export const DISAGREEMENT_FLAG_BELOW = 0.9;
 
 /** An uncertain word in a transcript line: whitespace-token index, the word, and its probability. */
 export interface FlaggedWord {
   i: number;
   w: string;
   p: number;
+  /** Second-opinion model's version ('' = it heard nothing), when the models disagreed. */
+  a?: string;
+  /** Second-opinion model's confidence. */
+  ap?: number;
 }
 
 /** Uncertain words per transcript line, keyed by `confidenceLineKey(line body)`. */
@@ -91,7 +102,9 @@ export function buildWordConfidenceMap(
   threshold = LOW_CONFIDENCE_THRESHOLD
 ): WordConfidenceMap {
   const map: WordConfidenceMap = {};
-  const stream = words.map((w) => ({ n: normalizeWord(w.word), p: w.p, w: w.word })).filter((w) => w.n);
+  const stream = words
+    .map((w) => ({ n: normalizeWord(w.word), p: w.p, w: w.word, alt: w.alt, altP: w.altP }))
+    .filter((w) => w.n);
   let cursor = 0;
 
   for (const rawLine of formattedTranscript.split(/\r?\n/)) {
@@ -108,8 +121,14 @@ export function buildWordConfidenceMap(
         if (stream[cursor + look].n === n) {
           const match = stream[cursor + look];
           cursor += look + 1;
-          if (match.p < threshold) {
-            flagged.push({ i, w: n, p: Math.round(match.p * 1000) / 1000 });
+          const disagree = match.alt !== undefined && match.p < DISAGREEMENT_FLAG_BELOW;
+          if (match.p < threshold || disagree) {
+            const entry: FlaggedWord = { i, w: n, p: Math.round(match.p * 1000) / 1000 };
+            if (disagree) {
+              entry.a = match.alt;
+              entry.ap = Math.round((match.altP ?? 0) * 1000) / 1000;
+            }
+            flagged.push(entry);
           }
           return;
         }
@@ -147,4 +166,32 @@ export function countFlaggedWords(
 ): number {
   if (!map) return 0;
   return bodies.reduce((sum, b) => sum + flaggedWordsForLine(b, map).size, 0);
+}
+
+/**
+ * Updates the confidence map after the clinician resolves one flagged word in a line:
+ * re-keys the line to its edited text, removes the resolved flag, and shifts later word
+ * indices when a word was removed.
+ */
+export function resolveFlagInMap(
+  map: WordConfidenceMap | undefined | null,
+  oldBody: string,
+  newBody: string,
+  wordIndex: number,
+  removedWord: boolean
+): WordConfidenceMap | undefined {
+  if (!map) return undefined;
+  const oldKey = confidenceLineKey(oldBody);
+  const entries = map[oldKey];
+  if (!entries) return map;
+  const next: WordConfidenceMap = { ...map };
+  delete next[oldKey];
+  const remaining = entries
+    .filter((e) => e.i !== wordIndex)
+    .map((e) => (removedWord && e.i > wordIndex ? { ...e, i: e.i - 1 } : e));
+  if (remaining.length > 0) {
+    const newKey = confidenceLineKey(newBody);
+    next[newKey] = [...(next[newKey] ?? []), ...remaining];
+  }
+  return next;
 }

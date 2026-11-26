@@ -3210,6 +3210,24 @@
   cursor: default;
 }
 
+/* Second-opinion disagreement: dashed violet underline, tap for "use other model's word" */
+.uncertain-word.disagree {
+  background: hsla(265, 80%, 62%, 0.13);
+  text-decoration-style: dashed;
+  text-decoration-color: hsl(265, 70%, 55%);
+  text-decoration-thickness: 2px;
+}
+
+.uncertain-word.disagree:hover,
+.uncertain-word.disagree:focus-visible,
+.uncertain-word.disagree[aria-expanded='true'] {
+  background: hsla(265, 80%, 62%, 0.26);
+}
+
+:root[data-theme='dark'] .uncertain-word.disagree {
+  text-decoration-color: hsl(265, 85%, 75%);
+}
+
 /* Spectrogram view */
 .modal-card.spectrogram-modal {
   max-width: min(1100px, calc(100vw - 24px));
