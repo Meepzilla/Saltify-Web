@@ -5,6 +5,7 @@ import {
   type ProgressInfo,
 } from '@huggingface/transformers';
 import { sliceAudioIntoPauseAwareChunks } from '../engine/audioProcessing';
+import { collapseRepetitions, dropSilentChunks, looksLikeRepetitionLoop } from '../engine/hallucinationGuard';
 import { purgeHtmlModelCacheEntries } from '../engine/modelCache';
 import type { HeardPhone } from '../engine/speechSounds';
 import {
@@ -820,15 +821,17 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
         setStage(`transcribing segment ${i + 1} of ${slices.length}`);
         let recorder = new TokenConfidenceRecorder();
         let usedPrompt = false;
-        const runSegment = (pipe: AutomaticSpeechRecognitionPipeline) => {
+        const runSegment = (pipe: AutomaticSpeechRecognitionPipeline, antiLoop = false) => {
           recorder = new TokenConfidenceRecorder();
-          const promptIds = buildVocabularyPromptIds(pipe, req.vocabulary);
+          // The anti-loop retry drops the vocabulary prompt (prompts make loops more likely)
+          const promptIds = antiLoop ? null : buildVocabularyPromptIds(pipe, req.vocabulary);
           usedPrompt = promptIds !== null;
           return pipe(slice.samples, {
             return_timestamps: true,
             max_new_tokens: maxNewTokens,
             logits_processor: new RecorderLastProcessorList(recorder),
             ...(promptIds ? { decoder_input_ids: promptIds } : {}),
+            ...(antiLoop ? { repetition_penalty: 1.2 } : {}),
           } as Parameters<AutomaticSpeechRecognitionPipeline>[1]);
         };
 
@@ -859,12 +862,43 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
           output = await runSegment(transcriber);
         }
 
-        sliceWords[i] = tokenSegmentsFromRecorder(transcriber, recorder).flat();
+        const chunksOf = (out: typeof output) => {
+          const single = Array.isArray(out) ? out[0] : out;
+          // With a vocabulary prompt, the pipeline's decoded text would start with the prompt words,
+          // so rebuild the timestamped chunks from the generated tokens only.
+          return usedPrompt ? chunksFromRecorder(transcriber, recorder) : single?.chunks;
+        };
+        let sliceChunks = chunksOf(output);
+        // Repetition loop ("What? What? What? …"): retry once without the prompt and with a
+        // repetition penalty; keep the retry only if it no longer loops.
+        if (sliceChunks && looksLikeRepetitionLoop(sliceChunks)) {
+          setStage(`transcribing segment ${i + 1} of ${slices.length} (repetition retry)`);
+          const firstRecorder = recorder;
+          const firstUsedPrompt = usedPrompt;
+          const firstOutput = output;
+          const firstChunks = sliceChunks;
+          try {
+            const retry = await runSegment(transcriber, true);
+            const retryChunks = chunksOf(retry);
+            if (retryChunks && !looksLikeRepetitionLoop(retryChunks)) {
+              output = retry;
+              sliceChunks = retryChunks;
+            } else {
+              recorder = firstRecorder;
+              usedPrompt = firstUsedPrompt;
+              output = firstOutput;
+              sliceChunks = firstChunks;
+            }
+          } catch {
+            recorder = firstRecorder;
+            usedPrompt = firstUsedPrompt;
+            output = firstOutput;
+            sliceChunks = firstChunks;
+          }
+        }
 
+        sliceWords[i] = tokenSegmentsFromRecorder(transcriber, recorder).flat();
         const singleOutput = Array.isArray(output) ? output[0] : output;
-        // With a vocabulary prompt, the pipeline's decoded text would start with the prompt words,
-        // so rebuild the timestamped chunks from the generated tokens only.
-        const sliceChunks = usedPrompt ? chunksFromRecorder(transcriber, recorder) : singleOutput?.chunks;
         if (sliceChunks && sliceChunks.length > 0) {
           for (const ch of sliceChunks) {
             const relStart = ch.timestamp?.[0] ?? 0;
@@ -887,7 +921,7 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
         post({
           type: 'partial',
           jobId: req.jobId,
-          partialTranscript: formatWhisperChunks(allChunks),
+          partialTranscript: formatWhisperChunks(collapseRepetitions(allChunks)),
         });
 
         // Yield briefly between segments so Safari GC can reclaim intermediate WASM/JS buffers
@@ -948,7 +982,9 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
       }
 
       const allWords = sliceWords.flat();
-      const utterances = extractWhisperUtterances(allChunks);
+      // Remove leftover repetition loops and text produced over silence
+      const cleanedChunks = dropSilentChunks(collapseRepetitions(allChunks), req.audio, 16000);
+      const utterances = extractWhisperUtterances(cleanedChunks);
       const transcript = utterances.map((u) => `[${u.timestampStr}] ${u.text}`).join('\n');
       let wordConfidence: WordConfidenceMap | undefined;
       try {
