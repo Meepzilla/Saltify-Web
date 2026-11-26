@@ -678,7 +678,7 @@ export function SettingsPage({
                     }
                   >
                     <option value="off">Off (main model only)</option>
-                    {WHISPER_MODELS.filter((m) => m.id !== settings.modelId).map((m) => (
+                    {WHISPER_MODELS.filter((m) => m.id !== settings.modelId && m.kind !== 'phoneme').map((m) => (
                       <option key={m.id} value={m.id}>
                         {m.label} · {m.sizeLabel}
                       </option>

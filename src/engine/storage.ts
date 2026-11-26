@@ -1,5 +1,6 @@
 import {
   DEFAULT_APP_SETTINGS,
+  WHISPER_MODELS,
   type AppSettings,
   type SessionRecord,
 } from '../types/saltify';
@@ -183,9 +184,13 @@ export async function inspectCachedWhisperModels(): Promise<{
         if (isHtmlCacheResponse(resp)) continue;
 
         const url = req.url;
-        if (url.includes('whisper-tiny.en')) modelIds.add('onnx-community/whisper-tiny.en');
-        if (url.includes('whisper-base.en')) modelIds.add('onnx-community/whisper-base.en');
-        if (url.includes('whisper-small.en')) modelIds.add('onnx-community/whisper-small.en');
+        for (const model of WHISPER_MODELS) {
+          const repo = model.id.split('/')[1];
+          // IPA models count as cached once their weights are (vocab.json is fetched first)
+          if (url.includes(repo) && (model.kind !== 'phoneme' || /\.onnx(?:$|\?)/.test(url))) {
+            modelIds.add(model.id);
+          }
+        }
 
         const len = resp?.headers.get('content-length');
         if (len) {
