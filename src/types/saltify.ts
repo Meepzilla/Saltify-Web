@@ -218,6 +218,8 @@ export interface AppSettings {
   disagreementThreshold: number;
   /** Show heard speech sounds under each utterance (when they have been detected). */
   showSpeechSounds: boolean;
+  /** Experimental: speech-sound (phoneme) detection and phonological process analysis. Off by default. */
+  enableSpeechSounds: boolean;
 }
 
 export const DEFAULT_APP_SETTINGS: AppSettings = {
@@ -239,6 +241,7 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   uncertainWordThreshold: 0.6,
   disagreementThreshold: 0.9,
   showSpeechSounds: true,
+  enableSpeechSounds: false,
 };
 
 export interface ToastMessage {

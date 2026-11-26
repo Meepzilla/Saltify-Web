@@ -1873,7 +1873,9 @@ export default function App() {
                   onExpandWaveform={() => setShowWaveformModal(true)}
                   onOpenSpectrogram={openSpectrogramAtPlayhead}
                   onEditVocabulary={() => setShowClientModal(true)}
-                  onDetectSpeechSounds={() => void handleDetectSpeechSounds()}
+                  onDetectSpeechSounds={
+                    settings.enableSpeechSounds ? () => void handleDetectSpeechSounds() : undefined
+                  }
                   hasSpeechSounds={Boolean(activeSession.speechSounds)}
                   vocabularyCount={
                     (activeSession.vocabulary ?? '').split(/[,;\n]+/).filter((w) => w.trim()).length
@@ -1902,14 +1904,16 @@ export default function App() {
                     onInspectLine={activeAudioBlob ? (i) => setSpectrogramLine(i) : undefined}
                     onResolveWord={handleResolveUncertainWord}
                     flagThresholds={flagThresholds}
-                    speechSounds={activeSession.speechSounds ?? null}
+                    speechSounds={settings.enableSpeechSounds ? activeSession.speechSounds ?? null : null}
                     utteranceSpans={activeSession.utteranceSpans}
                     audioDurationSec={activeSession.audioMeta?.duration ?? 0}
-                    showSpeechSounds={settings.showSpeechSounds}
+                    showSpeechSounds={settings.enableSpeechSounds && settings.showSpeechSounds}
                     onToggleShowSpeechSounds={() =>
                       updateSettings({ showSpeechSounds: !settings.showSpeechSounds })
                     }
-                    onDetectSpeechSounds={() => void handleDetectSpeechSounds()}
+                    onDetectSpeechSounds={
+                      settings.enableSpeechSounds ? () => void handleDetectSpeechSounds() : undefined
+                    }
                     onChangeFlagThresholds={(next) =>
                       updateSettings({
                         uncertainWordThreshold: next.uncertainBelow,
@@ -2138,7 +2142,9 @@ export default function App() {
           player={player}
           wordConfidence={activeSession.wordConfidence}
           flagThresholds={flagThresholds}
-          speechSounds={settings.showSpeechSounds ? activeSession.speechSounds ?? null : null}
+          speechSounds={
+            settings.enableSpeechSounds && settings.showSpeechSounds ? activeSession.speechSounds ?? null : null
+          }
           onClose={() => setSpectrogramLine(null)}
         />
       )}

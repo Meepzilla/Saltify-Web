@@ -24,6 +24,27 @@ export const APP_VERSION: string = __APP_VERSION__;
  */
 export const CHANGELOG_RELEASES: readonly ChangelogRelease[] = [
   {
+    version: '1.9.1',
+    date: '2026-11-26',
+    title: 'Fix Repeated-Phrase Transcripts; Speech Sounds Now Experimental',
+    summary:
+      'Stops Whisper repetition loops (e.g. "What?" on every line for 15 seconds) and moves speech-sound detection behind an experimental setting.',
+    changes: [
+      {
+        category: 'fixed',
+        summary: 'Repetition loops in transcripts',
+        detail:
+          'When a segment comes back as the same phrase over and over, it is re-transcribed once without the expected-words prompt and with a repetition penalty. Any remaining runs of 3+ identical utterances are collapsed to one, phrase loops inside a line ("the the the the") are collapsed, and text Whisper produced over near-silence is dropped.',
+      },
+      {
+        category: 'improved',
+        summary: 'Speech sounds & phonological processes are now off by default',
+        detail:
+          'The estimates are not yet reliable on real recordings. Turn them on in Settings → Speech Sounds (Experimental).',
+      },
+    ],
+  },
+  {
     version: '1.9.0',
     date: '2026-11-26',
     title: 'Phonological Process Detection',
