@@ -24,6 +24,27 @@ export const APP_VERSION: string = __APP_VERSION__;
  */
 export const CHANGELOG_RELEASES: readonly ChangelogRelease[] = [
   {
+    version: '1.5.0',
+    date: '2026-11-26',
+    title: 'Uncertain-Word Flags & Spectrogram View',
+    summary:
+      'Highlights the words Whisper was unsure about so you know where to listen again, and adds a spectrogram with formant (F1–F3) and pitch tracks for checking what the child actually said.',
+    changes: [
+      {
+        category: 'added',
+        summary: 'Uncertain words are highlighted in the Transcript',
+        detail:
+          'Whisper\'s confidence is recorded for every word during transcription. Words below 60% get an amber wavy underline (red below 35%); hover or long-press to see the percentage and tap to open that utterance in the spectrogram. Editing a line clears its highlights. Toggle in Transcript ⋯ → Highlight uncertain words.',
+      },
+      {
+        category: 'added',
+        summary: 'Spectrogram with formant and pitch tracks',
+        detail:
+          'Open from Transcript ⋯ → Spectrogram, the audio bar ⋯ menu, or by tapping an uncertain word. Shows a wideband (formants) or narrowband (harmonics) spectrogram up to 6 kHz with F1/F2/F3 dots, an F0 pitch track, a time/frequency readout, play-this-utterance, and ← / → to step through utterances. Formants use LPC with an 8000 Hz ceiling suited to children; values are approximate and never change your transcript.',
+      },
+    ],
+  },
+  {
     version: '1.4.2',
     date: '2026-11-26',
     title: 'More Accurate Grammar Check for are / is / was / were',

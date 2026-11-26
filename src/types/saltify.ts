@@ -102,6 +102,8 @@ export interface SessionRecord {
   grammarCheckPerformed: boolean;
   morphemesApplied: boolean;
   notes: string;
+  /** Words Whisper was unsure about, per transcript line (see engine/wordConfidence). */
+  wordConfidence?: Record<string, Array<{ i: number; w: string; p: number }>>;
 }
 
 export interface UtteranceLine {
@@ -198,6 +200,8 @@ export interface AppSettings {
   colorCodePartsOfSpeech: boolean;
   /** Display utterances in International Phonetic Alphabet (IPA) broad transcription. */
   showIpaTranscription: boolean;
+  /** Underline words Whisper was unsure about in the Transcript box. */
+  highlightUncertainWords: boolean;
 }
 
 export const DEFAULT_APP_SETTINGS: AppSettings = {
@@ -214,6 +218,7 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   defaultSpeakerAliases: { ...DEFAULT_SPEAKER_ALIASES },
   colorCodePartsOfSpeech: false,
   showIpaTranscription: false,
+  highlightUncertainWords: true,
 };
 
 export interface ToastMessage {

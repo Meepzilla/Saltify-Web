@@ -1,5 +1,6 @@
 import {
   AlignLeft,
+  AudioLines,
   List,
   Lock,
   Sparkles,
@@ -13,6 +14,12 @@ import {
   applySpeakerLabelsToLines,
   parseUtteranceLines,
 } from '../engine/transcriptFormat';
+import {
+  countFlaggedWords,
+  flaggedWordsForLine,
+  VERY_LOW_CONFIDENCE_THRESHOLD,
+  type WordConfidenceMap,
+} from '../engine/wordConfidence';
 import type { SpeakerAliases } from '../types/saltify';
 import { OverflowMenu } from './OverflowMenu';
 import { IpaUtteranceText } from './IpaText';
@@ -36,6 +43,12 @@ interface TranscriptionPaneProps {
   onOpenLabelSpeakers: () => void;
   onOpenAliases: () => void;
   onLoadDemoSample: () => void;
+  /** Uncertain words from Whisper, per line (see engine/wordConfidence). */
+  wordConfidence?: WordConfidenceMap | null;
+  highlightUncertainWords?: boolean;
+  onToggleHighlightUncertainWords?: () => void;
+  /** Opens the spectrogram for a line (by line index). */
+  onInspectLine?: (lineIndex: number) => void;
 }
 
 export function TranscriptionPane({
@@ -53,6 +66,10 @@ export function TranscriptionPane({
   onOpenLabelSpeakers,
   onOpenAliases,
   onLoadDemoSample,
+  wordConfidence = null,
+  highlightUncertainWords = true,
+  onToggleHighlightUncertainWords,
+  onInspectLine,
 }: TranscriptionPaneProps) {
   const [locked, setLocked] = useState(true);
   const [viewMode, setViewMode] = useState<'interactive' | 'raw'>('interactive');
@@ -77,6 +94,46 @@ export function TranscriptionPane({
     }
     return active;
   }, [lines, hasAudio, currentTime]);
+
+  const uncertainCount = useMemo(
+    () => countFlaggedWords(nonEmptyLines.map((l) => l.body), wordConfidence),
+    [nonEmptyLines, wordConfidence]
+  );
+  const showUncertain = highlightUncertainWords && uncertainCount > 0;
+
+  /** Wraps an uncertain word: amber underline (or red when very uncertain), tap to inspect. */
+  const decorateFor = (lineIndex: number, body: string) => {
+    const flagged = flaggedWordsForLine(body, wordConfidence);
+    if (flagged.size === 0) return undefined;
+    return (wordIndex: number, node: ReactNode) => {
+      const f = flagged.get(wordIndex);
+      if (!f) return node;
+      const pct = Math.round(f.p * 100);
+      return (
+        <button
+          type="button"
+          className={`uncertain-word ${f.p < VERY_LOW_CONFIDENCE_THRESHOLD ? 'very' : ''}`}
+          title={`Whisper was ${pct}% sure of this word. Tap to listen and see the spectrogram.`}
+          aria-label={`Uncertain word: ${f.w}, ${pct}% confidence. Open spectrogram.`}
+          onClick={() => onInspectLine?.(lineIndex)}
+        >
+          {node}
+        </button>
+      );
+    };
+  };
+
+  const renderPlainWithDecor = (lineIndex: number, body: string) => {
+    const decorate = decorateFor(lineIndex, body);
+    if (!decorate) return body;
+    let wi = -1;
+    return body.split(/(\s+)/).map((piece, idx) => {
+      if (!piece) return null;
+      if (/^\s+$/.test(piece)) return <span key={idx}>{piece}</span>;
+      wi += 1;
+      return <span key={idx}>{decorate(wi, piece)}</span>;
+    });
+  };
 
   const cycleLineSpeaker = (lineIndex: number, currentSlot: 'speaker1' | 'speaker2' | null) => {
     const nextSpeaker =
@@ -168,6 +225,32 @@ export function TranscriptionPane({
                   if (!nextLocked) setViewMode('raw');
                 },
               },
+              ...(onInspectLine
+                ? [
+                    {
+                      key: 'spectrogram',
+                      label: 'Spectrogram',
+                      icon: <AudioLines size={15} />,
+                      disabled: !hasAudio || nonEmptyLines.length === 0,
+                      onSelect: () => {
+                        const target =
+                          activeLineIndex >= 0 ? activeLineIndex : nonEmptyLines[0]?.index ?? 0;
+                        onInspectLine(target);
+                      },
+                    },
+                  ]
+                : []),
+              ...(onToggleHighlightUncertainWords
+                ? [
+                    {
+                      key: 'uncertain',
+                      label: 'Highlight uncertain words',
+                      hint: uncertainCount > 0 ? String(uncertainCount) : undefined,
+                      checked: highlightUncertainWords,
+                      onSelect: onToggleHighlightUncertainWords,
+                    },
+                  ]
+                : []),
               {
                 key: 'aliases',
                 label: 'Speaker names',
@@ -287,7 +370,12 @@ export function TranscriptionPane({
                       colorPartsOfSpeech={colorPartsOfSpeech}
                     />
                   ) : colorPartsOfSpeech ? (
-                    <PosColoredText body={line.body} />
+                    <PosColoredText
+                      body={line.body}
+                      decorateWord={showUncertain ? decorateFor(line.index, line.body) : undefined}
+                    />
+                  ) : showUncertain ? (
+                    renderPlainWithDecor(line.index, line.body)
                   ) : (
                     line.body
                   )}
