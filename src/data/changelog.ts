@@ -24,6 +24,21 @@ export const APP_VERSION: string = __APP_VERSION__;
  */
 export const CHANGELOG_RELEASES: readonly ChangelogRelease[] = [
   {
+    version: '1.10.0',
+    date: '2026-11-26',
+    title: 'IPA Transcription Models',
+    summary:
+      'Two phonetic models can now be chosen for the main transcription. They write the sounds produced in IPA instead of English words.',
+    changes: [
+      {
+        category: 'added',
+        summary: 'wav2vec2 IPA (~242 MB) and HuBERT IPA (~90 MB) models',
+        detail:
+          'Choose them in the model picker. Speech is found automatically and each stretch of speech becomes one utterance line in IPA, with word breaks estimated from pauses. wav2vec2 was the more accurate in testing (≈91% of sounds right on clean speech). HuBERT is smaller and faster. SALT word metrics, Second Opinion and Expected words do not apply to IPA transcripts.',
+      },
+    ],
+  },
+  {
     version: '1.9.1',
     date: '2026-11-26',
     title: 'Fix Repeated-Phrase Transcripts; Speech Sounds Now Experimental',
