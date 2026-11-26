@@ -128,8 +128,38 @@ const OVERREGULARIZED_PLURALS: Record<string, string> = {
 
 const FILLER_WORDS = new Set(['um', 'uh', 'er', 'erm', 'hm', 'hmm']);
 
-const SINGULAR_3RD_SUBJECTS = new Set(['he', 'she', 'it', 'that', 'this', 'everyone', 'somebody', 'nobody']);
-const PLURAL_SUBJECTS = new Set(['they', 'we', 'you', 'these', 'those']);
+/** Forms of BE, by tense. Used for subject–verb agreement checks. */
+const BE_PRESENT = new Set(['am', 'is', 'are']);
+const BE_PAST = new Set(['was', 'were']);
+
+const WH_WORDS = new Set(['what', 'where', 'who', 'why', 'how', 'when', 'which', 'whose']);
+const CLAUSE_LINKERS = new Set([
+  'and', 'but', 'so', 'then', 'because', 'cuz', 'when', 'if', 'or', 'until', 'while', 'after', 'before',
+]);
+const RELATIVE_PRONOUNS = new Set(['that', 'who', 'which']);
+
+/** Plural-only nouns ("My pants is wet" -> are) and irregular plurals the tagger may miss. */
+const ALWAYS_PLURAL_NOUNS = new Set([
+  'pants', 'jeans', 'shorts', 'scissors', 'glasses', 'clothes', 'pajamas', 'pyjamas', 'tights',
+  'people', 'children', 'kids', 'men', 'women', 'feet', 'teeth', 'mice', 'geese', 'police',
+]);
+/** Nouns that end in -s but take singular verbs ("The news is on"). */
+const SINGULAR_S_NOUNS = new Set(['news', 'bus', 'glass', 'class', 'dress', 'grass', 'boss', 'gas', 'math', 'physics', 'mess', 'kiss', 'princess', 'octopus', 'hippopotamus', 'walrus', 'cactus', 'circus']);
+
+const NUMBER_WORDS_PLURAL = new Set([
+  'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'many', 'lots', 'several', 'both', 'few',
+]);
+
+type SubjectPerson = '1sg' | '2' | '3sg' | 'pl';
+
+/** Expected BE form for a subject: present am/is/are, past was/were. */
+function expectedBe(person: SubjectPerson, past: boolean): string {
+  if (past) return person === '1sg' || person === '3sg' ? 'was' : 'were';
+  if (person === '1sg') return 'am';
+  if (person === '3sg') return 'is';
+  return 'are';
+}
+
 const MODAL_OR_AUX = new Set([
   'can', 'could', 'will', 'would', 'shall', 'should', 'may', 'might', 'must',
   'did', 'does', 'do', 'was', 'were', 'is', 'are', 'am', 'has', 'have', 'had',
@@ -341,6 +371,159 @@ export function correctSentence(
     }
   }
 
+  // Per-token POS (one tag per non-maze token, aligned by index) for subject analysis
+  const posAt: string[] = nonMazeTokens.length
+    ? (tagger.tagRawTokens(nonMazeTokens.map((t) => t.core)) as Array<{ pos: string }>).map(
+        (t) => t.pos
+      )
+    : [];
+
+  const isNounPos = (pos: string) => pos.startsWith('NN');
+  const npModifier = (i: number) => {
+    const t = nonMazeTokens[i];
+    const pos = posAt[i] ?? '';
+    return (
+      pos === 'DT' || pos === 'PDT' || pos === 'PRP$' || pos.startsWith('JJ') || pos === 'CD' ||
+      pos === 'POS' || ['my', 'your', 'his', 'her', 'our', 'their', 'its', 'the', 'a', 'an', 'this', 'that', 'these', 'those', 'some', 'all'].includes(t.lower)
+    );
+  };
+
+  /** Grammatical number of a noun token, or null if it is not a noun. */
+  const nounNumber = (i: number): 'sg' | 'pl' | null => {
+    const t = nonMazeTokens[i];
+    if (!t) return null;
+    if (ALWAYS_PLURAL_NOUNS.has(t.lower) || OVERREGULARIZED_PLURALS[t.lower]) return 'pl';
+    const pos = posAt[i] ?? '';
+    if (!isNounPos(pos)) return null;
+    if (SINGULAR_S_NOUNS.has(t.lower)) return 'sg';
+    return pos === 'NNS' || pos === 'NNPS' ? 'pl' : 'sg';
+  };
+
+  /** True when token i starts a clause: sentence start, after a linker, or after clause punctuation. */
+  const isClauseStart = (i: number) => {
+    if (i <= 0) return true;
+    const before = nonMazeTokens[i - 1];
+    return Boolean(before.punct) || CLAUSE_LINKERS.has(before.lower) || WH_WORDS.has(before.lower);
+  };
+
+  /**
+   * True when token k begins a question or clause in inverted order ("Are he…", "Where is they?").
+   * A wh-word only counts when it starts its own clause, so relative "the man who are" is not a question.
+   */
+  const startsInvertedClause = (k: number) => {
+    if (k <= 0) return true;
+    const before = nonMazeTokens[k - 1];
+    if (before.punct || CLAUSE_LINKERS.has(before.lower)) return true;
+    return WH_WORDS.has(before.lower) && isClauseStart(k - 1);
+  };
+
+  const pronounPerson = (lower: string): SubjectPerson | null => {
+    if (lower === 'i') return '1sg';
+    if (lower === 'you') return '2';
+    if (['he', 'she', 'it', 'everyone', 'everybody', 'somebody', 'someone', 'nobody', 'anybody', 'anyone', 'something', 'nothing', 'everything'].includes(lower)) return '3sg';
+    if (['they', 'we', 'these', 'those'].includes(lower)) return 'pl';
+    return null;
+  };
+
+  /**
+   * Finds the start index of the noun phrase ending at `end` (walking back over determiners,
+   * possessives and adjectives). Returns -1 if the phrase is the object of a preposition
+   * ("the boy with the dogs"), since that noun is not the subject.
+   */
+  const nounPhraseStart = (end: number): number => {
+    let i = end;
+    while (i - 1 >= 0 && !nonMazeTokens[i - 1].punct && npModifier(i - 1) && end - (i - 1) <= 4) i -= 1;
+    const before = i > 0 ? posAt[i - 1] ?? '' : '';
+    if (i > 0 && (before === 'IN' || before === 'TO') && !CLAUSE_LINKERS.has(nonMazeTokens[i - 1].lower)) return -1;
+    return i;
+  };
+
+  /**
+   * Person/number of the subject that ends right before token k (declarative order).
+   * Handles pronouns, noun phrases, compound subjects ("Mom and he"), and relative
+   * clauses ("the toys that are"). Returns null when the subject can't be identified.
+   */
+  const subjectBefore = (k: number): SubjectPerson | null => {
+    const p = k - 1;
+    if (p < 0 || nonMazeTokens[p].punct) return null;
+    const prevTok = nonMazeTokens[p];
+
+    // Relative clause: agreement follows the antecedent ("the toys that are", "the dog that barks")
+    if (RELATIVE_PRONOUNS.has(prevTok.lower) && p >= 1 && !nonMazeTokens[p - 1].punct) {
+      const ante = nounNumber(p - 1);
+      if (ante) return ante === 'pl' ? 'pl' : '3sg';
+      const antePronoun = pronounPerson(nonMazeTokens[p - 1].lower);
+      if (antePronoun && prevTok.lower !== 'that') return antePronoun;
+      if (prevTok.lower !== 'that') return null;
+    }
+
+    // Head of the subject: pronoun or noun phrase
+    let head: SubjectPerson | null = null;
+    let start = p;
+    const pron = pronounPerson(prevTok.lower);
+    if (pron) {
+      head = pron;
+    } else if (['this', 'that'].includes(prevTok.lower) && isClauseStart(p)) {
+      head = '3sg'; // demonstrative subject: "That are mine"
+    } else {
+      const num = nounNumber(p);
+      if (!num) return null;
+      start = nounPhraseStart(p);
+      if (start < 0) return null;
+      head = num === 'pl' ? 'pl' : '3sg';
+    }
+
+    // Compound subject: "Mom and he are", "The boy and the girl is" -> plural
+    const andIdx = start - 1;
+    if (andIdx >= 1 && nonMazeTokens[andIdx].lower === 'and' && !nonMazeTokens[andIdx - 1].punct) {
+      const leftEnd = andIdx - 1;
+      const leftIsNominal =
+        pronounPerson(nonMazeTokens[leftEnd].lower) !== null ||
+        ['me', 'him', 'her', 'them', 'us'].includes(nonMazeTokens[leftEnd].lower) ||
+        nounNumber(leftEnd) !== null;
+      if (leftIsNominal) {
+        const leftStart = pronounPerson(nonMazeTokens[leftEnd].lower) ? leftEnd : nounPhraseStart(leftEnd);
+        if (leftStart >= 0 && isClauseStart(leftStart)) return 'pl';
+      }
+      // "I went home and he are sad": 'and' joins clauses, keep the head's own number
+    }
+
+    // Noun subjects must start a clause (avoids objects like "I like dogs is…")
+    if (!pron && !isClauseStart(start) && !RELATIVE_PRONOUNS.has(nonMazeTokens[start - 1]?.lower ?? '')) {
+      const beforePos = posAt[start - 1] ?? '';
+      if (!beforePos.startsWith('VB')) return null;
+    }
+    return head;
+  };
+
+  /** Person/number of a subject that follows token k (questions: "Are he…", "Where is they"). */
+  const subjectAfter = (k: number): SubjectPerson | null => {
+    let i = k + 1;
+    const t = nonMazeTokens[i];
+    if (!t) return null;
+    const pron = pronounPerson(t.lower);
+    if (pron) return pron;
+    // Walk over determiners/adjectives to the head noun
+    while (i < nonMazeTokens.length && npModifier(i) && !nonMazeTokens[i].punct && i - k <= 4) i += 1;
+    const num = nounNumber(i);
+    return num ? (num === 'pl' ? 'pl' : '3sg') : null;
+  };
+
+  /** Number of the noun phrase after existential "there is/are" ("There is two dogs"). */
+  const existentialNumber = (k: number): SubjectPerson | null => {
+    const first = nonMazeTokens[k + 1];
+    if (!first) return null;
+    if (['a', 'an', 'one', 'another', 'this', 'that'].includes(first.lower)) return '3sg';
+    if (NUMBER_WORDS_PLURAL.has(first.lower) || ['these', 'those'].includes(first.lower)) return 'pl';
+    if (/^\d+$/.test(first.core)) return first.core === '1' ? '3sg' : 'pl';
+    for (let i = k + 1; i < Math.min(nonMazeTokens.length, k + 5); i++) {
+      const num = nounNumber(i);
+      if (num) return num === 'pl' ? 'pl' : '3sg';
+      if (!npModifier(i)) break;
+    }
+    return null;
+  };
+
   // Track inserted omitted words as prefix strings on out[outIndex]
   const insertionsBefore = new Map<number, string>();
 
@@ -399,18 +582,69 @@ export function correctSentence(
       }
     }
 
-    // Rule D: Subject-verb agreement with "to be" / "have" / "do"
+    // Rule D: Subject–verb agreement with BE (am/is/are/was/were), using the real subject:
+    // pronouns, noun phrases, compounds ("Mom and he are"), relative clauses ("toys that are"),
+    // questions ("Are he coming?" / "Where is they?") and existential "there is/are".
+    if (BE_PRESENT.has(curr.lower) || BE_PAST.has(curr.lower)) {
+      const past = BE_PAST.has(curr.lower);
+      let person: SubjectPerson | null = null;
+      if (prev && !prev.punct && prev.lower === 'there') {
+        person = existentialNumber(k);
+      } else if (startsInvertedClause(k)) {
+        // Inverted order: "Are he coming?", "Where is they?", "Is there two dogs?"
+        person = next?.lower === 'there' ? existentialNumber(k + 1) : subjectAfter(k);
+      } else {
+        person = subjectBefore(k);
+      }
+      // Subjunctive "if I were", "I wish he were" is correct
+      const subjunctive =
+        curr.lower === 'were' &&
+        nonMazeTokens.slice(Math.max(0, k - 4), k).some((t) => t.lower === 'if' || t.lower === 'wish');
+      if (person && !subjunctive) {
+        const target = expectedBe(person, past);
+        if (target !== curr.lower) {
+          out[curr.outIndex] = `${curr.core}[EW:${matchCase(curr.core, target)}]${curr.punct}`;
+        }
+      }
+      continue;
+    }
+
+    // Rule D1: Inverted DO/HAVE questions ("Does they like it?" -> do, "Do he want it?" -> does)
+    if (['do', 'does', 'have', 'has'].includes(curr.lower) && next && startsInvertedClause(k)) {
+      // Only real questions: pronoun subject followed by a verb ("Does they like…", "Have he eaten…").
+      // Imperatives like "Do it!" or "Have a cookie" are left alone.
+      const afterSubject = nonMazeTokens[k + 2];
+      const afterPos = posAt[k + 2] ?? '';
+      const verbFollows =
+        afterSubject !== undefined &&
+        (afterPos.startsWith('VB') || COMMON_BASE_VERBS.has(afterSubject.lower));
+      const person = pronounPerson(next.lower) && verbFollows ? subjectAfter(k) : null;
+      if (person) {
+        const isDo = curr.lower === 'do' || curr.lower === 'does';
+        const target =
+          person === '3sg' ? (isDo ? 'does' : 'has') : isDo ? 'do' : 'have';
+        if (target !== curr.lower) {
+          out[curr.outIndex] = `${curr.core}[EW:${matchCase(curr.core, target)}]${curr.punct}`;
+        }
+        continue;
+      }
+    }
+
+    // Rule D2: Agreement with HAVE / DO, omitted auxiliaries and omitted 3rd-person -s
     if (prev && !prev.punct) {
-      // Singular 3rd-person subject: He/She/It
-      if (SINGULAR_3RD_SUBJECTS.has(prev.lower)) {
-        if (curr.lower === 'are') {
-          out[curr.outIndex] = `${curr.core}[EW:${matchCase(curr.core, 'is')}]${curr.punct}`;
-          continue;
-        }
-        if (curr.lower === 'were') {
-          out[curr.outIndex] = `${curr.core}[EW:${matchCase(curr.core, 'was')}]${curr.punct}`;
-          continue;
-        }
+      const subject = subjectBefore(k);
+      const prevIsSubjectPronoun = pronounPerson(prev.lower) !== null;
+      // "He running" -> "He *is running" only for a pronoun that starts its clause and isn't
+      // already preceded by an auxiliary ("What are you doing?" is fine)
+      const canInsertAux =
+        prevIsSubjectPronoun &&
+        isClauseStart(k - 1) &&
+        !(prev2 && MODAL_OR_AUX.has(prev2.lower)) &&
+        curr.lower.endsWith('ing') &&
+        curr.lower.length > 4 &&
+        !['thing', 'something', 'nothing', 'everything', 'morning', 'evening', 'king', 'ring', 'wing', 'string', 'spring', 'during'].includes(curr.lower);
+
+      if (subject === '3sg') {
         if (curr.lower === 'have') {
           out[curr.outIndex] = `${curr.core}[EW:${matchCase(curr.core, 'has')}]${curr.punct}`;
           continue;
@@ -424,12 +658,7 @@ export function correctSentence(
           out[curr.outIndex] = `${curr.core}[EW:${matchCase(curr.core, 'does')}]${curr.punct}`;
           continue;
         }
-        // Omitted auxiliary before progressive participle: "He running" -> "He *is running"
-        if (
-          curr.lower.endsWith('ing') &&
-          curr.lower.length > 4 &&
-          !['thing', 'something', 'nothing', 'everything', 'morning', 'evening', 'king', 'ring', 'wing', 'string', 'spring'].includes(curr.lower)
-        ) {
+        if (canInsertAux) {
           insertionsBefore.set(curr.outIndex, '*is');
           continue;
         }
@@ -444,40 +673,18 @@ export function correctSentence(
         }
       }
 
-      // First-person singular subject: I
-      if (prev.lower === 'i') {
-        if (curr.lower === 'is' || curr.lower === 'are') {
-          out[curr.outIndex] = `${curr.core}[EW:am]${curr.punct}`;
-          continue;
-        }
-        if (curr.lower === 'were') {
-          out[curr.outIndex] = `${curr.core}[EW:was]${curr.punct}`;
-          continue;
-        }
+      if (subject === '1sg') {
         if (curr.lower === 'has') {
           out[curr.outIndex] = `${curr.core}[EW:have]${curr.punct}`;
           continue;
         }
-        if (
-          curr.lower.endsWith('ing') &&
-          curr.lower.length > 4 &&
-          !['thing', 'something', 'nothing', 'everything', 'morning', 'evening'].includes(curr.lower)
-        ) {
+        if (canInsertAux) {
           insertionsBefore.set(curr.outIndex, '*am');
           continue;
         }
       }
 
-      // Plural subjects: They/We/You
-      if (PLURAL_SUBJECTS.has(prev.lower)) {
-        if (curr.lower === 'is') {
-          out[curr.outIndex] = `${curr.core}[EW:are]${curr.punct}`;
-          continue;
-        }
-        if (curr.lower === 'was') {
-          out[curr.outIndex] = `${curr.core}[EW:were]${curr.punct}`;
-          continue;
-        }
+      if (subject === 'pl' || subject === '2') {
         if (curr.lower === 'has') {
           out[curr.outIndex] = `${curr.core}[EW:have]${curr.punct}`;
           continue;
@@ -490,27 +697,10 @@ export function correctSentence(
           out[curr.outIndex] = `${curr.core}[EW:don't]${curr.punct}`;
           continue;
         }
-        if (
-          curr.lower.endsWith('ing') &&
-          curr.lower.length > 4 &&
-          !['thing', 'something', 'nothing', 'everything', 'morning', 'evening'].includes(curr.lower)
-        ) {
+        if (canInsertAux) {
           insertionsBefore.set(curr.outIndex, '*are');
           continue;
         }
-      }
-
-      // Singular noun subject + base verb: "The dog walk fast." -> "The dog walk/*3s fast."
-      if (
-        prev2 &&
-        ['the', 'a', 'an', 'my', 'his', 'her', 'this', 'that'].includes(prev2.lower) &&
-        !prev.lower.endsWith('s') &&
-        COMMON_BASE_VERBS.has(curr.lower) &&
-        !MODAL_OR_AUX.has(curr.lower) &&
-        posByLower.get(prev.lower) === 'NN'
-      ) {
-        out[curr.outIndex] = `${curr.core}/*3s${curr.punct}`;
-        continue;
       }
 
       // Past tense after did/didn't ("He didn't went" -> "He didn't went[EW:go]")

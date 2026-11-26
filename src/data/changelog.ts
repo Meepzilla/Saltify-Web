@@ -24,6 +24,33 @@ export const APP_VERSION: string = __APP_VERSION__;
  */
 export const CHANGELOG_RELEASES: readonly ChangelogRelease[] = [
   {
+    version: '1.4.2',
+    date: '2026-11-26',
+    title: 'More Accurate Grammar Check for are / is / was / were',
+    summary:
+      'Grammar Check now finds the real subject before checking verb agreement, so it stops flagging correct sentences and catches errors it used to miss.',
+    changes: [
+      {
+        category: 'fixed',
+        summary: 'Correct "are" no longer flagged',
+        detail:
+          'Relative clauses ("the toys that are broken"), compound subjects ("He and she are playing") and questions ("What are you doing?") are no longer coded as errors or given an extra *are.',
+      },
+      {
+        category: 'improved',
+        summary: 'Catches agreement errors with nouns, questions and "there"',
+        detail:
+          'Codes "The dog are", "The dogs is", "My mom and dad is", "Are he coming?", "Where is they?", "There is two dogs", "Does they like it?" and "The cookies was", including plural-only nouns like pants and irregular plurals like children and feet.',
+      },
+      {
+        category: 'fixed',
+        summary: 'Fewer false /*3s and omitted-auxiliary codes',
+        detail:
+          '"He and she walk" and "the dogs that walk" no longer get /*3s, and *is / *am / *are is only inserted for a pronoun that starts its clause ("He running"), not "I saw him running". Subjunctive "if I were" is left alone, and imperatives like "Do it!" are not treated as questions.',
+      },
+    ],
+  },
+  {
     version: '1.4.1',
     date: '2026-11-26',
     title: 'Redesigned, Less Cluttered Workspace',
