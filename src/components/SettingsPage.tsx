@@ -860,6 +860,61 @@ export function SettingsPage({
                 </div>
               </div>
 
+              {/* International Phonetic Alphabet (IPA) Broad Transcription */}
+              <div className="settings-card">
+                <div className="settings-card-header">
+                  <h3 className="settings-card-title">
+                    International Phonetic Alphabet (IPA)
+                  </h3>
+                  <span className="pane-count-badge">Broad Phonemic</span>
+                </div>
+                <p className="settings-card-desc">
+                  Converts utterances into General American English broad IPA transcription
+                  (<code>/…/</code>) on this device using standard IPA symbols (
+                  <code>ɑ æ ʌ ə ɛ ɪ ɔ ʊ ɝ ɚ θ ð ʃ ʒ ŋ ɹ ɡ ˈ ˌ</code>) and syllable stress.
+                  Also toggleable directly from the Transcription and SALT Convention boxes.
+                </p>
+
+                <div className="settings-row-list">
+                  <label className="settings-toggle-row" htmlFor="setting-ipa-transcription">
+                    <div className="settings-row-info">
+                      <div className="settings-row-title">
+                        Convert utterances to IPA broad transcription (/…/)
+                      </div>
+                      <div className="settings-row-desc">
+                        Non-destructive: your original transcript text, Grammar Check, and
+                        SALT metrics stay unchanged. Hover or tap any IPA word to see the
+                        original English spelling, or enable IPA in Export to copy/save.
+                      </div>
+                    </div>
+                    <input
+                      id="setting-ipa-transcription"
+                      type="checkbox"
+                      className="settings-toggle-input"
+                      checked={settings.showIpaTranscription}
+                      onChange={(e) =>
+                        onUpdateSettings({ showIpaTranscription: e.target.checked })
+                      }
+                    />
+                  </label>
+                </div>
+
+                <div className="ipa-preview-strip" aria-label="IPA broad transcription examples">
+                  <div className="ipa-preview-row">
+                    <span className="ipa-preview-source">The little boy went home.</span>
+                    <span className="ipa-utterance" lang="en-fonipa">
+                      /ðə ˈlɪtəl bɔɪ wɛnt hoʊm/
+                    </span>
+                  </div>
+                  <div className="ipa-preview-row">
+                    <span className="ipa-preview-source">He walked and laughed.</span>
+                    <span className="ipa-utterance" lang="en-fonipa">
+                      /hi wɔkt ænd læft/
+                    </span>
+                  </div>
+                </div>
+              </div>
+
               {/* Default Speaker Aliases */}
               <div className="settings-card">
                 <div className="settings-card-header">

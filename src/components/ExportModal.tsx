@@ -9,7 +9,7 @@ import {
   Printer,
   X,
 } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   buildExportText,
   downloadSessionAudio,
@@ -19,6 +19,7 @@ import {
   exportSessionToTxt,
   printSessionTranscript,
 } from '../engine/exporter';
+import { ensureIpaDictionary } from '../engine/ipaTranscription';
 import type { SessionRecord } from '../types/saltify';
 
 interface ExportModalProps {
@@ -27,6 +28,7 @@ interface ExportModalProps {
   audioBlob: Blob | null;
   includeSaltHeaders: boolean;
   stripTimestamps: boolean;
+  defaultConvertToIpa?: boolean;
   onUpdateExportPrefs: (prefs: {
     includeSaltHeaders: boolean;
     stripTimestamps: boolean;
@@ -41,6 +43,7 @@ export function ExportModal({
   audioBlob,
   includeSaltHeaders,
   stripTimestamps,
+  defaultConvertToIpa = false,
   onUpdateExportPrefs,
   onNotify,
   onClose,
@@ -48,8 +51,16 @@ export function ExportModal({
   const hasConventions = session.conventionText.trim().length > 0;
   const hasTranscript = session.transcriptionText.trim().length > 0;
   const [useConventionText, setUseConventionText] = useState(true);
+  const [convertToIpa, setConvertToIpa] = useState(defaultConvertToIpa);
   const [copied, setCopied] = useState(false);
   const [busyDocx, setBusyDocx] = useState(false);
+
+  // Preload the IPA dictionary chunk in the background when IPA export is active
+  useEffect(() => {
+    if (open && convertToIpa) {
+      void ensureIpaDictionary();
+    }
+  }, [open, convertToIpa]);
 
   if (!open) return null;
 
@@ -60,11 +71,19 @@ export function ExportModal({
     useConventionText: effectiveUseConvention,
     stripTimestamps,
     includeSaltHeaders,
+    convertToIpa,
+  };
+
+  const prepareIpa = async () => {
+    if (convertToIpa) {
+      await ensureIpaDictionary();
+    }
   };
 
   const handleDocx = async () => {
     setBusyDocx(true);
     try {
+      await prepareIpa();
       const file = await exportSessionToDocx(session, exportOpts);
       onNotify('Word document exported', `Saved ${file} locally.`);
     } finally {
@@ -72,22 +91,30 @@ export function ExportModal({
     }
   };
 
-  const handleSlt = () => {
+  const handleSlt = async () => {
+    await prepareIpa();
     const file = exportSessionToSaltSlt(session, exportOpts);
     onNotify('SALT (.slt) file exported', `Ready to import ${file} into SALT Software.`);
   };
 
-  const handleTxt = () => {
+  const handleTxt = async () => {
+    await prepareIpa();
     const file = exportSessionToTxt(session, exportOpts);
     onNotify('Plain text exported', `Saved ${file} locally.`);
   };
 
   const handleCopy = async () => {
+    await prepareIpa();
     const text = buildExportText(session, exportOpts);
     await navigator.clipboard.writeText(text);
     setCopied(true);
     setTimeout(() => setCopied(false), 1800);
-    onNotify('Copied to clipboard');
+    onNotify(convertToIpa ? 'Copied IPA text to clipboard' : 'Copied to clipboard');
+  };
+
+  const handlePrint = async () => {
+    await prepareIpa();
+    printSessionTranscript(session, exportOpts);
   };
 
   const handleAudio = () => {
@@ -178,6 +205,20 @@ export function ExportModal({
               />
               <span>Strip [M:SS] timestamps (recommended for SALT Software &amp; Word)</span>
             </label>
+
+            <label className="checkbox-row">
+              <input
+                id="export-convert-ipa-checkbox"
+                type="checkbox"
+                checked={convertToIpa}
+                onChange={(e) => {
+                  const next = e.target.checked;
+                  setConvertToIpa(next);
+                  if (next) void ensureIpaDictionary();
+                }}
+              />
+              <span>Convert utterances to IPA broad transcription (/…/)</span>
+            </label>
           </div>
 
           <div
@@ -203,7 +244,7 @@ export function ExportModal({
               type="button"
               className="btn btn-primary"
               disabled={!hasAnyText}
-              onClick={handleSlt}
+              onClick={() => void handleSlt()}
             >
               <FileCode2 size={16} />
               <span>Export SALT (.slt)</span>
@@ -214,7 +255,7 @@ export function ExportModal({
               type="button"
               className="btn btn-secondary"
               disabled={!hasAnyText}
-              onClick={handleTxt}
+              onClick={() => void handleTxt()}
             >
               <Download size={16} />
               <span>Plain Text (.txt)</span>
@@ -236,7 +277,7 @@ export function ExportModal({
               type="button"
               className="btn btn-secondary"
               disabled={!hasAnyText}
-              onClick={() => printSessionTranscript(session, exportOpts)}
+              onClick={() => void handlePrint()}
             >
               <Printer size={16} />
               <span>Print Transcript</span>

@@ -6,7 +6,11 @@ import {
 } from '@huggingface/transformers';
 import { sliceAudioIntoPauseAwareChunks } from '../engine/audioProcessing';
 import { purgeHtmlModelCacheEntries } from '../engine/modelCache';
-import { formatWhisperChunks } from '../engine/transcriptFormat';
+import {
+  extractWhisperUtterances,
+  formatWhisperChunks,
+  type FormattedWhisperUtterance,
+} from '../engine/transcriptFormat';
 import type { ComputeDevice, ModelSource, WhisperModelId } from '../types/saltify';
 
 // IMPORTANT: do not import speakerDiarizer / childGrammarEngine (or anything that pulls in
@@ -72,6 +76,7 @@ export type WorkerResponse =
       type: 'done';
       jobId: string;
       transcript: string;
+      utterances?: FormattedWhisperUtterance[];
       backendUsed: 'webgpu' | 'wasm';
     }
   | {
@@ -669,6 +674,7 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
           type: 'done',
           jobId: req.jobId,
           transcript: '',
+          utterances: [],
           backendUsed,
         });
         return;
@@ -758,10 +764,12 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
         }
       }
 
+      const utterances = extractWhisperUtterances(allChunks);
       post({
         type: 'done',
         jobId: req.jobId,
-        transcript: formatWhisperChunks(allChunks),
+        transcript: utterances.map((u) => `[${u.timestampStr}] ${u.text}`).join('\n'),
+        utterances,
         backendUsed,
       });
     }

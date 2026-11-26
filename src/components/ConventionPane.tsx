@@ -18,6 +18,7 @@ import { parseUtteranceClauseCoding } from '../engine/clauseAnalysis';
 import { hasPosCodes } from '../engine/posCodes';
 import { parseUtteranceLines } from '../engine/transcriptFormat';
 import type { SpeakerAliases } from '../types/saltify';
+import { IpaUtteranceText } from './IpaText';
 import { PosColoredText, PosLegend } from './PartsOfSpeech';
 
 interface ConventionPaneProps {
@@ -45,6 +46,9 @@ interface ConventionPaneProps {
   onTogglePosCodes: () => void;
   /** Color each word by part of speech (Settings → SALT & Export). */
   colorPartsOfSpeech?: boolean;
+  /** Display utterances in International Phonetic Alphabet (IPA) broad transcription. */
+  showIpaTranscription?: boolean;
+  onToggleIpaTranscription?: () => void;
   onOpenClauseCoder: () => void;
   onQuickCycleLineSi: (lineIndex: number) => void;
   onSeekToTime?: (seconds: number) => void;
@@ -156,6 +160,8 @@ export function ConventionPane({
   onAddMorphemes,
   onTogglePosCodes,
   colorPartsOfSpeech = false,
+  showIpaTranscription = false,
+  onToggleIpaTranscription,
   onOpenClauseCoder,
   onQuickCycleLineSi,
   onSeekToTime,
@@ -330,6 +336,28 @@ export function ConventionPane({
             <Palette size={14} />
             <span>{hasPosCodes(text) ? 'Remove POS Codes' : 'POS Codes'}</span>
           </button>
+
+          {onToggleIpaTranscription && (
+            <button
+              id="convention-ipa-toggle-btn"
+              type="button"
+              role="switch"
+              aria-checked={showIpaTranscription}
+              className={`btn btn-sm ${showIpaTranscription ? 'btn-primary' : 'btn-secondary'}`}
+              disabled={grammarActive || disabled}
+              onClick={onToggleIpaTranscription}
+              title={
+                showIpaTranscription
+                  ? 'Switch back to standard English spelling'
+                  : 'Convert SALT utterances to International Phonetic Alphabet (IPA) broad transcription'
+              }
+            >
+              <span className="ipa-badge-glyph" aria-hidden="true">
+                /ə/
+              </span>
+              <span>{showIpaTranscription ? 'IPA: On' : 'IPA'}</span>
+            </button>
+          )}
         </div>
 
         <label
@@ -403,7 +431,14 @@ export function ConventionPane({
                   )}
 
                   <span className="utterance-text">
-                    {colorPartsOfSpeech ? (
+                    {showIpaTranscription ? (
+                      <IpaUtteranceText
+                        body={line.body}
+                        preserveSaltCodes
+                        colorPartsOfSpeech={colorPartsOfSpeech}
+                        renderSaltToken={renderSaltTokens}
+                      />
+                    ) : colorPartsOfSpeech ? (
                       <PosColoredText body={line.body} renderToken={renderSaltTokens} />
                     ) : (
                       renderSaltTokens(line.body)

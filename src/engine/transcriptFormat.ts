@@ -119,18 +119,31 @@ export function splitIntoUtterances(text: string): string[] {
   return sentences;
 }
 
-/**
- * Formats Whisper segments into Saltify's standard `[M:SS] utterance` line format,
- * matching diarizationAndTranscription.formatTranscriptionWithTimestamps().
- * Splits multi-sentence segments into utterances and codes fillers/repetitions as SALT mazes.
- */
-export function formatWhisperChunks(
-  chunks: Array<{ timestamp: [number, number | null]; text: string }>
-): string {
-  const lines: string[] = [];
+export interface FormattedWhisperUtterance {
+  startSec: number;
+  endSec: number;
+  timestampStr: string;
+  text: string;
+}
 
-  for (const chunk of chunks) {
-    const startSec = chunk.timestamp?.[0] ?? 0;
+/**
+ * Extracts formatted SALT utterances from Whisper chunks while preserving exact
+ * sub-second start/end boundaries (proportionally distributing multi-sentence
+ * chunks across [startSec, endSec]) for accurate on-device acoustic diarization.
+ */
+export function extractWhisperUtterances(
+  chunks: Array<{ timestamp: [number, number | null]; text: string }>
+): FormattedWhisperUtterance[] {
+  const utterances: FormattedWhisperUtterance[] = [];
+
+  for (let ci = 0; ci < chunks.length; ci++) {
+    const chunk = chunks[ci];
+    const startSec = Math.max(0, chunk.timestamp?.[0] ?? 0);
+    const nextChunkStart =
+      ci + 1 < chunks.length ? (chunks[ci + 1].timestamp?.[0] ?? null) : null;
+    const rawEnd = chunk.timestamp?.[1] ?? nextChunkStart ?? startSec + 3.0;
+    const chunkEnd = Math.max(startSec + 0.4, rawEnd);
+
     const cleaned = chunk.text
       .replace(/\.\.\./g, '')
       .replace(/`/g, "'")
@@ -140,6 +153,7 @@ export function formatWhisperChunks(
     if (!cleaned) continue;
 
     const ts = formatTimestamp(startSec);
+    const sentences: string[] = [];
     for (const rawSentence of splitIntoUtterances(cleaned)) {
       // SALT: periods are not legal word characters, so "Mr." -> "Mr"
       const sentence = rawSentence.replace(
@@ -150,11 +164,45 @@ export function formatWhisperChunks(
       const coded = applyAutoMazes(sentence.trim());
       // Skip utterances that are only fillers, e.g. "(Um.)" — not a countable utterance
       if (!coded || /^\([^)]*\)[.!?]*$/.test(coded)) continue;
-      lines.push(`[${ts}] ${coded}`);
+      sentences.push(coded);
+    }
+
+    if (sentences.length === 0) continue;
+
+    // Proportionally split the chunk span across its sentences by character count
+    // so multi-sentence chunks do not collide on the exact same audio slice.
+    const weights = sentences.map((s) => Math.max(4, s.replace(/\s+/g, '').length));
+    const totalWeight = weights.reduce((a, b) => a + b, 0);
+    const span = chunkEnd - startSec;
+    let cursor = startSec;
+
+    for (let si = 0; si < sentences.length; si++) {
+      const subDur = span * (weights[si] / totalWeight);
+      const subEnd = si === sentences.length - 1 ? chunkEnd : cursor + subDur;
+      utterances.push({
+        startSec: cursor,
+        endSec: Math.max(cursor + 0.25, subEnd),
+        timestampStr: ts,
+        text: sentences[si],
+      });
+      cursor = subEnd;
     }
   }
 
-  return lines.join('\n');
+  return utterances;
+}
+
+/**
+ * Formats Whisper segments into Saltify's standard `[M:SS] utterance` line format,
+ * matching diarizationAndTranscription.formatTranscriptionWithTimestamps().
+ * Splits multi-sentence segments into utterances and codes fillers/repetitions as SALT mazes.
+ */
+export function formatWhisperChunks(
+  chunks: Array<{ timestamp: [number, number | null]; text: string }>
+): string {
+  return extractWhisperUtterances(chunks)
+    .map((u) => `[${u.timestampStr}] ${u.text}`)
+    .join('\n');
 }
 
 /**

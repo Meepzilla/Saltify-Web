@@ -1,5 +1,6 @@
 import { Document, HeadingLevel, Packer, Paragraph, TextRun } from 'docx';
 import type { SessionRecord } from '../types/saltify';
+import { convertTranscriptToIpa } from './ipaTranscription';
 import {
   buildReadableClientHeader,
   buildSaltHeader,
@@ -34,20 +35,36 @@ export interface ExportTextOptions {
   useConventionText: boolean;
   stripTimestamps: boolean;
   includeSaltHeaders: boolean;
+  convertToIpa?: boolean;
+}
+
+function resolveExportBody(
+  session: SessionRecord,
+  options: ExportTextOptions
+): string {
+  const usingConvention = Boolean(
+    options.useConventionText && session.conventionText.trim()
+  );
+  const sourceText = usingConvention
+    ? session.conventionText
+    : session.transcriptionText;
+
+  const converted = options.convertToIpa
+    ? convertTranscriptToIpa(sourceText, session.speakerAliases, {
+        preserveSaltCodes: usingConvention,
+      })
+    : sourceText;
+
+  return options.stripTimestamps
+    ? stripTimestamps(converted)
+    : converted.trim();
 }
 
 export function buildExportText(
   session: SessionRecord,
   options: ExportTextOptions
 ): string {
-  const sourceText =
-    options.useConventionText && session.conventionText.trim()
-      ? session.conventionText
-      : session.transcriptionText;
-
-  const body = options.stripTimestamps
-    ? stripTimestamps(sourceText)
-    : sourceText.trim();
+  const body = resolveExportBody(session, options);
 
   if (!options.includeSaltHeaders) {
     return body;
@@ -65,14 +82,10 @@ export async function exportSessionToDocx(
   session: SessionRecord,
   options: ExportTextOptions
 ): Promise<string> {
-  const filename = `${getDefaultExportBaseName(session)}.docx`;
-  const sourceText =
-    options.useConventionText && session.conventionText.trim()
-      ? session.conventionText
-      : session.transcriptionText;
-  const cleanBody = options.stripTimestamps
-    ? stripTimestamps(sourceText)
-    : sourceText.trim();
+  const suffix = options.convertToIpa ? '_IPA' : '';
+  const filename = `${getDefaultExportBaseName(session)}${suffix}.docx`;
+  const cleanBody = resolveExportBody(session, options);
+  const bodyFont = options.convertToIpa ? 'Segoe UI' : 'Calibri';
 
   const paragraphs: Paragraph[] = [
     new Paragraph({
@@ -93,7 +106,7 @@ export async function exportSessionToDocx(
                 text: line,
                 size: 20,
                 color: '44546A',
-                font: 'Calibri',
+                font: bodyFont,
               }),
             ],
             spacing: { after: 60 },
@@ -111,7 +124,7 @@ export async function exportSessionToDocx(
           new TextRun({
             text: line,
             size: 22,
-            font: 'Calibri',
+            font: bodyFont,
           }),
         ],
         spacing: { after: 100 },
@@ -137,7 +150,8 @@ export function exportSessionToSaltSlt(
   session: SessionRecord,
   options: ExportTextOptions
 ): string {
-  const filename = `${getDefaultExportBaseName(session)}.slt`;
+  const suffix = options.convertToIpa ? '_IPA' : '';
+  const filename = `${getDefaultExportBaseName(session)}${suffix}.slt`;
   const content = buildExportText(session, {
     ...options,
     includeSaltHeaders: true,
@@ -155,7 +169,8 @@ export function exportSessionToTxt(
   session: SessionRecord,
   options: ExportTextOptions
 ): string {
-  const filename = `${getDefaultExportBaseName(session)}.txt`;
+  const suffix = options.convertToIpa ? '_IPA' : '';
+  const filename = `${getDefaultExportBaseName(session)}${suffix}.txt`;
   const content = buildExportText(session, options);
   const blob = new Blob([content + '\n'], { type: 'text/plain;charset=utf-8' });
   triggerDownload(blob, filename);
@@ -221,6 +236,11 @@ export function printSessionTranscript(
     return;
   }
 
+  const preFont = options.convertToIpa
+    ? '"Segoe UI", "SF Pro Text", -apple-system, BlinkMacSystemFont, "Noto Sans", "DejaVu Sans", "Lucida Grande", "Arial Unicode MS", sans-serif'
+    : '"IBM Plex Mono", ui-monospace, monospace';
+  const preLangAttr = options.convertToIpa ? ' lang="en-fonipa"' : '';
+
   printWin.document.write(`<!doctype html>
 <html>
 <head>
@@ -229,12 +249,12 @@ export function printSessionTranscript(
   <style>
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color: #111827; padding: 32px; line-height: 1.6; max-width: 820px; margin: 0 auto; }
     h1 { font-size: 20px; margin-bottom: 16px; border-bottom: 1px solid #d1d5db; padding-bottom: 8px; }
-    pre { white-space: pre-wrap; word-wrap: break-word; font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 13px; }
+    pre { white-space: pre-wrap; word-wrap: break-word; font-family: ${preFont}; font-size: ${options.convertToIpa ? '14px' : '13px'}; line-height: 1.65; }
   </style>
 </head>
 <body>
   <h1>${title}</h1>
-  <pre>${escaped}</pre>
+  <pre${preLangAttr}>${escaped}</pre>
 </body>
 </html>`);
   printWin.document.close();

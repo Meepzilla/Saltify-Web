@@ -196,6 +196,8 @@ export interface AppSettings {
   defaultSpeakerAliases: SpeakerAliases;
   /** Color each word in utterance lines by part of speech (display only). */
   colorCodePartsOfSpeech: boolean;
+  /** Display utterances in International Phonetic Alphabet (IPA) broad transcription. */
+  showIpaTranscription: boolean;
 }
 
 export const DEFAULT_APP_SETTINGS: AppSettings = {
@@ -211,6 +213,7 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   stripTimestampsOnExport: true,
   defaultSpeakerAliases: { ...DEFAULT_SPEAKER_ALIASES },
   colorCodePartsOfSpeech: false,
+  showIpaTranscription: false,
 };
 
 export interface ToastMessage {

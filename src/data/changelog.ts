@@ -24,6 +24,45 @@ export const APP_VERSION: string = __APP_VERSION__;
  */
 export const CHANGELOG_RELEASES: readonly ChangelogRelease[] = [
   {
+    version: '1.3.6',
+    date: '2026-11-25',
+    title: 'IPA Broad Transcription & Reliable Monologue Auto-Labeling',
+    summary:
+      'Adds a non-destructive switch for General American English IPA broad transcription (/…/) with true IPA Unicode characters and export support, fixes false 2-speaker splits on monologues, and adds Auto / 1 Speaker / 2 Speakers modes to Label Speakers.',
+    changes: [
+      {
+        category: 'added',
+        summary: 'IPA broad transcription switch (/…/) with authentic IPA symbols',
+        detail:
+          'Toggle General American English broad phonemic IPA transcription directly from the Transcription Box, SALT Convention Box, Settings → SALT & Export, or Export & Print (Word, SALT .slt, plain text, clipboard, and print). Uses the 135k-word CMU Pronouncing Dictionary offline with true IPA Unicode characters (ɑ æ ʌ ə ɛ ɪ ɔ ʊ ɝ ɚ θ ð ʃ ʒ ŋ ɹ ɡ ˈ ˌ), Maximal Onset syllable stress, SALT morpheme & child overregularization support, and hover tooltips showing original spelling without altering your transcript or metrics.',
+      },
+      {
+        category: 'fixed',
+        summary: 'Single-speaker monologues are no longer randomly split into two speakers',
+        detail:
+          'Replaces noise-amplifying z-scored K-means thresholds with voiced-only acoustic feature extraction, sub-harmonic-safe YIN pitch tracking, and unsupervised 1D bimodality verification so natural pitch, vowel, or microphone-distance changes in a monologue stay labeled as one speaker.',
+      },
+      {
+        category: 'fixed',
+        summary: 'Multi-sentence Whisper chunks no longer collide on the same 0.6s audio slice',
+        detail:
+          'Preserves exact sub-second Whisper utterance boundaries and proportionally splits shared [M:SS] timestamps so each sentence is analyzed against its own audio segment.',
+      },
+      {
+        category: 'fixed',
+        summary: 'Narrative starters and quoted questions no longer trigger false Examiner labels',
+        detail:
+          'Text-only auto-labeling no longer flips monologues to Examiner on sentences starting with "When...", "What...", or "Okay, so...", or on quoted dialogue, while keeping clinical SLP prompts accurate.',
+      },
+      {
+        category: 'added',
+        summary: 'Auto / 1 Speaker / 2 Speakers mode selector in Label Speakers',
+        detail:
+          'Choose Auto-Detect (1 or 2 speakers), force 1 Speaker for monologues, or force 2 Speakers for close-voice conversations right next to the Auto-Label button.',
+      },
+    ],
+  },
+  {
     version: '1.3.5',
     date: '2026-11-24',
     title: 'Parts of Speech & SALT Standard Measures',

@@ -14,6 +14,7 @@ import {
   parseUtteranceLines,
 } from '../engine/transcriptFormat';
 import type { SpeakerAliases } from '../types/saltify';
+import { IpaUtteranceText } from './IpaText';
 import { PosColoredText, PosLegend } from './PartsOfSpeech';
 
 interface TranscriptionPaneProps {
@@ -24,6 +25,9 @@ interface TranscriptionPaneProps {
   disabled?: boolean;
   /** Color each word by part of speech (Settings → SALT & Export). */
   colorPartsOfSpeech?: boolean;
+  /** Display utterances in International Phonetic Alphabet (IPA) broad transcription. */
+  showIpaTranscription?: boolean;
+  onToggleIpaTranscription?: () => void;
   onChangeText: (nextText: string) => void;
   onSeekToTime: (seconds: number) => void;
   onOpenLabelSpeakers: () => void;
@@ -38,6 +42,8 @@ export function TranscriptionPane({
   currentTime,
   disabled = false,
   colorPartsOfSpeech = false,
+  showIpaTranscription = false,
+  onToggleIpaTranscription,
   onChangeText,
   onSeekToTime,
   onOpenLabelSpeakers,
@@ -170,10 +176,34 @@ export function TranscriptionPane({
               Aliases ({aliases.speaker1} / {aliases.speaker2})
             </span>
           </button>
+
+          {onToggleIpaTranscription && (
+            <button
+              id="transcript-ipa-toggle-btn"
+              type="button"
+              role="switch"
+              aria-checked={showIpaTranscription}
+              className={`btn btn-sm ${showIpaTranscription ? 'btn-primary' : 'btn-secondary'}`}
+              disabled={disabled}
+              onClick={onToggleIpaTranscription}
+              title={
+                showIpaTranscription
+                  ? 'Switch back to standard English spelling'
+                  : 'Convert transcript display to International Phonetic Alphabet (IPA) broad transcription'
+              }
+            >
+              <span className="ipa-badge-glyph" aria-hidden="true">
+                /ə/
+              </span>
+              <span>{showIpaTranscription ? 'IPA Broad: On' : 'IPA Broad'}</span>
+            </button>
+          )}
         </div>
 
         <span style={{ fontSize: '0.74rem', color: 'var(--text-muted)' }}>
-          Tap speaker badge to toggle {aliases.speaker1}/{aliases.speaker2}
+          {showIpaTranscription
+            ? 'Broad IPA (/…/) · Hover a word for spelling'
+            : `Tap speaker badge to toggle ${aliases.speaker1}/${aliases.speaker2}`}
         </span>
       </div>
 
@@ -268,7 +298,16 @@ export function TranscriptionPane({
                         : 'var(--text-primary)',
                   }}
                 >
-                  {colorPartsOfSpeech ? <PosColoredText body={line.body} /> : line.body}
+                  {showIpaTranscription ? (
+                    <IpaUtteranceText
+                      body={line.body}
+                      colorPartsOfSpeech={colorPartsOfSpeech}
+                    />
+                  ) : colorPartsOfSpeech ? (
+                    <PosColoredText body={line.body} />
+                  ) : (
+                    line.body
+                  )}
                 </span>
               </div>
             ))}
