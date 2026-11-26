@@ -14,10 +14,13 @@ import type { HeardPhone } from '../engine/speechSounds';
  * (13.7% / 21.7% / 17.8%). It transcribes the sounds produced, not the intended words.
  */
 export const PHONEME_MODEL_ID = 'onnx-community/wav2vec2-lv-60-espeak-cv-ft-ONNX';
+/** Smaller IPA model (HuBERT base fine-tuned on English IPA, ~90 MB q4); marks word boundaries. */
+export const HUBERT_IPA_MODEL_ID = 'onnx-community/hubert-base-english-ipa-ONNX';
 const PHONEME_DTYPE = 'q4';
 const CACHE_NAME = 'transformers-cache';
 
 interface Recognizer {
+  modelId: string;
   extractor: Awaited<ReturnType<typeof AutoFeatureExtractor.from_pretrained>>;
   model: Awaited<ReturnType<typeof AutoModelForCTC.from_pretrained>>;
   idToToken: string[];
@@ -27,20 +30,20 @@ interface Recognizer {
 
 let cached: Recognizer | null = null;
 
-function modelFileUrl(file: string): string {
+function modelFileUrl(modelId: string, file: string): string {
   if (env.allowLocalModels && env.localModelPath && !env.allowRemoteModels) {
-    return `${env.localModelPath}${PHONEME_MODEL_ID}/${file}`;
+    return `${env.localModelPath}${modelId}/${file}`;
   }
   const base = env.remoteHost.endsWith('/') ? env.remoteHost : `${env.remoteHost}/`;
   const path = env.remotePathTemplate
-    .replaceAll('{model}', PHONEME_MODEL_ID)
+    .replaceAll('{model}', modelId)
     .replaceAll('{revision}', 'main');
   return `${base}${path}${file}`;
 }
 
 /** vocab.json (the repo has no tokenizer.json), cached alongside the model files for offline use. */
-async function loadVocab(): Promise<Record<string, number>> {
-  const url = modelFileUrl('vocab.json');
+async function loadVocab(modelId: string): Promise<Record<string, number>> {
+  const url = modelFileUrl(modelId, 'vocab.json');
   let cache: Cache | null = null;
   try {
     cache = await caches.open(CACHE_NAME);
@@ -63,16 +66,18 @@ async function loadVocab(): Promise<Record<string, number>> {
 }
 
 export async function loadPhonemeRecognizer(
-  onProgress?: (info: ProgressInfo) => void
+  onProgress?: (info: ProgressInfo) => void,
+  modelId: string = PHONEME_MODEL_ID
 ): Promise<Recognizer> {
-  if (cached) return cached;
-  const vocab = await loadVocab();
+  if (cached?.modelId === modelId) return cached;
+  if (cached) await disposePhonemeRecognizer();
+  const vocab = await loadVocab(modelId);
   const idToToken: string[] = [];
   for (const [tok, id] of Object.entries(vocab)) idToToken[id] = tok;
-  const extractor = await AutoFeatureExtractor.from_pretrained(PHONEME_MODEL_ID, {
+  const extractor = await AutoFeatureExtractor.from_pretrained(modelId, {
     progress_callback: onProgress,
   });
-  const model = await AutoModelForCTC.from_pretrained(PHONEME_MODEL_ID, {
+  const model = await AutoModelForCTC.from_pretrained(modelId, {
     dtype: PHONEME_DTYPE,
     device: 'wasm',
     session_options: { executionMode: 'sequential' },
@@ -80,10 +85,11 @@ export async function loadPhonemeRecognizer(
   });
   const config = (model as unknown as { config: { pad_token_id?: number } }).config;
   cached = {
+    modelId,
     extractor,
     model,
     idToToken,
-    padId: config.pad_token_id ?? vocab['<pad>'] ?? 0,
+    padId: config.pad_token_id ?? vocab['<pad>'] ?? vocab['[PAD]'] ?? 0,
     wordDelimiterId: vocab['|'] ?? -1,
   };
   return cached;
@@ -99,15 +105,23 @@ export async function disposePhonemeRecognizer(): Promise<void> {
   cached = null;
 }
 
+/** HuBERT IPA writes diphthongs and syllabic r ARPAbet-style; show standard broad IPA. */
+const TOKEN_TO_IPA: Record<string, string> = { aj: 'aɪ', aw: 'aʊ', ej: 'eɪ', ow: 'oʊ', oj: 'ɔɪ', 'ɹ̩': 'ɚ' };
+
+/** Tokens that are not sounds: <pad>, [PAD], <s>, [UNK] … */
+const SPECIAL_TOKEN = /^(?:<.*>|\[.*\])$/;
+
+export interface IpaResult {
+  phones: HeardPhone[];
+  /** IPA text, with word breaks estimated from short pauses. */
+  text: string;
+}
+
 /**
  * Greedy CTC decoding of one audio slice into timed phones. Times are absolute
  * (`offsetSec` + frame time). Confidence is the softmax probability at the emitting frame.
  */
-export async function recognizePhones(
-  recognizer: Recognizer,
-  samples: Float32Array,
-  offsetSec: number
-): Promise<HeardPhone[]> {
+export async function recognizeIpa(recognizer: Recognizer, samples: Float32Array, offsetSec: number): Promise<IpaResult> {
   const inputs = await (recognizer.extractor as unknown as (a: Float32Array) => Promise<Record<string, Tensor>>)(
     samples
   );
@@ -117,8 +131,12 @@ export async function recognizePhones(
   const [, frames, vocabSize] = logits.dims as number[];
   const data = logits.data as Float32Array;
   const frameSec = samples.length / 16000 / Math.max(1, frames);
-  const out: HeardPhone[] = [];
+  const phones: HeardPhone[] = [];
+  const words: string[][] = [[]];
+  // Neither model marks words reliably ("|" separates single sounds in HuBERT's training
+  // text), so word breaks come from short pauses.
   let prev = -1;
+  let lastPhoneFrame = -1;
   for (let t = 0; t < frames; t++) {
     let best = 0;
     let bestVal = -Infinity;
@@ -132,12 +150,34 @@ export async function recognizePhones(
     if (best !== prev && best !== recognizer.padId && best !== recognizer.wordDelimiterId) {
       let sum = 0;
       for (let v = 0; v < vocabSize; v++) sum += Math.exp(data[row + v] - bestVal);
-      const token = recognizer.idToToken[best];
-      if (token && !/^<.*>$/.test(token)) {
-        out.push([token, Math.round((offsetSec + (t + 0.5) * frameSec) * 1000) / 1000, Math.round((1 / sum) * 100) / 100]);
+      const rawToken = recognizer.idToToken[best];
+      const token = rawToken ? TOKEN_TO_IPA[rawToken] ?? rawToken : rawToken;
+      if (token && !SPECIAL_TOKEN.test(token)) {
+        // A silent stretch of 0.12 s or more starts a new word
+        if (lastPhoneFrame >= 0 && (t - lastPhoneFrame) * frameSec >= 0.12) {
+          if (words[words.length - 1].length > 0) words.push([]);
+        }
+        words[words.length - 1].push(token.replace(/\u0361/g, ''));
+        lastPhoneFrame = t;
+        phones.push([token, Math.round((offsetSec + (t + 0.5) * frameSec) * 1000) / 1000, Math.round((1 / sum) * 100) / 100]);
       }
     }
     prev = best;
   }
-  return out;
+  return {
+    phones,
+    text: words
+      .filter((w) => w.length > 0)
+      .map((w) => w.join(''))
+      .join(' '),
+  };
+}
+
+/** Timed phones only (speech-sound detection). */
+export async function recognizePhones(
+  recognizer: Recognizer,
+  samples: Float32Array,
+  offsetSec: number
+): Promise<HeardPhone[]> {
+  return (await recognizeIpa(recognizer, samples, offsetSec)).phones;
 }

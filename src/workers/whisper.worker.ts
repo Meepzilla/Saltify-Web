@@ -10,6 +10,7 @@ import { purgeHtmlModelCacheEntries } from '../engine/modelCache';
 import type { HeardPhone } from '../engine/speechSounds';
 import {
   extractWhisperUtterances,
+  formatTimestamp,
   formatWhisperChunks,
   type FormattedWhisperUtterance,
 } from '../engine/transcriptFormat';
@@ -24,6 +25,7 @@ import {
   disposePhonemeRecognizer,
   loadPhonemeRecognizer,
   PHONEME_MODEL_ID,
+  recognizeIpa,
   recognizePhones,
 } from './phonemeRecognizer';
 import {
@@ -33,7 +35,8 @@ import {
   TokenConfidenceRecorder,
   tokenSegmentsFromRecorder,
 } from './tokenConfidence';
-import type { ComputeDevice, ModelSource, WhisperModelId } from '../types/saltify';
+import { isPhonemeModel, WHISPER_MODELS, type ComputeDevice, type ModelSource, type WhisperModelId } from '../types/saltify';
+import { detectSpeechRegions, packSpeechWindows } from '../engine/speechChunking';
 
 
 // IMPORTANT: do not import speakerDiarizer / childGrammarEngine (or anything that pulls in
@@ -654,9 +657,12 @@ function describeWorkerError(
  * Speech-sound recognition: frees Whisper's memory, loads the phoneme model and returns timed IPA
  * phones for the whole recording, processed in pause-aligned slices of up to ~15 s.
  */
-async function runPhonemeJob(req: Extract<WorkerRequest, { type: 'phonemes' }>): Promise<void> {
-  setStage('preparing speech-sound recognition');
-  // Large models one at a time: release Whisper before loading the phoneme model (iPad memory)
+/** Frees Whisper (large models one at a time on iPad), then loads a CTC phoneme model with progress. */
+async function preparePhonemeRecognizer(
+  req: { jobId: string; appBaseUrl: string; modelSource: ModelSource; customModelBaseUrl: string },
+  modelId: string,
+  label: string
+) {
   if (activePipeline) {
     try {
       await activePipeline.dispose();
@@ -670,8 +676,8 @@ async function runPhonemeJob(req: Extract<WorkerRequest, { type: 'phonemes' }>):
   await configureSelfHostedRuntime(req.appBaseUrl, req.modelSource, req.customModelBaseUrl, 'wasm', false);
 
   const fileProgress = new Map<string, { loaded: number; total: number }>();
-  setStage('downloading the speech-sound model');
-  const recognizer = await loadPhonemeRecognizer((info: ProgressInfo) => {
+  setStage(`downloading the ${label}`);
+  return loadPhonemeRecognizer((info: ProgressInfo) => {
     if (info.status === 'progress' && info.file) {
       fileProgress.set(info.file, { loaded: info.loaded ?? 0, total: info.total ?? 0 });
       let loaded = 0;
@@ -683,12 +689,17 @@ async function runPhonemeJob(req: Extract<WorkerRequest, { type: 'phonemes' }>):
       post({
         type: 'progress',
         jobId: req.jobId,
-        stage: 'Loading speech-sound model',
+        stage: `Loading ${label}`,
         progress: total > 0 ? Math.min(0.3, 0.02 + (loaded / total) * 0.28) : 0.05,
         detail: `${(loaded / 1048576).toFixed(0)} MB${total > 0 ? ` / ${(total / 1048576).toFixed(0)} MB` : ''} (downloaded once, then cached)`,
       });
     }
-  });
+  }, modelId);
+}
+
+async function runPhonemeJob(req: Extract<WorkerRequest, { type: 'phonemes' }>): Promise<void> {
+  setStage('preparing speech-sound recognition');
+  const recognizer = await preparePhonemeRecognizer(req, PHONEME_MODEL_ID, 'speech-sound model');
 
   const slices = sliceAudioIntoPauseAwareChunks(req.audio, 16000, 12, 6, 15);
   const phones: HeardPhone[] = [];
@@ -706,6 +717,53 @@ async function runPhonemeJob(req: Extract<WorkerRequest, { type: 'phonemes' }>):
   }
   if (isLowMemoryDevice()) await disposePhonemeRecognizer();
   post({ type: 'phonemes-done', jobId: req.jobId, model: PHONEME_MODEL_ID, phones });
+}
+
+/**
+ * Main transcription with an IPA (phoneme) model: speech is found with voice activity detection
+ * and each stretch of speech becomes one utterance line, written in IPA.
+ */
+async function runPhonemeTranscription(req: Extract<WorkerRequest, { type: 'transcribe' }>): Promise<void> {
+  setStage('preparing phonetic transcription');
+  const info = WHISPER_MODELS.find((m) => m.id === req.modelId);
+  const recognizer = await preparePhonemeRecognizer(req, req.modelId, `${info?.shortLabel ?? 'IPA'} model`);
+
+  // Utterance-sized pieces: speech regions, with long ones split at their quietest point
+  const regions = detectSpeechRegions(req.audio, 16000);
+  const pieces = packSpeechWindows(req.audio, regions, 16000, 15).flatMap((w) =>
+    w.pieces.map((p) => ({ start: p.srcStart, end: p.srcEnd }))
+  );
+  const utterances: Array<{ startSec: number; endSec: number; timestampStr: string; text: string }> = [];
+  for (let i = 0; i < pieces.length; i++) {
+    const { start, end } = pieces[i];
+    setStage(`phonetic transcription ${i + 1} of ${pieces.length}`);
+    post({
+      type: 'progress',
+      jobId: req.jobId,
+      stage: `Phonetic transcription: utterance ${i + 1} of ${pieces.length}`,
+      progress: 0.3 + (i / Math.max(1, pieces.length)) * 0.65,
+      detail: 'Writing the sounds produced in IPA (running 100% locally)',
+    });
+    const samples = req.audio.subarray(Math.floor(start * 16000), Math.ceil(end * 16000));
+    const { text } = await recognizeIpa(recognizer, samples, start);
+    if (text.trim()) {
+      utterances.push({ startSec: start, endSec: end, timestampStr: formatTimestamp(start), text: text.trim() });
+      post({
+        type: 'partial',
+        jobId: req.jobId,
+        partialTranscript: utterances.map((u) => `[${u.timestampStr}] ${u.text}`).join('\n'),
+      });
+    }
+    if (i + 1 < pieces.length) await yieldToEventLoop();
+  }
+  if (isLowMemoryDevice()) await disposePhonemeRecognizer();
+  post({
+    type: 'done',
+    jobId: req.jobId,
+    transcript: utterances.map((u) => `[${u.timestampStr}] ${u.text}`).join('\n'),
+    utterances,
+    backendUsed: 'wasm',
+  });
 }
 
 // Catch errors that escape the try/catch below (e.g. thrown inside ONNX Runtime callbacks).
@@ -731,6 +789,13 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
   lastRequest = req;
 
   try {
+    if (req.type === 'preload' && isPhonemeModel(req.modelId)) {
+      await preparePhonemeRecognizer(req, req.modelId, 'IPA model');
+      post({ type: 'progress', jobId: req.jobId, stage: 'Model ready for offline use', progress: 1 });
+      post({ type: 'ready', jobId: req.jobId, modelId: req.modelId, backendUsed: 'wasm' });
+      return;
+    }
+
     if (req.type === 'preload') {
       const { backendUsed } = await ensurePipeline(
         req.jobId,
@@ -757,6 +822,11 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
 
     if (req.type === 'phonemes') {
       await runPhonemeJob(req);
+      return;
+    }
+
+    if (req.type === 'transcribe' && isPhonemeModel(req.modelId)) {
+      await runPhonemeTranscription(req);
       return;
     }
 

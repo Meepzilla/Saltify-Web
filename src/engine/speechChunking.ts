@@ -109,8 +109,30 @@ export function packSpeechWindows(
   regions: SpeechRegion[],
   sampleRate = 16000,
   maxSec = 28,
-  gapSec = 0.4
+  gapSec = 0.4,
+  /** Fill joins with background noise at the recording's noise floor (instead of digital silence). */
+  noiseFill = true
 ): PackedWindow[] {
+  let floorRms = 0;
+  if (noiseFill) {
+    const size = Math.round(sampleRate * 0.02);
+    const rms: number[] = [];
+    for (let i = 0; i + size <= samples.length; i += size) {
+      let e = 0;
+      for (let j = i; j < i + size; j++) e += samples[j] * samples[j];
+      rms.push(Math.sqrt(e / size));
+    }
+    rms.sort((a, b) => a - b);
+    floorRms = rms[Math.floor(rms.length * 0.1)] ?? 0;
+  }
+  let seed = 12345;
+  const gauss = () => {
+    seed = (seed * 16807) % 2147483647;
+    const u = seed / 2147483647;
+    seed = (seed * 16807) % 2147483647;
+    const v = seed / 2147483647;
+    return Math.sqrt(-2 * Math.log(u + 1e-12)) * Math.cos(2 * Math.PI * v);
+  };
   // Split over-long regions at their quietest 100 ms (searching the middle third onwards)
   const pieces: SpeechRegion[] = [];
   const queue = [...regions];
@@ -151,7 +173,10 @@ export function packSpeechWindows(
     const packedPieces: PackedPiece[] = [];
     let offset = 0;
     current.forEach((r, k) => {
-      if (k > 0) offset += gap;
+      if (k > 0) {
+        if (floorRms > 0) for (let i = offset; i < offset + gap; i++) buf[i] = gauss() * floorRms;
+        offset += gap;
+      }
       const a = Math.round(r.start * sampleRate);
       const b = Math.round(r.end * sampleRate);
       buf.set(samples.subarray(a, b), offset);
