@@ -3210,6 +3210,94 @@
   cursor: default;
 }
 
+/* Word fix menu: "Replace with…" field and live review sensitivity sliders */
+.replace-word-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 4px 4px 6px;
+}
+
+.replace-word-label,
+.sensitivity-title {
+  font-size: 0.74rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--text-muted);
+}
+
+.replace-word-row {
+  display: flex;
+  gap: 6px;
+}
+
+.replace-word-input {
+  flex: 1;
+  min-width: 0;
+  height: 38px;
+  padding: 0 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-strong);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-size: 16px; /* 16px stops iOS Safari from zooming into the field */
+}
+
+.replace-word-input:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.sensitivity-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 4px 4px 6px;
+  min-width: min(300px, calc(100vw - 48px));
+}
+
+.sensitivity-title {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.sensitivity-count {
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--accent);
+}
+
+.sensitivity-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.sensitivity-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 0.82rem;
+  color: var(--text-primary);
+}
+
+.sensitivity-row input[type='range'] {
+  width: 100%;
+  min-height: 28px;
+  accent-color: var(--accent);
+}
+
+.sensitivity-help {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
+.sensitivity-reset {
+  align-self: flex-start;
+}
+
 /* Second-opinion disagreement: dashed violet underline, tap for "use other model's word" */
 .uncertain-word.disagree {
   background: hsla(265, 80%, 62%, 0.13);

@@ -57,10 +57,20 @@ describe('second-opinion comparison', () => {
 
   it('re-keys the confidence map after a word is resolved', () => {
     const map = { 'the wabbit ran fast': [{ i: 1, w: 'wabbit', p: 0.5, a: 'rabbit', ap: 0.7 }, { i: 3, w: 'fast', p: 0.4 }] };
-    const next = resolveFlagInMap(map, 'The wabbit ran fast.', 'The rabbit ran fast.', 1, false);
+    const next = resolveFlagInMap(map, 'The wabbit ran fast.', 'The rabbit ran fast.', 1);
     expect(flaggedWordsForLine('The rabbit ran fast.', next).get(3)?.w).toBe('fast');
     expect(flaggedWordsForLine('The rabbit ran fast.', next).has(1)).toBe(false);
-    const removed = resolveFlagInMap(map, 'The wabbit ran fast.', 'The ran fast.', 1, true);
+    const removed = resolveFlagInMap(map, 'The wabbit ran fast.', 'The ran fast.', 1);
     expect(flaggedWordsForLine('The ran fast.', removed).get(2)?.w).toBe('fast');
+    // Multi-word replacement shifts later flags forward
+    const longer = resolveFlagInMap(map, 'The wabbit ran fast.', 'The little rabbit ran fast.', 1);
+    expect(flaggedWordsForLine('The little rabbit ran fast.', longer).get(4)?.w).toBe('fast');
+  });
+
+  it('applies live flag thresholds to stored words', () => {
+    const map = { 'he goed home': [{ i: 1, w: 'goed', p: 0.7 }, { i: 2, w: 'home', p: 0.93, a: 'hum', ap: 0.6 }] };
+    expect(flaggedWordsForLine('He goed home.', map).size).toBe(0); // defaults: 60% / 90%
+    const strict = { uncertainBelow: 0.8, disagreementBelow: 0.95 };
+    expect([...flaggedWordsForLine('He goed home.', map, strict).keys()]).toEqual([1, 2]);
   });
 });

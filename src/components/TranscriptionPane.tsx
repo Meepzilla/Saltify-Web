@@ -18,12 +18,15 @@ import {
 } from '../engine/transcriptFormat';
 import {
   countFlaggedWords,
+  DEFAULT_FLAG_THRESHOLDS,
   flaggedWordsForLine,
   VERY_LOW_CONFIDENCE_THRESHOLD,
+  type FlagThresholds,
   type WordConfidenceMap,
 } from '../engine/wordConfidence';
 import type { SpeakerAliases } from '../types/saltify';
-import { OverflowMenu } from './OverflowMenu';
+import { OverflowMenu, type OverflowMenuItem } from './OverflowMenu';
+import { FlagSensitivityControls, ReplaceWordField } from './WordReviewControls';
 import { IpaUtteranceText } from './IpaText';
 import { PosColoredText, PosLegend } from './PartsOfSpeech';
 
@@ -58,6 +61,9 @@ interface TranscriptionPaneProps {
    * null keeps the word and dismisses the flag.
    */
   onResolveWord?: (lineIndex: number, wordIndex: number, replacement: string | null) => void;
+  /** Live review sensitivity for flags. */
+  flagThresholds?: FlagThresholds;
+  onChangeFlagThresholds?: (next: FlagThresholds) => void;
 }
 
 export function TranscriptionPane({
@@ -81,6 +87,8 @@ export function TranscriptionPane({
   onInspectLine,
   secondOpinionLabel = 'Second model',
   onResolveWord,
+  flagThresholds,
+  onChangeFlagThresholds,
 }: TranscriptionPaneProps) {
   const [locked, setLocked] = useState(true);
   const [viewMode, setViewMode] = useState<'interactive' | 'raw'>('interactive');
@@ -106,79 +114,102 @@ export function TranscriptionPane({
     return active;
   }, [lines, hasAudio, currentTime]);
 
+  const thresholds = flagThresholds ?? DEFAULT_FLAG_THRESHOLDS;
   const uncertainCount = useMemo(
-    () => countFlaggedWords(nonEmptyLines.map((l) => l.body), wordConfidence),
-    [nonEmptyLines, wordConfidence]
+    () => countFlaggedWords(nonEmptyLines.map((l) => l.body), wordConfidence, thresholds),
+    [nonEmptyLines, wordConfidence, thresholds]
   );
   const showUncertain = highlightUncertainWords && uncertainCount > 0;
 
-  /** Wraps an uncertain word: amber underline (or red when very uncertain), tap to inspect. */
+  /**
+   * Every flagged word opens the same fix menu: use the other model's word (when the models
+   * disagreed), type your own replacement, remove the word, keep it, or listen.
+   */
   const decorateFor = (lineIndex: number, body: string) => {
-    const flagged = flaggedWordsForLine(body, wordConfidence);
+    const flagged = flaggedWordsForLine(body, wordConfidence, thresholds);
     if (flagged.size === 0) return undefined;
     return (wordIndex: number, node: ReactNode) => {
       const f = flagged.get(wordIndex);
       if (!f) return node;
       const pct = Math.round(f.p * 100);
-      if (f.a !== undefined && onResolveWord) {
-        const altPct = Math.round((f.ap ?? 0) * 100);
-        const heardNothing = f.a === '';
+      const isDisagreement = f.a !== undefined;
+      const heardNothing = f.a === '';
+      const veryLow = f.p < VERY_LOW_CONFIDENCE_THRESHOLD;
+      const className = `uncertain-word ${isDisagreement ? 'disagree' : ''} ${veryLow ? 'very' : ''}`;
+      const describe = isDisagreement
+        ? heardNothing
+          ? `“${f.w}”: ${secondOpinionLabel} heard no word here (main model ${pct}% sure).`
+          : `“${f.w}”: ${secondOpinionLabel} heard “${f.a}” (main model ${pct}% sure).`
+        : `“${f.w}”: Whisper was ${pct}% sure.`;
+
+      if (!onResolveWord) {
         return (
-          <OverflowMenu
-            label={
-              heardNothing
-                ? `“${f.w}”: ${secondOpinionLabel} heard no word here. Options`
-                : `“${f.w}”: ${secondOpinionLabel} heard “${f.a}”. Options`
-            }
-            trigger={node}
-            triggerClassName={`uncertain-word disagree ${f.p < VERY_LOW_CONFIDENCE_THRESHOLD ? 'very' : ''}`}
-            items={[
-              heardNothing
-                ? {
-                    key: 'remove',
-                    label: `Remove this word (${secondOpinionLabel} heard nothing)`,
-                    icon: <Trash2 size={15} />,
-                    onSelect: () => onResolveWord(lineIndex, wordIndex, ''),
-                  }
-                : {
-                    key: 'swap',
-                    label: `Use “${f.a.replace(/[.,!?;:]+$/, '')}”`,
-                    hint: `${secondOpinionLabel} ${altPct}%`,
-                    icon: <Replace size={15} />,
-                    onSelect: () => onResolveWord(lineIndex, wordIndex, f.a ?? ''),
-                  },
-              {
-                key: 'keep',
-                label: 'Keep this word',
-                hint: `${pct}%`,
-                icon: <Check size={15} />,
-                onSelect: () => onResolveWord(lineIndex, wordIndex, null),
-              },
-              ...(onInspectLine
-                ? [
-                    {
-                      key: 'spectrogram',
-                      label: 'Listen & spectrogram',
-                      icon: <AudioLines size={15} />,
-                      dividerBefore: true,
-                      onSelect: () => onInspectLine(lineIndex),
-                    },
-                  ]
-                : []),
-            ]}
-          />
+          <button
+            type="button"
+            className={className}
+            title={`${describe} Tap to listen and see the spectrogram.`}
+            aria-label={`${describe} Open spectrogram.`}
+            onClick={() => onInspectLine?.(lineIndex)}
+          >
+            {node}
+          </button>
         );
       }
+
+      const items: OverflowMenuItem[] = [];
+      if (isDisagreement && !heardNothing) {
+        items.push({
+          key: 'swap',
+          label: `Use “${(f.a ?? '').replace(/[.,!?;:]+$/, '')}”`,
+          hint: `${secondOpinionLabel} ${Math.round((f.ap ?? 0) * 100)}%`,
+          icon: <Replace size={15} />,
+          onSelect: () => onResolveWord(lineIndex, wordIndex, f.a ?? ''),
+        });
+      }
+      items.push(
+        {
+          key: 'custom',
+          label: 'Replace with…',
+          render: (close) => (
+            <ReplaceWordField
+              initial={(body.split(/\s+/).filter(Boolean)[wordIndex] ?? '').replace(/^[^A-Za-z0-9']+|[^A-Za-z0-9']+$/g, '')}
+              onSubmit={(text) => {
+                close();
+                onResolveWord(lineIndex, wordIndex, text);
+              }}
+            />
+          ),
+        },
+        {
+          key: 'remove',
+          label: heardNothing ? `Remove word (${secondOpinionLabel} heard nothing)` : 'Remove word',
+          icon: <Trash2 size={15} />,
+          onSelect: () => onResolveWord(lineIndex, wordIndex, ''),
+        },
+        {
+          key: 'keep',
+          label: 'Keep this word',
+          hint: `${pct}%`,
+          icon: <Check size={15} />,
+          onSelect: () => onResolveWord(lineIndex, wordIndex, null),
+        }
+      );
+      if (onInspectLine) {
+        items.push({
+          key: 'spectrogram',
+          label: 'Listen & spectrogram',
+          icon: <AudioLines size={15} />,
+          dividerBefore: true,
+          onSelect: () => onInspectLine(lineIndex),
+        });
+      }
       return (
-        <button
-          type="button"
-          className={`uncertain-word ${f.p < VERY_LOW_CONFIDENCE_THRESHOLD ? 'very' : ''}`}
-          title={`Whisper was ${pct}% sure of this word. Tap to listen and see the spectrogram.`}
-          aria-label={`Uncertain word: ${f.w}, ${pct}% confidence. Open spectrogram.`}
-          onClick={() => onInspectLine?.(lineIndex)}
-        >
-          {node}
-        </button>
+        <OverflowMenu
+          label={`${describe} Fix options`}
+          trigger={node}
+          triggerClassName={className}
+          items={items}
+        />
       );
     };
   };
@@ -308,6 +339,21 @@ export function TranscriptionPane({
                       hint: uncertainCount > 0 ? String(uncertainCount) : undefined,
                       checked: highlightUncertainWords,
                       onSelect: onToggleHighlightUncertainWords,
+                    },
+                  ]
+                : []),
+              ...(onChangeFlagThresholds && wordConfidence
+                ? [
+                    {
+                      key: 'sensitivity',
+                      label: 'Review sensitivity',
+                      render: () => (
+                        <FlagSensitivityControls
+                          value={thresholds}
+                          flaggedCount={uncertainCount}
+                          onChange={onChangeFlagThresholds}
+                        />
+                      ),
                     },
                   ]
                 : []),

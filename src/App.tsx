@@ -1363,17 +1363,19 @@ export default function App() {
         return {
           ...s,
           transcriptionText: rawLines.join('\n'),
-          wordConfidence: resolveFlagInMap(
-            s.wordConfidence,
-            line.body,
-            newBody,
-            wordIndex,
-            replacement === ''
-          ),
+          wordConfidence: resolveFlagInMap(s.wordConfidence, line.body, newBody, wordIndex),
         };
       });
     },
     [updateActiveSession]
+  );
+
+  const flagThresholds = useMemo(
+    () => ({
+      uncertainBelow: settings.uncertainWordThreshold,
+      disagreementBelow: settings.disagreementThreshold,
+    }),
+    [settings.uncertainWordThreshold, settings.disagreementThreshold]
   );
 
   /** Opens the Spectrogram at the line under the playhead (or the first line). */
@@ -1842,6 +1844,13 @@ export default function App() {
                     }
                     onInspectLine={activeAudioBlob ? (i) => setSpectrogramLine(i) : undefined}
                     onResolveWord={handleResolveUncertainWord}
+                    flagThresholds={flagThresholds}
+                    onChangeFlagThresholds={(next) =>
+                      updateSettings({
+                        uncertainWordThreshold: next.uncertainBelow,
+                        disagreementThreshold: next.disagreementBelow,
+                      })
+                    }
                     secondOpinionLabel={
                       WHISPER_MODELS.find((m) => m.id === activeSession.secondOpinionModelId)
                         ?.shortLabel ?? 'Second model'
@@ -2062,6 +2071,7 @@ export default function App() {
           loadSamples={loadSessionSamples}
           player={player}
           wordConfidence={activeSession.wordConfidence}
+          flagThresholds={flagThresholds}
           onClose={() => setSpectrogramLine(null)}
         />
       )}

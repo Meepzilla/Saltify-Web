@@ -24,6 +24,27 @@ export const APP_VERSION: string = __APP_VERSION__;
  */
 export const CHANGELOG_RELEASES: readonly ChangelogRelease[] = [
   {
+    version: '1.6.1',
+    date: '2026-11-26',
+    title: 'Type Your Own Fix & Live Review Sensitivity',
+    summary:
+      'Every flagged word now has a "Replace with…" field, and review sensitivity sliders update the highlights live without re-transcribing.',
+    changes: [
+      {
+        category: 'added',
+        summary: '"Replace with…" on every flagged word',
+        detail:
+          'Tap any underlined word to type the correct word or phrase (e.g. "went to"), alongside "Use the other model\'s word", Remove word, Keep this word and Listen & spectrogram. Other flags in the line keep their positions.',
+      },
+      {
+        category: 'added',
+        summary: 'Live review sensitivity (Transcript ⋯ → Review sensitivity)',
+        detail:
+          'Two sliders set how unsure Whisper must be before a word is flagged (default 60%) and when second-opinion disagreements are flagged (default 90%). Highlights and the flag count update while you drag; Reset restores the recommended values. Applies to sessions transcribed from this version on.',
+      },
+    ],
+  },
+  {
     version: '1.6.0',
     date: '2026-11-26',
     title: 'Second Opinion: Compare Two Whisper Models',

@@ -11,6 +11,7 @@ import {
 import {
   flaggedWordsForLine,
   VERY_LOW_CONFIDENCE_THRESHOLD,
+  type FlagThresholds,
   type WordConfidenceMap,
 } from '../engine/wordConfidence';
 import type { AudioPlayerState } from '../hooks/useAudioPlayer';
@@ -40,6 +41,7 @@ interface SpectrogramModalProps {
   loadSamples: () => Promise<Float32Array | null>;
   player: AudioPlayerState;
   wordConfidence?: WordConfidenceMap | null;
+  flagThresholds?: FlagThresholds;
   onClose: () => void;
 }
 
@@ -94,6 +96,7 @@ export function SpectrogramModal({
   loadSamples,
   player,
   wordConfidence,
+  flagThresholds,
   onClose,
 }: SpectrogramModalProps) {
   const [samples, setSamples] = useState<Float32Array | null>(null);
@@ -382,7 +385,7 @@ export function SpectrogramModal({
   const relT = readoutTime !== null && analysis ? readoutTime - analysis.start : null;
   const fr = relT !== null && analysis ? nearest(analysis.formants, relT) : null;
   const pf = relT !== null && analysis ? nearest(analysis.pitch, relT) : null;
-  const flagged = line ? flaggedWordsForLine(line.body, wordConfidence) : new Map();
+  const flagged = line ? flaggedWordsForLine(line.body, wordConfidence, flagThresholds) : new Map();
 
   return (
     <div className="modal-backdrop" onClick={onClose}>

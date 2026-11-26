@@ -9,8 +9,13 @@
  * Kept dependency-free so it can run in the Whisper Web Worker and in unit tests.
  */
 
-/** Words below this probability are flagged as uncertain. */
+/** Default: words below this probability are flagged as uncertain (adjustable live). */
 export const LOW_CONFIDENCE_THRESHOLD = 0.6;
+/**
+ * Words below this probability (or with a second-opinion disagreement) are stored with the
+ * session, so the display thresholds can be raised or lowered live without re-transcribing.
+ */
+export const STORE_CONFIDENCE_BELOW = 0.98;
 /** Words below this probability are flagged as very uncertain. */
 export const VERY_LOW_CONFIDENCE_THRESHOLD = 0.35;
 
@@ -30,8 +35,26 @@ export interface WordProbability {
   altP?: number;
 }
 
-/** When the second-opinion model disagrees, flag the word unless the primary was at least this sure. */
+/** Default: flag a second-opinion disagreement unless the main model was at least this sure. */
 export const DISAGREEMENT_FLAG_BELOW = 0.9;
+
+/** Live review sensitivity: which stored words are shown as flags. */
+export interface FlagThresholds {
+  /** Flag words whose confidence is below this (0–1). */
+  uncertainBelow: number;
+  /** Flag disagreements when the main model's confidence is below this (0–1). */
+  disagreementBelow: number;
+}
+
+export const DEFAULT_FLAG_THRESHOLDS: FlagThresholds = {
+  uncertainBelow: LOW_CONFIDENCE_THRESHOLD,
+  disagreementBelow: DISAGREEMENT_FLAG_BELOW,
+};
+
+/** Whether a stored word should be shown as a flag under the given thresholds. */
+export function isFlagged(word: FlaggedWord, t: FlagThresholds = DEFAULT_FLAG_THRESHOLDS): boolean {
+  return word.p < t.uncertainBelow || (word.a !== undefined && word.p < t.disagreementBelow);
+}
 
 /** An uncertain word in a transcript line: whitespace-token index, the word, and its probability. */
 export interface FlaggedWord {
@@ -121,7 +144,7 @@ export function buildWordConfidenceMap(
         if (stream[cursor + look].n === n) {
           const match = stream[cursor + look];
           cursor += look + 1;
-          const disagree = match.alt !== undefined && match.p < DISAGREEMENT_FLAG_BELOW;
+          const disagree = match.alt !== undefined;
           if (match.p < threshold || disagree) {
             const entry: FlaggedWord = { i, w: n, p: Math.round(match.p * 1000) / 1000 };
             if (disagree) {
@@ -146,7 +169,8 @@ export function buildWordConfidenceMap(
 /** Uncertain words for one displayed line, verified against the current text of each token. */
 export function flaggedWordsForLine(
   body: string,
-  map: WordConfidenceMap | undefined | null
+  map: WordConfidenceMap | undefined | null,
+  thresholds: FlagThresholds = DEFAULT_FLAG_THRESHOLDS
 ): Map<number, FlaggedWord> {
   const result = new Map<number, FlaggedWord>();
   if (!map) return result;
@@ -154,7 +178,7 @@ export function flaggedWordsForLine(
   if (!entries) return result;
   const tokens = body.split(/\s+/).filter(Boolean);
   for (const e of entries) {
-    if (normalizeWord(tokens[e.i] ?? '') === e.w) result.set(e.i, e);
+    if (normalizeWord(tokens[e.i] ?? '') === e.w && isFlagged(e, thresholds)) result.set(e.i, e);
   }
   return result;
 }
@@ -162,10 +186,11 @@ export function flaggedWordsForLine(
 /** Total number of uncertain words still present in a transcript. */
 export function countFlaggedWords(
   bodies: string[],
-  map: WordConfidenceMap | undefined | null
+  map: WordConfidenceMap | undefined | null,
+  thresholds: FlagThresholds = DEFAULT_FLAG_THRESHOLDS
 ): number {
   if (!map) return 0;
-  return bodies.reduce((sum, b) => sum + flaggedWordsForLine(b, map).size, 0);
+  return bodies.reduce((sum, b) => sum + flaggedWordsForLine(b, map, thresholds).size, 0);
 }
 
 /**
@@ -177,8 +202,7 @@ export function resolveFlagInMap(
   map: WordConfidenceMap | undefined | null,
   oldBody: string,
   newBody: string,
-  wordIndex: number,
-  removedWord: boolean
+  wordIndex: number
 ): WordConfidenceMap | undefined {
   if (!map) return undefined;
   const oldKey = confidenceLineKey(oldBody);
@@ -186,9 +210,12 @@ export function resolveFlagInMap(
   if (!entries) return map;
   const next: WordConfidenceMap = { ...map };
   delete next[oldKey];
+  // Later words move by however many words were removed or added (e.g. "goed" -> "went to")
+  const count = (b: string) => b.split(/\s+/).filter(Boolean).length;
+  const shift = count(newBody) - count(oldBody);
   const remaining = entries
     .filter((e) => e.i !== wordIndex)
-    .map((e) => (removedWord && e.i > wordIndex ? { ...e, i: e.i - 1 } : e));
+    .map((e) => (shift !== 0 && e.i > wordIndex ? { ...e, i: e.i + shift } : e));
   if (remaining.length > 0) {
     const newKey = confidenceLineKey(newBody);
     next[newKey] = [...(next[newKey] ?? []), ...remaining];

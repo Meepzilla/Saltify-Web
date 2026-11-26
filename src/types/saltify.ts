@@ -206,6 +206,10 @@ export interface AppSettings {
   highlightUncertainWords: boolean;
   /** Second model to compare against during transcription ('off' = single model). */
   secondOpinionModelId: WhisperModelId | 'off';
+  /** Review sensitivity: flag words Whisper was less sure of than this (0–1). */
+  uncertainWordThreshold: number;
+  /** Review sensitivity: flag model disagreements when the main model was less sure than this (0–1). */
+  disagreementThreshold: number;
 }
 
 export const DEFAULT_APP_SETTINGS: AppSettings = {
@@ -224,6 +228,8 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   showIpaTranscription: false,
   highlightUncertainWords: true,
   secondOpinionModelId: 'off',
+  uncertainWordThreshold: 0.6,
+  disagreementThreshold: 0.9,
 };
 
 export interface ToastMessage {

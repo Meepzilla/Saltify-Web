@@ -12,7 +12,12 @@ import {
   type FormattedWhisperUtterance,
 } from '../engine/transcriptFormat';
 import { annotateDisagreements } from '../engine/modelFusion';
-import { buildWordConfidenceMap, type WordConfidenceMap, type WordProbability } from '../engine/wordConfidence';
+import {
+  buildWordConfidenceMap,
+  STORE_CONFIDENCE_BELOW,
+  type WordConfidenceMap,
+  type WordProbability,
+} from '../engine/wordConfidence';
 import {
   RecorderLastProcessorList,
   TokenConfidenceRecorder,
@@ -848,7 +853,8 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
       const transcript = utterances.map((u) => `[${u.timestampStr}] ${u.text}`).join('\n');
       let wordConfidence: WordConfidenceMap | undefined;
       try {
-        wordConfidence = buildWordConfidenceMap(transcript, allWords);
+        // Store nearly every word's confidence so review thresholds can be tuned live
+        wordConfidence = buildWordConfidenceMap(transcript, allWords, STORE_CONFIDENCE_BELOW);
       } catch {
         wordConfidence = undefined; // confidence is a review aid; never fail transcription over it
       }
