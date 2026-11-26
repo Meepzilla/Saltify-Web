@@ -1,6 +1,10 @@
 import { useMemo, type ReactNode } from 'react';
-import { wordToBroadIpa } from '../engine/ipaTranscription';
-import { compareWordsToHeard, splitIpa, type HeardPhone, type SoundStatus } from '../engine/speechSounds';
+import type { SoundStatus, WordSoundComparison } from '../engine/speechSounds';
+import {
+  PROCESSES,
+  processesInWord,
+  type ProcessSummaryRow,
+} from '../engine/phonologicalProcesses';
 
 const STATUS_TITLE: Record<SoundStatus, string | undefined> = {
   match: undefined,
@@ -9,47 +13,30 @@ const STATUS_TITLE: Record<SoundStatus, string | undefined> = {
   missing: 'Expected but not heard',
 };
 
-/** Tokens that are not spoken words: mazes, SALT codes, comments, unintelligible markers. */
-function isSpokenToken(token: string): boolean {
-  if (/^[([{]/.test(token) || /^\[.*\]$/.test(token)) return false;
-  if (/^X{1,3}[.,!?]*$/.test(token)) return false;
-  return /[A-Za-z]/.test(token);
-}
-
 /**
- * Interlinear view of one utterance: interpreted word / expected pronunciation / heard sounds.
- * Heard sounds that differ from the expected ones are highlighted; expected sounds that were not
- * heard are shown struck through.
+ * Interlinear view of one utterance: interpreted word / expected pronunciation / heard sounds,
+ * plus any phonological processes detected in that word.
  */
 export function SpeechSoundsLine({
   body,
-  heard,
-  dictionaryReady,
+  comparison,
+  showProcesses = true,
   decorateWord,
 }: {
   body: string;
-  heard: HeardPhone[];
-  dictionaryReady: boolean;
+  /** Per token index; null while the pronunciation dictionary loads. */
+  comparison: Map<number, WordSoundComparison> | null;
+  showProcesses?: boolean;
   decorateWord?: (wordIndex: number, node: ReactNode) => ReactNode;
 }) {
   const tokens = useMemo(() => body.split(/\s+/).filter(Boolean), [body]);
-  const comparison = useMemo(() => {
-    if (!dictionaryReady) return null;
-    const spoken = tokens.map((t, i) => ({ t, i })).filter(({ t }) => isSpokenToken(t));
-    const expected = spoken.map(({ t }) => splitIpa(wordToBroadIpa(t)));
-    const rows = compareWordsToHeard(
-      spoken.map(({ t }) => t),
-      expected,
-      heard.map(([p]) => p)
-    );
-    return new Map(spoken.map(({ i }, k) => [i, rows[k]]));
-  }, [tokens, heard, dictionaryReady]);
 
   return (
     <span className="speech-sounds-line">
       {tokens.map((token, i) => {
         const row = comparison?.get(i);
         const wordNode = <span className="ss-word">{token}</span>;
+        const processes = row && showProcesses ? processesInWord(row) : [];
         return (
           <span key={i} className={`ss-col ${row ? '' : 'ss-col-plain'}`}>
             {decorateWord ? decorateWord(i, wordNode) : wordNode}
@@ -66,6 +53,25 @@ export function SpeechSoundsLine({
                     </span>
                   ))}
                 </span>
+                {processes.length > 0 && (
+                  <span className="ss-processes">
+                    {processes.map((p, k) => (
+                      <span
+                        key={k}
+                        className="ss-process"
+                        title={`${PROCESSES[p.process].label}: ${PROCESSES[p.process].description}`}
+                      >
+                        {PROCESSES[p.process].short}
+                        {p.from || p.to ? (
+                          <span className="ss-process-change">
+                            {' '}
+                            {!p.to ? `−${p.from}` : !p.from ? `+${p.to}` : `${p.from}→${p.to}`}
+                          </span>
+                        ) : null}
+                      </span>
+                    ))}
+                  </span>
+                )}
               </>
             )}
           </span>
@@ -97,6 +103,84 @@ export function SpeechSoundsLegend() {
       <span className="ss-legend-item">
         <span className="ss-phone missing">s</span> not heard
       </span>
+      <span className="ss-legend-item">
+        <span className="ss-process">Gliding</span> process
+      </span>
     </div>
+  );
+}
+
+/** Table of phonological processes with percentage of occurrence. */
+export function PhonologicalProcessSummary({
+  rows,
+  scopeLabel,
+  wordCount,
+}: {
+  rows: ProcessSummaryRow[];
+  scopeLabel: string;
+  wordCount: number;
+}) {
+  return (
+    <details className="pp-summary" open>
+      <summary>
+        <strong>Phonological processes</strong>
+        <span className="pp-summary-meta">
+          {rows.length === 0 ? 'none detected' : `${rows.length} found`} · {scopeLabel} · {wordCount} words analysed
+        </span>
+      </summary>
+      {rows.length === 0 ? (
+        <p className="pp-empty">
+          No processes detected in content words. Processes are measured against the word as written, so
+          tap any word and choose “Intended word…” if the transcript shows what was said rather than what
+          was meant.
+        </p>
+      ) : (
+        <div className="pp-table-wrap">
+          <table className="pp-table">
+            <thead>
+              <tr>
+                <th scope="col">Process</th>
+                <th scope="col" className="num" title="Times the process occurred / chances for it to occur">
+                  Times / chances
+                </th>
+                <th scope="col" className="num" title="Percentage of occurrence: times it happened ÷ chances">
+                  %
+                </th>
+                <th scope="col">Examples</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.process}>
+                  <th scope="row" title={PROCESSES[r.process].description}>
+                    {PROCESSES[r.process].label}
+                  </th>
+                  <td className="num mono">
+                    {r.occurrences}/{r.opportunities}
+                  </td>
+                  <td className={`num mono ${r.percent !== null && r.percent >= 40 ? 'pp-high' : ''}`}>
+                    {r.percent !== null ? `${r.percent}%` : '—'}
+                  </td>
+                  <td className="pp-examples">
+                    {r.examples.map((ex, k) => (
+                      <span key={k} className="pp-example">
+                        {ex.word} <span className="ss-expected">{ex.expected}</span> →{' '}
+                        <span className="ss-heard">{ex.heard || '—'}</span>
+                      </span>
+                    ))}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <p className="pp-note">
+            Automatic and approximate: “expected” is the dictionary pronunciation of the word as written, and
+            the heard sounds come from a speech-sound recognizer. Function words (the, and, is…) are skipped.
+            Processes at 40% or more are highlighted. Tap a word and choose “Intended word…” to set what
+            the child meant; the analysis updates.
+          </p>
+        </div>
+      )}
+    </details>
   );
 }

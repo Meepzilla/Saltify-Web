@@ -103,6 +103,17 @@ export function lineWindow(
       usedSpans.add(idx);
       return { start: spans[idx].s, end: spans[idx].e };
     }
+    // Edited line: lines and spans are both in time order, so take the next span after the
+    // last one used (as long as it does not start before this line's [M:SS] timestamp).
+    const lastUsed = usedSpans.size > 0 ? Math.max(...usedSpans) : -1;
+    const next = lastUsed + 1;
+    if (next < spans.length && (timestampSec === null || spans[next].s >= timestampSec - 0.05)) {
+      const keyMatchesLater = spans.some((sp, i) => i > next && !usedSpans.has(i) && sp.k === lineKey);
+      if (!keyMatchesLater) {
+        usedSpans.add(next);
+        return { start: spans[next].s, end: spans[next].e };
+      }
+    }
   }
   if (timestampSec === null) return null;
   const end = nextTimestampSec !== null && nextTimestampSec > timestampSec ? nextTimestampSec + 1 : durationSec;
@@ -111,6 +122,21 @@ export function lineWindow(
 
 export type HeardStatus = 'match' | 'different' | 'extra';
 export type SoundStatus = HeardStatus | 'missing';
+
+export interface SoundItem {
+  p: string;
+  status: SoundStatus;
+  /** Index into the word's expected phones (absent for extra sounds). */
+  ei?: number;
+  /** The expected phone this item stands for (absent for extra sounds). */
+  expected?: string;
+}
+
+/** Same sound for comparison purposes (a flap [ɾ] counts as /t/ or /d/). */
+export function samePhone(expected: string, heard: string): boolean {
+  if (comparablePhone(expected) === comparablePhone(heard)) return true;
+  return heard === 'ɾ' && comparablePhone(expected) === 'd';
+}
 
 export interface WordSoundComparison {
   /** The interpreted word as written in the transcript. */
@@ -122,7 +148,7 @@ export interface WordSoundComparison {
   /** Expected phones that were not heard (possible omissions). */
   missing: string[];
   /** Heard and missing phones together, in spoken order (for display). */
-  sequence: Array<{ p: string; status: SoundStatus }>;
+  sequence: SoundItem[];
 }
 
 /**
@@ -135,8 +161,8 @@ export function compareWordsToHeard(
   expectedPerWord: string[][],
   heard: string[]
 ): WordSoundComparison[] {
-  const flatExpected: Array<{ p: string; w: number }> = [];
-  expectedPerWord.forEach((phones, w) => phones.forEach((p) => flatExpected.push({ p, w })));
+  const flatExpected: Array<{ p: string; w: number; i: number }> = [];
+  expectedPerWord.forEach((phones, w) => phones.forEach((p, i) => flatExpected.push({ p, w, i })));
   const result: WordSoundComparison[] = words.map((word, w) => ({
     word,
     expected: expectedPerWord[w] ?? [],
@@ -155,13 +181,14 @@ export function compareWordsToHeard(
     if (op.a !== null) currentWord = flatExpected[op.a].w;
     const target = result[Math.min(currentWord, result.length - 1)];
     if (op.a !== null && op.b !== null) {
-      const same = comparablePhone(flatExpected[op.a].p) === comparablePhone(heard[op.b]);
-      const item = { p: heard[op.b], status: same ? ('match' as const) : ('different' as const) };
-      target.heard.push(item);
-      target.sequence.push(item);
+      const e = flatExpected[op.a];
+      const same = samePhone(e.p, heard[op.b]);
+      target.heard.push({ p: heard[op.b], status: same ? 'match' : 'different' });
+      target.sequence.push({ p: heard[op.b], status: same ? 'match' : 'different', ei: e.i, expected: e.p });
     } else if (op.a !== null) {
-      target.missing.push(flatExpected[op.a].p);
-      target.sequence.push({ p: flatExpected[op.a].p, status: 'missing' });
+      const e = flatExpected[op.a];
+      target.missing.push(e.p);
+      target.sequence.push({ p: e.p, status: 'missing', ei: e.i, expected: e.p });
     } else if (op.b !== null) {
       const item = { p: heard[op.b], status: 'extra' as const };
       target.heard.push(item);

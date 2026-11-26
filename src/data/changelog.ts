@@ -24,6 +24,37 @@ export const APP_VERSION: string = __APP_VERSION__;
  */
 export const CHANGELOG_RELEASES: readonly ChangelogRelease[] = [
   {
+    version: '1.9.0',
+    date: '2026-11-26',
+    title: 'Phonological Process Detection',
+    summary:
+      'Differences between the expected and heard sounds are now classified into phonological processes, with a percentage-of-occurrence summary for the child\'s utterances.',
+    changes: [
+      {
+        category: 'added',
+        summary: 'Phonological processes under each word',
+        detail:
+          'Detects final consonant deletion, cluster reduction, weak syllable deletion, initial/medial consonant deletion, velar and palatal fronting, backing, stopping, gliding, vowelization, deaffrication, affrication, labialization (th → f), interdental /s z/, glottal replacement, voicing/devoicing, assimilation and epenthesis.',
+      },
+      {
+        category: 'added',
+        summary: 'Process summary with percentage of occurrence',
+        detail:
+          'A table above the transcript lists each process with how often it occurred out of how many chances, plus examples. It counts child (C) utterances when lines are labeled. Function words are skipped, and processes at 40% or more are highlighted.',
+      },
+      {
+        category: 'added',
+        summary: '"Intended word…" on every word in the speech-sounds view',
+        detail:
+          'Processes are measured against the intended word. When the transcript shows what was said ("tun"), tap the word and set what was meant ("sun"). The heard sounds stay the same, and the analysis updates.',
+      },
+      {
+        category: 'improved',
+        summary: 'Edited lines keep their precise timing for heard-sound matching',
+      },
+    ],
+  },
+  {
     version: '1.8.0',
     date: '2026-11-26',
     title: 'Speech Sounds: What Was Heard vs. What Whisper Wrote',

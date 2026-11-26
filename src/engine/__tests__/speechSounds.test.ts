@@ -50,7 +50,7 @@ describe('speech sounds', () => {
     expect(splitIpa('wɛbbɪt')).toEqual(['w', 'ɛ', 'b', 'ɪ', 't']);
     const [, saw, a] = compareWordsToHeard(['I', 'saw', 'a'], [['aɪ'], ['s', 'ɔ'], ['ə']], ['aɪ', 's', 'ɑː', 'ə']);
     expect(saw.sequence.map((h) => h.status)).toEqual(['match', 'match']);
-    expect(a.sequence).toEqual([{ p: 'ə', status: 'match' }]);
+    expect(a.sequence).toEqual([{ p: 'ə', status: 'match', ei: 0, expected: 'ə' }]);
   });
 
   it('picks phones by time, using precise spans when the line still matches', () => {
@@ -66,5 +66,15 @@ describe('speech sounds', () => {
     expect(phonesInWindow(phones, w!.start, w!.end).map((p) => p[0])).toEqual(['a', 'b']);
     // Edited line: falls back to timestamps
     expect(lineWindow('he goed home', 2, 3, [], new Set(), 10)).toEqual({ start: 2, end: 4 });
+    // Edited lines with timing still available: take the next span in order
+    const spans = [
+      { k: 'i see', s: 0.1, e: 1 },
+      { k: 'the tun is up', s: 3.2, e: 4.4 },
+      { k: 'bye', s: 5, e: 5.5 },
+    ];
+    const u = new Set<number>();
+    expect(lineWindow('i see', 0, 0, spans, u, 10)).toEqual({ start: 0.1, end: 1 });
+    expect(lineWindow('the sun is up', 0, 0, spans, u, 10)).toEqual({ start: 3.2, end: 4.4 });
+    expect(lineWindow('bye', 0, null, spans, u, 10)).toEqual({ start: 5, end: 5.5 });
   });
 });
