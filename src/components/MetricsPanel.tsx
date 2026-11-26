@@ -1,17 +1,45 @@
 import { BarChart3, ChevronDown, ChevronUp, GitBranch } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import {
+  compareToNorms,
+  formatZScore,
+  NORM_STATUS_LABELS,
+  type NormComparison,
+  type NormStatus,
+} from '../engine/languageNorms';
 import {
   describeMetricCalculation,
   type MetricCalculationKey,
 } from '../engine/saltMetrics';
-import type { SpeakerMetrics, TranscriptMetrics } from '../types/saltify';
+import type { ClientInfo, SpeakerMetrics, TranscriptMetrics } from '../types/saltify';
 import { MetricCalculationTooltip } from './MetricCalculationTooltip';
+import { NormsComparisonCard } from './NormsComparisonCard';
 
 interface MetricsPanelProps {
   metrics: TranscriptMetrics;
+  clientInfo?: ClientInfo;
   alwaysExpanded?: boolean;
   canMarkClauses?: boolean;
   onOpenClauseCoder?: () => void;
+  onOpenClientInfo?: () => void;
+}
+
+/** Status dot shown next to metrics that were compared against age norms. */
+function NormDot({ status }: { status?: NormStatus }) {
+  if (!status) return null;
+  return (
+    <span
+      className={`norm-dot norm-${status}`}
+      title={`Age norm: ${NORM_STATUS_LABELS[status]}`}
+      aria-label={`Age norm: ${NORM_STATUS_LABELS[status]}`}
+    />
+  );
+}
+
+function buildNormTitle(label: string, norm?: NormComparison): string {
+  if (!norm) return `Click to see how ${label} was calculated`;
+  const zPart = norm.z !== null ? `, z = ${formatZScore(norm.z)}` : '';
+  return `${label} — Age norm: ${norm.rangeLabel} (${NORM_STATUS_LABELS[norm.status]}${zPart}). Click for details`;
 }
 
 type MetricScope = 'primary' | 'speaker1' | 'speaker2' | 'overall';
@@ -25,12 +53,14 @@ function SpeakerMetricsCard({
   scope,
   stats,
   accentVar,
+  normByKey,
   selectedMetric,
   onSelectMetric,
 }: {
   scope: 'speaker1' | 'speaker2' | 'overall';
   stats: SpeakerMetrics;
   accentVar?: string;
+  normByKey?: ReadonlyMap<string, NormComparison>;
   selectedMetric: SelectedMetric | null;
   onSelectMetric: (scope: MetricScope, key: MetricCalculationKey) => void;
 }) {
@@ -96,13 +126,14 @@ function SpeakerMetricsCard({
       <div className="metrics-grid">
         {cells.map((cell) => {
           const active = isSelected(cell.key);
+          const norm = normByKey?.get(cell.key);
           return (
             <button
               key={cell.key}
               type="button"
               className={`metric-cell metric-selectable ${active ? 'selected' : ''}`}
               aria-pressed={active}
-              title={`Select to see how ${cell.label} was calculated`}
+              title={buildNormTitle(cell.label, norm)}
               onClick={() => onSelectMetric(scope, cell.key)}
             >
               <span
@@ -111,7 +142,10 @@ function SpeakerMetricsCard({
               >
                 {cell.value}
               </span>
-              <span className="metric-cell-lbl">{cell.label}</span>
+              <span className="metric-cell-lbl">
+                {cell.label}
+                <NormDot status={norm?.status} />
+              </span>
             </button>
           );
         })}
@@ -132,9 +166,11 @@ function SpeakerMetricsCard({
 
 export function MetricsPanel({
   metrics,
+  clientInfo,
   alwaysExpanded = false,
   canMarkClauses = false,
   onOpenClauseCoder,
+  onOpenClientInfo,
 }: MetricsPanelProps) {
   const [expanded, setExpanded] = useState(alwaysExpanded);
   const [selectedMetric, setSelectedMetric] = useState<SelectedMetric | null>(null);
@@ -152,8 +188,17 @@ export function MetricsPanel({
   }, [selectedMetric]);
 
   // Prefer Child (speaker1) metrics in compact ribbon when labeled, else Overall
-  const primary =
-    metrics.speaker1.totalUtterances > 0 ? metrics.speaker1 : metrics.overall;
+  const primaryIsSpeaker1 = metrics.speaker1.totalUtterances > 0;
+  const primary = primaryIsSpeaker1 ? metrics.speaker1 : metrics.overall;
+
+  const normsReport = useMemo(
+    () => (clientInfo ? compareToNorms(primary, clientInfo) : null),
+    [primary, clientInfo]
+  );
+  const normByKey = useMemo(
+    () => new Map<string, NormComparison>((normsReport?.comparisons ?? []).map((c) => [c.key, c])),
+    [normsReport]
+  );
 
   const toggleMetric = (scope: MetricScope, key: MetricCalculationKey) => {
     setSelectedMetric((prev) =>
@@ -177,8 +222,19 @@ export function MetricsPanel({
       ? 'var(--speaker1)'
       : selectedMetric?.scope === 'speaker2'
       ? 'var(--speaker2)'
-      : selectedMetric?.scope === 'primary' && metrics.speaker1.totalUtterances > 0
+      : selectedMetric?.scope === 'primary' && primaryIsSpeaker1
       ? 'var(--speaker1)'
+      : undefined;
+
+  const activeTooltipIsPrimary =
+    selectedMetric !== null &&
+    (selectedMetric.scope === 'primary' ||
+      (primaryIsSpeaker1 && selectedMetric.scope === 'speaker1') ||
+      (!primaryIsSpeaker1 && selectedMetric.scope === 'overall'));
+
+  const activeNormComparison =
+    activeTooltipIsPrimary && selectedMetric
+      ? normByKey.get(selectedMetric.key)
       : undefined;
 
   const activeBreakdown =
@@ -263,13 +319,14 @@ export function MetricsPanel({
             {ribbonPills.map((pill) => {
               const active =
                 selectedMetric?.scope === 'primary' && selectedMetric.key === pill.key;
+              const norm = normByKey.get(pill.key);
               return (
                 <button
                   key={pill.key}
                   type="button"
                   className={`metric-inline metric-inline-btn ${active ? 'selected' : ''}`}
                   aria-pressed={active}
-                  title={`Click to see how ${pill.label} was calculated`}
+                  title={buildNormTitle(pill.label, norm)}
                   onClick={(e) => {
                     e.stopPropagation();
                     toggleMetric('primary', pill.key);
@@ -284,6 +341,7 @@ export function MetricsPanel({
                     {pill.value}
                   </strong>
                   <span>{pill.label}</span>
+                  <NormDot status={norm?.status} />
                 </button>
               );
             })}
@@ -330,6 +388,8 @@ export function MetricsPanel({
             breakdown={activeBreakdown}
             speakerLabel={activeTooltipStats.speaker}
             accentVar={activeTooltipAccent}
+            normComparison={activeNormComparison}
+            ageLabel={normsReport?.ageLabel}
             onClose={() => setSelectedMetric(null)}
           />
         </div>
@@ -341,6 +401,7 @@ export function MetricsPanel({
             scope="speaker1"
             stats={metrics.speaker1}
             accentVar="var(--speaker1)"
+            normByKey={primaryIsSpeaker1 ? normByKey : undefined}
             selectedMetric={selectedMetric}
             onSelectMetric={toggleMetric}
           />
@@ -354,9 +415,17 @@ export function MetricsPanel({
           <SpeakerMetricsCard
             scope="overall"
             stats={metrics.overall}
+            normByKey={!primaryIsSpeaker1 ? normByKey : undefined}
             selectedMetric={selectedMetric}
             onSelectMetric={toggleMetric}
           />
+          {normsReport && (
+            <NormsComparisonCard
+              report={normsReport}
+              speakerLabel={primary.speaker}
+              onOpenClientInfo={onOpenClientInfo}
+            />
+          )}
         </div>
       )}
     </section>

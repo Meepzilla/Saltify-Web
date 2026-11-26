@@ -24,6 +24,33 @@ export const APP_VERSION: string = __APP_VERSION__;
  */
 export const CHANGELOG_RELEASES: readonly ChangelogRelease[] = [
   {
+    version: '1.4.0',
+    date: '2026-11-25',
+    title: 'Age & Context Norms Comparison',
+    summary:
+      "Automatically compares the child's SALT metrics against published age norms using the age (or DOB + sample date) and sampling context from Client Info, with z-scores and SALT-style WNL / Borderline / Significant flags.",
+    changes: [
+      {
+        category: 'added',
+        summary: 'Age & Context Norms card in the metrics panel',
+        detail:
+          'Compares MLUm and MLUw (Miller & Chapman 1981; Rice et al. 2010), clausal density and TNW per 50 utterances (SUGAR, Pavelko & Owens 2017), % maze words (SALT databases) and intelligibility (Rice et al. 2010) against the matching age band. Shows norm mean ± SD, z-score, status and source citation, with narrative and expository genre bands for clausal density.',
+      },
+      {
+        category: 'added',
+        summary: 'Norm status dots and inline calculation tooltip comparisons',
+        detail:
+          'MLUm, MLUw, TNW, CD (SI) and Maze pills and primary speaker cells show a green, amber or red dot for within normal limits, borderline (−1 to −1.5 SD) or significant (≤ −1.5 SD). Clicking any normed metric displays its age norm range, z-score, status badge and caveats directly inside the calculation tooltip.',
+      },
+      {
+        category: 'improved',
+        summary: 'Clear caveats for sample size and context mismatches',
+        detail:
+          'Warns when there are fewer than 50 C&I utterances, when the sampling context is blank, or when a conversation norm is applied to a narrative or expository sample. Accepts ages like 4;6, 4y 6m and 54 months, with tap-to-expand row caveats for touch devices.',
+      },
+    ],
+  },
+  {
     version: '1.3.6',
     date: '2026-11-25',
     title: 'IPA Broad Transcription & Reliable Monologue Auto-Labeling',

@@ -1689,6 +1689,8 @@ export default function App() {
               <div className={mobileTab !== 'metrics' ? 'mobile-hidden' : 'mobile-scroll-slot'}>
                 <MetricsPanel
                   metrics={metrics}
+                  clientInfo={activeSession.clientInfo}
+                  onOpenClientInfo={() => setShowClientModal(true)}
                   alwaysExpanded={mobileTab === 'metrics'}
                   canMarkClauses={
                     !grammarActive &&
