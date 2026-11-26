@@ -329,10 +329,10 @@ export function ConventionPane({
           <div className="pane-empty">
             <h3>Ready for SALT coding</h3>
             <p>
-              Run <strong>Grammar Check</strong> to code child language errors, mazes,
-              and omissions, click <strong>Add Morphemes</strong> for bound inflectional
-              morphemes (<code>/s</code>, <code>/ed</code>, <code>/ing</code>), and use{' '}
-              <strong>Mark Clauses</strong> to score SALT Subordination Index (
+              Run <strong>Grammar</strong> to code child language errors, mazes, and
+              omissions, <strong>Morphemes</strong> for bound inflectional morphemes (
+              <code>/s</code>, <code>/ed</code>, <code>/ing</code>), and{' '}
+              <strong>Clauses</strong> to score SALT Subordination Index (
               <code>[SI-1]</code>, <code>[SI-2]</code>) and Clausal Density.
             </p>
           </div>

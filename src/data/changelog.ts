@@ -24,6 +24,38 @@ export const APP_VERSION: string = __APP_VERSION__;
  */
 export const CHANGELOG_RELEASES: readonly ChangelogRelease[] = [
   {
+    version: '1.4.0',
+    date: '2026-11-26',
+    title: 'Redesigned, Less Cluttered Workspace',
+    summary:
+      'A cleaner layout built for iPad and phones: a compact audio bar, Transcript / SALT tabs with an optional split view, and secondary actions tucked into ⋯ menus. On iPad landscape the transcript gets almost twice the room.',
+    changes: [
+      {
+        category: 'improved',
+        summary: 'Compact one-row audio bar',
+        detail:
+          'Record, upload, playback, waveform, speed, volume boost and Transcribe now share a single bar. Fine volume, restart, large waveform, rename, download WAV and the demo sample are in the bar\'s ⋯ menu.',
+      },
+      {
+        category: 'improved',
+        summary: 'Transcript and SALT tabs with an optional split view',
+        detail:
+          'Show one box at full width, or tap the split button to compare both side by side. Your choice is remembered on each device.',
+      },
+      {
+        category: 'improved',
+        summary: 'Fewer buttons, one place for each action',
+        detail:
+          'The sessions sidebar is a slide-out drawer on iPad and laptops. Client info, speech models, help, settings and what\'s new live in the header ⋯ menu; plain-text editing, lock, speaker names, clear and "review all lines" are in each box\'s ⋯ menu. SALT steps are Grammar, Morphemes, Clauses and POS.',
+      },
+      {
+        category: 'improved',
+        summary: 'Metrics stay on one line',
+        detail: 'The metrics bar no longer wraps, and the duplicate Mark Clauses button was removed.',
+      },
+    ],
+  },
+  {
     version: '1.3.5',
     date: '2026-11-24',
     title: 'Parts of Speech & SALT Standard Measures',

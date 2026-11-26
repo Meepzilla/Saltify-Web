@@ -66,16 +66,15 @@ export function HelpModal({ open, onClose }: HelpModalProps) {
                 works fully offline.
               </li>
               <li>
-                <strong>Label Speakers &amp; Aliases:</strong> Tap any utterance&apos;s
-                speaker pill to cycle <code>C</code> / <code>E</code>, or use{' '}
-                <strong>Label Speakers</strong> for bulk tagging and{' '}
-                <strong>Aliases</strong> to customize labels.
+                <strong>Speakers:</strong> Tap any utterance&apos;s speaker pill to cycle{' '}
+                <code>C</code> / <code>E</code>, or use <strong>Speakers</strong> for bulk
+                tagging. Change the labels with Transcript <strong>⋯ → Speaker names</strong>.
               </li>
               <li>
                 <strong>Grammar Check, Morphemes &amp; Clauses:</strong> Run{' '}
-                <strong>Grammar Check</strong> to review SALT error codes and mazes step by
-                step, click <strong>Add Morphemes</strong> for bound inflectional morphemes,
-                and open <strong>Mark Clauses</strong> to score SALT Subordination Index
+                <strong>Grammar</strong> to review SALT error codes and mazes step by step,
+                click <strong>Morphemes</strong> for bound inflectional morphemes, and open{' '}
+                <strong>Clauses</strong> to score SALT Subordination Index
                 (<code>[SI-0]</code>–<code>[SI-4+]</code>, <code>[SI-X]</code>) or tap inline
                 clause boundaries (<code>[MC]</code>, <code>[SC]</code>, <code>[RC]</code>,{' '}
                 <code>[AC]</code>, <code>[NC]</code>).
