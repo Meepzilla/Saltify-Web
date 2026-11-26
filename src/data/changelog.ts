@@ -24,6 +24,105 @@ export const APP_VERSION: string = __APP_VERSION__;
  */
 export const CHANGELOG_RELEASES: readonly ChangelogRelease[] = [
   {
+    version: '1.9.0',
+    date: '2026-11-26',
+    title: 'Phonological Process Detection',
+    summary:
+      'Differences between the expected and heard sounds are now classified into phonological processes, with a percentage-of-occurrence summary for the child\'s utterances.',
+    changes: [
+      {
+        category: 'added',
+        summary: 'Phonological processes under each word',
+        detail:
+          'Detects final consonant deletion, cluster reduction, weak syllable deletion, initial/medial consonant deletion, velar and palatal fronting, backing, stopping, gliding, vowelization, deaffrication, affrication, labialization (th → f), interdental /s z/, glottal replacement, voicing/devoicing, assimilation and epenthesis.',
+      },
+      {
+        category: 'added',
+        summary: 'Process summary with percentage of occurrence',
+        detail:
+          'A table above the transcript lists each process with how often it occurred out of how many chances, plus examples. It counts child (C) utterances when lines are labeled. Function words are skipped, and processes at 40% or more are highlighted.',
+      },
+      {
+        category: 'added',
+        summary: '"Intended word…" on every word in the speech-sounds view',
+        detail:
+          'Processes are measured against the intended word. When the transcript shows what was said ("tun"), tap the word and set what was meant ("sun"). The heard sounds stay the same, and the analysis updates.',
+      },
+      {
+        category: 'improved',
+        summary: 'Edited lines keep their precise timing for heard-sound matching',
+      },
+    ],
+  },
+  {
+    version: '1.8.0',
+    date: '2026-11-26',
+    title: 'Speech Sounds: What Was Heard vs. What Whisper Wrote',
+    summary:
+      'A second, on-device phoneme recognizer transcribes the sounds actually produced, so each utterance can show the interpreted words, their expected pronunciation, and the raw sounds heard side by side.',
+    changes: [
+      {
+        category: 'added',
+        summary: 'Detect speech sounds (Transcript or Audio ⋯ menu)',
+        detail:
+          'Runs wav2vec2 phoneme recognition (≈230 MB, downloaded once and cached) over the session audio. Unlike Whisper, it does not correct the speaker: "wabbit" stays [wæbɪt]. In testing it got 91% of phones right on clean speech and stayed close to that in noise and at child-like pitch.',
+      },
+      {
+        category: 'added',
+        summary: 'Word / expected / heard rows under every utterance',
+        detail:
+          'Each word shows its dictionary pronunciation and the sounds heard. Sounds that differ are highlighted, expected sounds that were not heard are struck through, and extra sounds are underlined. Turn the rows off with "Show heard sounds".',
+      },
+      {
+        category: 'added',
+        summary: 'Heard-sounds strip in the spectrogram',
+        detail: 'Every recognized sound is labeled at its time under the spectrogram; tap one to move the playhead there.',
+      },
+    ],
+  },
+  {
+    version: '1.7.0',
+    date: '2026-11-26',
+    title: 'Expected Words: Teach Whisper Your Sample\'s Vocabulary',
+    summary:
+      'Give Whisper the names and story words you expect in a sample and it spells them correctly far more often.',
+    changes: [
+      {
+        category: 'added',
+        summary: 'Expected words per session (Client & sample info, or audio ⋯ → Expected words…)',
+        detail:
+          'List the child\'s name, family names and story vocabulary (e.g. "Maya, frog, jar, gopher, beehive"). Whisper receives them as a hint before transcribing, including the Second Opinion model. In testing with a relevant word list, Whisper Small made 31% fewer errors on clean audio (5.8% → 4.0%) and fewer in noise (17.9% → 15.7%).',
+      },
+      {
+        category: 'improved',
+        summary: 'Use only words you expect',
+        detail:
+          'An unrelated word list made noisy recordings slightly worse in testing (17.9% → 20.8%), and a listed word can occasionally replace a similar-sounding one, so keep the list to words likely to be said. The hint never appears in the transcript.',
+      },
+    ],
+  },
+  {
+    version: '1.6.1',
+    date: '2026-11-26',
+    title: 'Type Your Own Fix & Live Review Sensitivity',
+    summary:
+      'Every flagged word now has a "Replace with…" field, and review sensitivity sliders update the highlights live without re-transcribing.',
+    changes: [
+      {
+        category: 'added',
+        summary: '"Replace with…" on every flagged word',
+        detail:
+          'Tap any underlined word to type the correct word or phrase (e.g. "went to"), alongside "Use the other model\'s word", Remove word, Keep this word and Listen & spectrogram. Other flags in the line keep their positions.',
+      },
+      {
+        category: 'added',
+        summary: 'Live review sensitivity (Transcript ⋯ → Review sensitivity)',
+        detail:
+          'Two sliders set how unsure Whisper must be before a word is flagged (default 60%) and when second-opinion disagreements are flagged (default 90%). Highlights and the flag count update while you drag; Reset restores the recommended values. Applies to sessions transcribed from this version on.',
+      },
+    ],
+  },
+  {
     version: '1.6.0',
     date: '2026-11-26',
     title: 'Second Opinion: Compare Two Whisper Models',

@@ -2,6 +2,7 @@ import {
   AlignLeft,
   AudioLines,
   Check,
+  Ear,
   Replace,
   List,
   Lock,
@@ -17,15 +18,30 @@ import {
   parseUtteranceLines,
 } from '../engine/transcriptFormat';
 import {
+  confidenceLineKey,
   countFlaggedWords,
+  DEFAULT_FLAG_THRESHOLDS,
   flaggedWordsForLine,
   VERY_LOW_CONFIDENCE_THRESHOLD,
+  type FlagThresholds,
   type WordConfidenceMap,
 } from '../engine/wordConfidence';
 import type { SpeakerAliases } from '../types/saltify';
-import { OverflowMenu } from './OverflowMenu';
+import { OverflowMenu, type OverflowMenuItem } from './OverflowMenu';
+import { FlagSensitivityControls, ReplaceWordField } from './WordReviewControls';
 import { IpaUtteranceText } from './IpaText';
 import { PosColoredText, PosLegend } from './PartsOfSpeech';
+import { PhonologicalProcessSummary, SpeechSoundsLegend, SpeechSoundsLine } from './SpeechSounds';
+import { compareUtterance } from '../engine/utteranceSounds';
+import { summarizeProcesses, isContentWord } from '../engine/phonologicalProcesses';
+import { useIpaDictionaryReady } from '../hooks/useIpaDictionaryReady';
+import {
+  lineWindow,
+  phonesInWindow,
+  type SpeechSoundsRecord,
+  type WordSoundComparison,
+  type UtteranceSpan,
+} from '../engine/speechSounds';
 
 interface TranscriptionPaneProps {
   text: string;
@@ -58,6 +74,18 @@ interface TranscriptionPaneProps {
    * null keeps the word and dismisses the flag.
    */
   onResolveWord?: (lineIndex: number, wordIndex: number, replacement: string | null) => void;
+  /** Live review sensitivity for flags. */
+  flagThresholds?: FlagThresholds;
+  onChangeFlagThresholds?: (next: FlagThresholds) => void;
+  /** Sounds heard by the phoneme recognizer (raw speech), shown under the interpreted words. */
+  speechSounds?: SpeechSoundsRecord | null;
+  /** Precise utterance timing from transcription, for matching heard sounds to lines. */
+  utteranceSpans?: UtteranceSpan[];
+  audioDurationSec?: number;
+  showSpeechSounds?: boolean;
+  onToggleShowSpeechSounds?: () => void;
+  /** Runs speech-sound detection on the session audio. */
+  onDetectSpeechSounds?: () => void;
 }
 
 export function TranscriptionPane({
@@ -81,6 +109,14 @@ export function TranscriptionPane({
   onInspectLine,
   secondOpinionLabel = 'Second model',
   onResolveWord,
+  flagThresholds,
+  onChangeFlagThresholds,
+  speechSounds = null,
+  utteranceSpans,
+  audioDurationSec = 0,
+  showSpeechSounds = true,
+  onToggleShowSpeechSounds,
+  onDetectSpeechSounds,
 }: TranscriptionPaneProps) {
   const [locked, setLocked] = useState(true);
   const [viewMode, setViewMode] = useState<'interactive' | 'raw'>('interactive');
@@ -106,79 +142,199 @@ export function TranscriptionPane({
     return active;
   }, [lines, hasAudio, currentTime]);
 
+  const thresholds = flagThresholds ?? DEFAULT_FLAG_THRESHOLDS;
   const uncertainCount = useMemo(
-    () => countFlaggedWords(nonEmptyLines.map((l) => l.body), wordConfidence),
-    [nonEmptyLines, wordConfidence]
+    () => countFlaggedWords(nonEmptyLines.map((l) => l.body), wordConfidence, thresholds),
+    [nonEmptyLines, wordConfidence, thresholds]
   );
   const showUncertain = highlightUncertainWords && uncertainCount > 0;
 
-  /** Wraps an uncertain word: amber underline (or red when very uncertain), tap to inspect. */
+  const speechSoundsVisible =
+    Boolean(speechSounds && speechSounds.phones.length > 0) && showSpeechSounds && !showIpaTranscription;
+  const ipaReady = useIpaDictionaryReady(speechSoundsVisible);
+  /**
+   * Word-by-word comparison (expected vs heard) per line index. Heard sounds are matched to lines by
+   * Whisper's utterance timing (or the line timestamps). Empty until the dictionary has loaded.
+   */
+  const soundsByLine = useMemo(() => {
+    const map = new Map<number, Map<number, WordSoundComparison>>();
+    if (!speechSoundsVisible || !speechSounds || !ipaReady) return map;
+    const used = new Set<number>();
+    const duration =
+      audioDurationSec > 0 ? audioDurationSec : speechSounds.phones[speechSounds.phones.length - 1]?.[1] ?? 0;
+    nonEmptyLines.forEach((line, k) => {
+      let next: number | null = null;
+      for (let j = k + 1; j < nonEmptyLines.length; j++) {
+        if (nonEmptyLines[j].timestampSec !== null) {
+          next = nonEmptyLines[j].timestampSec;
+          break;
+        }
+      }
+      const win = lineWindow(
+        confidenceLineKey(line.body),
+        line.timestampSec,
+        next,
+        utteranceSpans,
+        used,
+        duration
+      );
+      if (win) map.set(line.index, compareUtterance(line.body, phonesInWindow(speechSounds.phones, win.start, win.end)));
+    });
+    return map;
+  }, [speechSoundsVisible, speechSounds, ipaReady, nonEmptyLines, utteranceSpans, audioDurationSec]);
+
+  /** Phonological process totals: child utterances when lines are labeled, otherwise all lines. */
+  const processSummary = useMemo(() => {
+    if (soundsByLine.size === 0) return null;
+    const childLines = nonEmptyLines.filter((l) => l.speakerSlot === 'speaker1' && soundsByLine.has(l.index));
+    const scope = childLines.length > 0 ? childLines : nonEmptyLines.filter((l) => soundsByLine.has(l.index));
+    const words = scope.flatMap((l) => [...soundsByLine.get(l.index)!.values()]);
+    return {
+      rows: summarizeProcesses(words),
+      scopeLabel: childLines.length > 0 ? `${aliases.speaker1} utterances` : 'all utterances',
+      wordCount: words.filter((w) => isContentWord(w.word)).length,
+    };
+  }, [soundsByLine, nonEmptyLines, aliases.speaker1]);
+
+  /**
+   * Every flagged word opens the same fix menu: use the other model's word (when the models
+   * disagreed), type your own replacement, remove the word, keep it, or listen.
+   */
   const decorateFor = (lineIndex: number, body: string) => {
-    const flagged = flaggedWordsForLine(body, wordConfidence);
+    const flagged = flaggedWordsForLine(body, wordConfidence, thresholds);
     if (flagged.size === 0) return undefined;
     return (wordIndex: number, node: ReactNode) => {
       const f = flagged.get(wordIndex);
       if (!f) return node;
       const pct = Math.round(f.p * 100);
-      if (f.a !== undefined && onResolveWord) {
-        const altPct = Math.round((f.ap ?? 0) * 100);
-        const heardNothing = f.a === '';
+      const isDisagreement = f.a !== undefined;
+      const heardNothing = f.a === '';
+      const veryLow = f.p < VERY_LOW_CONFIDENCE_THRESHOLD;
+      const className = `uncertain-word ${isDisagreement ? 'disagree' : ''} ${veryLow ? 'very' : ''}`;
+      const describe = isDisagreement
+        ? heardNothing
+          ? `“${f.w}”: ${secondOpinionLabel} heard no word here (main model ${pct}% sure).`
+          : `“${f.w}”: ${secondOpinionLabel} heard “${f.a}” (main model ${pct}% sure).`
+        : `“${f.w}”: Whisper was ${pct}% sure.`;
+
+      if (!onResolveWord) {
         return (
-          <OverflowMenu
-            label={
-              heardNothing
-                ? `“${f.w}”: ${secondOpinionLabel} heard no word here. Options`
-                : `“${f.w}”: ${secondOpinionLabel} heard “${f.a}”. Options`
-            }
-            trigger={node}
-            triggerClassName={`uncertain-word disagree ${f.p < VERY_LOW_CONFIDENCE_THRESHOLD ? 'very' : ''}`}
-            items={[
-              heardNothing
-                ? {
-                    key: 'remove',
-                    label: `Remove this word (${secondOpinionLabel} heard nothing)`,
-                    icon: <Trash2 size={15} />,
-                    onSelect: () => onResolveWord(lineIndex, wordIndex, ''),
-                  }
-                : {
-                    key: 'swap',
-                    label: `Use “${f.a.replace(/[.,!?;:]+$/, '')}”`,
-                    hint: `${secondOpinionLabel} ${altPct}%`,
-                    icon: <Replace size={15} />,
-                    onSelect: () => onResolveWord(lineIndex, wordIndex, f.a ?? ''),
-                  },
-              {
-                key: 'keep',
-                label: 'Keep this word',
-                hint: `${pct}%`,
-                icon: <Check size={15} />,
-                onSelect: () => onResolveWord(lineIndex, wordIndex, null),
-              },
-              ...(onInspectLine
-                ? [
-                    {
-                      key: 'spectrogram',
-                      label: 'Listen & spectrogram',
-                      icon: <AudioLines size={15} />,
-                      dividerBefore: true,
-                      onSelect: () => onInspectLine(lineIndex),
-                    },
-                  ]
-                : []),
-            ]}
-          />
+          <button
+            type="button"
+            className={className}
+            title={`${describe} Tap to listen and see the spectrogram.`}
+            aria-label={`${describe} Open spectrogram.`}
+            onClick={() => onInspectLine?.(lineIndex)}
+          >
+            {node}
+          </button>
         );
       }
+
+      const items: OverflowMenuItem[] = [];
+      if (isDisagreement && !heardNothing) {
+        items.push({
+          key: 'swap',
+          label: `Use “${(f.a ?? '').replace(/[.,!?;:]+$/, '')}”`,
+          hint: `${secondOpinionLabel} ${Math.round((f.ap ?? 0) * 100)}%`,
+          icon: <Replace size={15} />,
+          onSelect: () => onResolveWord(lineIndex, wordIndex, f.a ?? ''),
+        });
+      }
+      items.push(
+        {
+          key: 'custom',
+          label: 'Replace with…',
+          render: (close) => (
+            <ReplaceWordField
+              initial={(body.split(/\s+/).filter(Boolean)[wordIndex] ?? '').replace(/^[^A-Za-z0-9']+|[^A-Za-z0-9']+$/g, '')}
+              onSubmit={(text) => {
+                close();
+                onResolveWord(lineIndex, wordIndex, text);
+              }}
+            />
+          ),
+        },
+        {
+          key: 'remove',
+          label: heardNothing ? `Remove word (${secondOpinionLabel} heard nothing)` : 'Remove word',
+          icon: <Trash2 size={15} />,
+          onSelect: () => onResolveWord(lineIndex, wordIndex, ''),
+        },
+        {
+          key: 'keep',
+          label: 'Keep this word',
+          hint: `${pct}%`,
+          icon: <Check size={15} />,
+          onSelect: () => onResolveWord(lineIndex, wordIndex, null),
+        }
+      );
+      if (onInspectLine) {
+        items.push({
+          key: 'spectrogram',
+          label: 'Listen & spectrogram',
+          icon: <AudioLines size={15} />,
+          dividerBefore: true,
+          onSelect: () => onInspectLine(lineIndex),
+        });
+      }
       return (
-        <button
-          type="button"
-          className={`uncertain-word ${f.p < VERY_LOW_CONFIDENCE_THRESHOLD ? 'very' : ''}`}
-          title={`Whisper was ${pct}% sure of this word. Tap to listen and see the spectrogram.`}
-          aria-label={`Uncertain word: ${f.w}, ${pct}% confidence. Open spectrogram.`}
-          onClick={() => onInspectLine?.(lineIndex)}
-        >
-          {node}
-        </button>
+        <OverflowMenu
+          label={`${describe} Fix options`}
+          trigger={node}
+          triggerClassName={className}
+          items={items}
+        />
+      );
+    };
+  };
+
+  /**
+   * In the speech-sounds view every word opens a menu: set the intended (target) word, which is
+   * what phonological processes are measured against, or listen. Flagged words keep their menu.
+   */
+  const decorateForSounds = (lineIndex: number, body: string) => {
+    const flaggedDecorate = showUncertain ? decorateFor(lineIndex, body) : undefined;
+    const flagged = showUncertain ? flaggedWordsForLine(body, wordConfidence, thresholds) : new Map();
+    if (!onResolveWord) return flaggedDecorate;
+    const words = body.split(/\s+/).filter(Boolean);
+    return (wordIndex: number, node: ReactNode) => {
+      if (flaggedDecorate && flagged.has(wordIndex)) return flaggedDecorate(wordIndex, node);
+      const current = (words[wordIndex] ?? '').replace(/^[^A-Za-z0-9']+|[^A-Za-z0-9']+$/g, '');
+      const items: OverflowMenuItem[] = [
+        {
+          key: 'target',
+          label: 'Intended word…',
+          render: (close) => (
+            <ReplaceWordField
+              initial={current}
+              label="Intended (target) word"
+              placeholder={`What the child meant by “${current}”`}
+              submitLabel="Set"
+              onSubmit={(text) => {
+                close();
+                onResolveWord(lineIndex, wordIndex, text);
+              }}
+            />
+          ),
+        },
+      ];
+      if (onInspectLine) {
+        items.push({
+          key: 'spectrogram',
+          label: 'Listen & spectrogram',
+          icon: <AudioLines size={15} />,
+          dividerBefore: true,
+          onSelect: () => onInspectLine(lineIndex),
+        });
+      }
+      return (
+        <OverflowMenu
+          label={`“${current}”: set the intended word or listen`}
+          trigger={node}
+          triggerClassName="ss-word-btn"
+          items={items}
+        />
       );
     };
   };
@@ -300,6 +456,29 @@ export function TranscriptionPane({
                     },
                   ]
                 : []),
+              ...(onDetectSpeechSounds
+                ? [
+                    {
+                      key: 'detect-sounds',
+                      label: speechSounds ? 'Re-detect speech sounds' : 'Detect speech sounds',
+                      hint: speechSounds ? `${speechSounds.phones.length}` : '~230 MB once',
+                      icon: <Ear size={15} />,
+                      dividerBefore: true,
+                      disabled: !hasAudio || disabled,
+                      onSelect: onDetectSpeechSounds,
+                    },
+                  ]
+                : []),
+              ...(speechSounds && onToggleShowSpeechSounds
+                ? [
+                    {
+                      key: 'show-sounds',
+                      label: 'Show heard sounds',
+                      checked: showSpeechSounds,
+                      onSelect: onToggleShowSpeechSounds,
+                    },
+                  ]
+                : []),
               ...(onToggleHighlightUncertainWords
                 ? [
                     {
@@ -308,6 +487,21 @@ export function TranscriptionPane({
                       hint: uncertainCount > 0 ? String(uncertainCount) : undefined,
                       checked: highlightUncertainWords,
                       onSelect: onToggleHighlightUncertainWords,
+                    },
+                  ]
+                : []),
+              ...(onChangeFlagThresholds && wordConfidence
+                ? [
+                    {
+                      key: 'sensitivity',
+                      label: 'Review sensitivity',
+                      render: () => (
+                        <FlagSensitivityControls
+                          value={thresholds}
+                          flaggedCount={uncertainCount}
+                          onChange={onChangeFlagThresholds}
+                        />
+                      ),
                     },
                   ]
                 : []),
@@ -377,6 +571,14 @@ export function TranscriptionPane({
         ) : (
           <div className="utterance-list">
             {colorPartsOfSpeech && <PosLegend compact />}
+            {speechSoundsVisible && <SpeechSoundsLegend />}
+            {speechSoundsVisible && processSummary && (
+              <PhonologicalProcessSummary
+                rows={processSummary.rows}
+                scopeLabel={processSummary.scopeLabel}
+                wordCount={processSummary.wordCount}
+              />
+            )}
             {nonEmptyLines.map((line) => (
               <div
                 key={line.index}
@@ -424,7 +626,14 @@ export function TranscriptionPane({
                         : 'var(--text-primary)',
                   }}
                 >
-                  {showIpaTranscription ? (
+                  {speechSoundsVisible && (soundsByLine.has(line.index) || !ipaReady) ? (
+                    <SpeechSoundsLine
+                      body={line.body}
+                      comparison={soundsByLine.get(line.index) ?? null}
+                      showProcesses={line.speakerSlot !== 'speaker2'}
+                      decorateWord={decorateForSounds(line.index, line.body)}
+                    />
+                  ) : showIpaTranscription ? (
                     <IpaUtteranceText
                       body={line.body}
                       colorPartsOfSpeech={colorPartsOfSpeech}

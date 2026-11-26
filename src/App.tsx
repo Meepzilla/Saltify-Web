@@ -851,6 +851,7 @@ export default function App() {
             settings.secondOpinionModelId !== settings.modelId
               ? settings.secondOpinionModelId
               : undefined,
+          vocabulary: activeSession.vocabulary,
           device: settings.device,
           modelSource: settings.modelSource,
           customModelBaseUrl: settings.customModelBaseUrl,
@@ -893,6 +894,7 @@ export default function App() {
         transcriptionText: result.transcript,
         wordConfidence: result.wordConfidence,
         secondOpinionModelId: result.secondOpinionModelId,
+        utteranceSpans: result.utteranceSpans,
       }));
       setMobileTab('transcript');
       pushToast(
@@ -920,6 +922,7 @@ export default function App() {
     activeAudioBlob,
     activeId,
     activeSession.speakerAliases,
+    activeSession.vocabulary,
     player,
     resetGrammarReview,
     settings.modelId,
@@ -1363,18 +1366,68 @@ export default function App() {
         return {
           ...s,
           transcriptionText: rawLines.join('\n'),
-          wordConfidence: resolveFlagInMap(
-            s.wordConfidence,
-            line.body,
-            newBody,
-            wordIndex,
-            replacement === ''
-          ),
+          wordConfidence: resolveFlagInMap(s.wordConfidence, line.body, newBody, wordIndex),
         };
       });
     },
     [updateActiveSession]
   );
+
+  const flagThresholds = useMemo(
+    () => ({
+      uncertainBelow: settings.uncertainWordThreshold,
+      disagreementBelow: settings.disagreementThreshold,
+    }),
+    [settings.uncertainWordThreshold, settings.disagreementThreshold]
+  );
+
+  /** Runs the phoneme recognizer over the session audio and stores the heard speech sounds. */
+  const handleDetectSpeechSounds = useCallback(async () => {
+    if (processing) return;
+    const samples = await loadSessionSamples();
+    if (!samples) {
+      pushToast('warning', 'No audio to analyse', 'Record or upload audio for this session first.');
+      return;
+    }
+    setProcessing({ kind: 'speech-sounds', stage: 'Preparing speech-sound recognition', progress: 0.02 });
+    try {
+      const record = await whisperClient.detectSpeechSounds(
+        samples,
+        { modelSource: settings.modelSource, customModelBaseUrl: settings.customModelBaseUrl },
+        (stage, progress, detail) => setProcessing({ kind: 'speech-sounds', stage, progress, detail })
+      );
+      updateActiveSession((s) => ({ ...s, speechSounds: record }));
+      if (!settings.showSpeechSounds) updateSettings({ showSpeechSounds: true });
+      setProcessing(null);
+      setMobileTab('transcript');
+      pushToast(
+        'success',
+        'Speech sounds detected',
+        `${record.phones.length} sounds recognized. Each utterance now shows the interpreted words, their expected pronunciation, and the sounds actually heard.`
+      );
+    } catch (err) {
+      setProcessing(null);
+      if (!isCancelledError(err)) {
+        pushToast(
+          'error',
+          'Speech-sound detection failed',
+          err instanceof Error ? err.message : String(err),
+          undefined,
+          getErrorDetails(err)
+        );
+      }
+    }
+  }, [
+    processing,
+    loadSessionSamples,
+    settings.modelSource,
+    settings.customModelBaseUrl,
+    settings.showSpeechSounds,
+    updateSettings,
+    updateActiveSession,
+    pushToast,
+    setMobileTab,
+  ]);
 
   /** Opens the Spectrogram at the line under the playhead (or the first line). */
   const openSpectrogramAtPlayhead = useCallback(() => {
@@ -1819,6 +1872,12 @@ export default function App() {
                   onOpenModelManager={() => setShowModelModal(true)}
                   onExpandWaveform={() => setShowWaveformModal(true)}
                   onOpenSpectrogram={openSpectrogramAtPlayhead}
+                  onEditVocabulary={() => setShowClientModal(true)}
+                  onDetectSpeechSounds={() => void handleDetectSpeechSounds()}
+                  hasSpeechSounds={Boolean(activeSession.speechSounds)}
+                  vocabularyCount={
+                    (activeSession.vocabulary ?? '').split(/[,;\n]+/).filter((w) => w.trim()).length
+                  }
                   onLoadDemoSample={handleLoadDemoSample}
                 />
               </div>
@@ -1842,6 +1901,21 @@ export default function App() {
                     }
                     onInspectLine={activeAudioBlob ? (i) => setSpectrogramLine(i) : undefined}
                     onResolveWord={handleResolveUncertainWord}
+                    flagThresholds={flagThresholds}
+                    speechSounds={activeSession.speechSounds ?? null}
+                    utteranceSpans={activeSession.utteranceSpans}
+                    audioDurationSec={activeSession.audioMeta?.duration ?? 0}
+                    showSpeechSounds={settings.showSpeechSounds}
+                    onToggleShowSpeechSounds={() =>
+                      updateSettings({ showSpeechSounds: !settings.showSpeechSounds })
+                    }
+                    onDetectSpeechSounds={() => void handleDetectSpeechSounds()}
+                    onChangeFlagThresholds={(next) =>
+                      updateSettings({
+                        uncertainWordThreshold: next.uncertainBelow,
+                        disagreementThreshold: next.disagreementBelow,
+                      })
+                    }
                     secondOpinionLabel={
                       WHISPER_MODELS.find((m) => m.id === activeSession.secondOpinionModelId)
                         ?.shortLabel ?? 'Second model'
@@ -1981,8 +2055,9 @@ export default function App() {
           open
           clientInfo={activeSession.clientInfo}
           aliases={activeSession.speakerAliases}
-          onSave={(clientInfo: ClientInfo) =>
-            updateActiveSession((s) => ({ ...s, clientInfo }))
+          vocabulary={activeSession.vocabulary ?? ''}
+          onSave={(clientInfo: ClientInfo, vocabulary: string) =>
+            updateActiveSession((s) => ({ ...s, clientInfo, vocabulary }))
           }
           onClose={() => setShowClientModal(false)}
         />
@@ -2062,6 +2137,8 @@ export default function App() {
           loadSamples={loadSessionSamples}
           player={player}
           wordConfidence={activeSession.wordConfidence}
+          flagThresholds={flagThresholds}
+          speechSounds={settings.showSpeechSounds ? activeSession.speechSounds ?? null : null}
           onClose={() => setSpectrogramLine(null)}
         />
       )}

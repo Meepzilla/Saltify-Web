@@ -22,8 +22,8 @@ export interface OverflowMenuItem {
   checked?: boolean;
   /** Draws a divider above this item. */
   dividerBefore?: boolean;
-  /** Custom content instead of a button (e.g. a slider). */
-  render?: () => ReactNode;
+  /** Custom content instead of a button (e.g. a slider or text field); `close` dismisses the menu. */
+  render?: (close: () => void) => ReactNode;
 }
 
 interface OverflowMenuProps {
@@ -155,7 +155,7 @@ export function OverflowMenu({
             <div key={item.key}>
               {item.dividerBefore && <div className="overflow-menu-divider" role="separator" />}
               {item.render ? (
-                <div className="overflow-menu-custom">{item.render()}</div>
+                <div className="overflow-menu-custom">{item.render(close)}</div>
               ) : (
                 <button
                   type="button"

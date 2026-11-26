@@ -106,6 +106,12 @@ export interface SessionRecord {
   wordConfidence?: Record<string, Array<{ i: number; w: string; p: number; a?: string; ap?: number }>>;
   /** The second-opinion model compared during the last transcription, if any. */
   secondOpinionModelId?: WhisperModelId;
+  /** Expected words for this sample (names, story vocabulary), given to Whisper as a hint. */
+  vocabulary?: string;
+  /** Speech sounds actually produced (timed IPA from the phoneme recognizer). */
+  speechSounds?: { model: string; phones: Array<[string, number, number]> };
+  /** Whisper's precise utterance timing from the last transcription. */
+  utteranceSpans?: Array<{ k: string; s: number; e: number }>;
 }
 
 export interface UtteranceLine {
@@ -176,7 +182,7 @@ export interface GrammarCheckOptions {
 }
 
 export interface ProcessingState {
-  kind: 'transcription' | 'grammar' | 'model-download';
+  kind: 'transcription' | 'grammar' | 'model-download' | 'speech-sounds';
   stage: string;
   progress: number; // 0..1
   detail?: string;
@@ -206,6 +212,12 @@ export interface AppSettings {
   highlightUncertainWords: boolean;
   /** Second model to compare against during transcription ('off' = single model). */
   secondOpinionModelId: WhisperModelId | 'off';
+  /** Review sensitivity: flag words Whisper was less sure of than this (0–1). */
+  uncertainWordThreshold: number;
+  /** Review sensitivity: flag model disagreements when the main model was less sure than this (0–1). */
+  disagreementThreshold: number;
+  /** Show heard speech sounds under each utterance (when they have been detected). */
+  showSpeechSounds: boolean;
 }
 
 export const DEFAULT_APP_SETTINGS: AppSettings = {
@@ -224,6 +236,9 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   showIpaTranscription: false,
   highlightUncertainWords: true,
   secondOpinionModelId: 'off',
+  uncertainWordThreshold: 0.6,
+  disagreementThreshold: 0.9,
+  showSpeechSounds: true,
 };
 
 export interface ToastMessage {

@@ -1,5 +1,7 @@
 import {
   AudioLines,
+  BookText,
+  Ear,
   Cpu,
   Download,
   Maximize2,
@@ -54,6 +56,13 @@ interface AudioStudioProps {
   onOpenModelManager: () => void;
   onExpandWaveform: () => void;
   onOpenSpectrogram?: () => void;
+  /** Opens the session's expected-words (vocabulary hint) editor. */
+  onEditVocabulary?: () => void;
+  /** Number of expected words currently set for this session. */
+  vocabularyCount?: number;
+  /** Runs the phoneme recognizer (sounds actually heard). */
+  onDetectSpeechSounds?: () => void;
+  hasSpeechSounds?: boolean;
   onLoadDemoSample: () => void;
 }
 
@@ -80,6 +89,10 @@ export function AudioStudio({
   onOpenModelManager,
   onExpandWaveform,
   onOpenSpectrogram,
+  onEditVocabulary,
+  vocabularyCount = 0,
+  onDetectSpeechSounds,
+  hasSpeechSounds = false,
   onLoadDemoSample,
 }: AudioStudioProps) {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -181,6 +194,30 @@ export function AudioStudio({
       disabled: !hasAudio || isRecording || processing !== null,
       onSelect: onDownloadAudio,
     },
+    ...(onEditVocabulary
+      ? [
+          {
+            key: 'vocabulary',
+            label: 'Expected words…',
+            hint: vocabularyCount > 0 ? `${vocabularyCount} set` : 'none',
+            icon: <BookText size={15} />,
+            dividerBefore: true,
+            onSelect: onEditVocabulary,
+          },
+        ]
+      : []),
+    ...(onDetectSpeechSounds
+      ? [
+          {
+            key: 'speech-sounds',
+            label: hasSpeechSounds ? 'Re-detect speech sounds' : 'Detect speech sounds',
+            hint: hasSpeechSounds ? 'done' : '~230 MB once',
+            icon: <Ear size={15} />,
+            disabled: !hasAudio || isRecording || processing !== null,
+            onSelect: onDetectSpeechSounds,
+          },
+        ]
+      : []),
     {
       key: 'sample',
       label: 'Load demo sample',

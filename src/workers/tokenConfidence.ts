@@ -92,3 +92,73 @@ export function tokenSegmentsFromRecorder(
     return [];
   }
 }
+
+interface WhisperTokenizerLike {
+  timestamp_begin?: number;
+  encode: (text: string, opts?: { add_special_tokens?: boolean }) => number[];
+  decode: (ids: number[], opts?: { skip_special_tokens?: boolean }) => string;
+  convert_tokens_to_ids: (tokens: string[]) => number[];
+}
+
+/**
+ * Whisper "previous text" prompt used as a vocabulary hint:
+ * `<|startofprev|> expected words <|startoftranscript|>`. Whisper then favours those spellings.
+ * Returns null when there is no vocabulary or the tokenizer lacks the special tokens.
+ * (Transformers.js 4.x does not wire up Whisper `prompt_ids`, but honours `decoder_input_ids`.)
+ */
+export function buildVocabularyPromptIds(
+  pipe: AutomaticSpeechRecognitionPipeline,
+  vocabulary: string | undefined
+): number[] | null {
+  const text = (vocabulary ?? '').replace(/\s+/g, ' ').trim();
+  if (!text) return null;
+  try {
+    const tokenizer = pipe.tokenizer as unknown as WhisperTokenizerLike;
+    const [prev] = tokenizer.convert_tokens_to_ids(['<|startofprev|>']);
+    const sot = (pipe.model as unknown as { config?: { decoder_start_token_id?: number } }).config
+      ?.decoder_start_token_id;
+    if (typeof prev !== 'number' || typeof sot !== 'number') return null;
+    // Whisper allows up to half its 448-token context for the prompt; keep the most recent words
+    const words = tokenizer.encode(` ${text}`, { add_special_tokens: false }).slice(-200);
+    return [prev, ...words, sot];
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Rebuilds Whisper's timestamped chunks from the recorded generated tokens (the prompt is not
+ * included, because only generated steps are recorded). Times are relative to the audio slice.
+ */
+export function chunksFromRecorder(
+  pipe: AutomaticSpeechRecognitionPipeline,
+  recorder: TokenConfidenceRecorder
+): Array<{ timestamp: [number, number | null]; text: string }> {
+  const tokenizer = pipe.tokenizer as unknown as WhisperTokenizerLike;
+  const timestampBegin = tokenizer.timestamp_begin ?? Number.MAX_SAFE_INTEGER;
+  const chunks: Array<{ timestamp: [number, number | null]; text: string }> = [];
+  let start: number | null = null;
+  let ids: number[] = [];
+  const flush = (end: number | null) => {
+    const text = ids.length ? tokenizer.decode(ids, { skip_special_tokens: true }) : '';
+    if (text.trim()) chunks.push({ timestamp: [start ?? 0, end], text });
+    ids = [];
+  };
+  for (const step of recorder.steps) {
+    if (step.id < 0) continue;
+    if (step.id >= timestampBegin) {
+      const t = Math.round((step.id - timestampBegin) * 0.02 * 100) / 100;
+      if (start === null) {
+        start = t;
+      } else {
+        flush(t);
+        start = null;
+      }
+      continue;
+    }
+    const text = tokenizer.decode([step.id], { skip_special_tokens: true });
+    if (text) ids.push(step.id); // skip end-of-text and other special tokens
+  }
+  if (ids.length) flush(null);
+  return chunks;
+}

@@ -6,14 +6,28 @@ import {
 } from '@huggingface/transformers';
 import { sliceAudioIntoPauseAwareChunks } from '../engine/audioProcessing';
 import { purgeHtmlModelCacheEntries } from '../engine/modelCache';
+import type { HeardPhone } from '../engine/speechSounds';
 import {
   extractWhisperUtterances,
   formatWhisperChunks,
   type FormattedWhisperUtterance,
 } from '../engine/transcriptFormat';
 import { annotateDisagreements } from '../engine/modelFusion';
-import { buildWordConfidenceMap, type WordConfidenceMap, type WordProbability } from '../engine/wordConfidence';
 import {
+  buildWordConfidenceMap,
+  STORE_CONFIDENCE_BELOW,
+  type WordConfidenceMap,
+  type WordProbability,
+} from '../engine/wordConfidence';
+import {
+  disposePhonemeRecognizer,
+  loadPhonemeRecognizer,
+  PHONEME_MODEL_ID,
+  recognizePhones,
+} from './phonemeRecognizer';
+import {
+  buildVocabularyPromptIds,
+  chunksFromRecorder,
   RecorderLastProcessorList,
   TokenConfidenceRecorder,
   tokenSegmentsFromRecorder,
@@ -56,7 +70,18 @@ export type WorkerRequest =
       modelId: WhisperModelId;
       /** Optional second model to compare against (flags words where the two disagree). */
       compareModelId?: WhisperModelId;
+      /** Expected words (names, story vocabulary) given to Whisper as a prompt hint. */
+      vocabulary?: string;
       device: ComputeDevice;
+      modelSource: ModelSource;
+      customModelBaseUrl: string;
+      appBaseUrl: string;
+      audio: Float32Array;
+    }
+  | {
+      /** Recognize the speech sounds actually produced (IPA), independent of Whisper's words. */
+      type: 'phonemes';
+      jobId: string;
       modelSource: ModelSource;
       customModelBaseUrl: string;
       appBaseUrl: string;
@@ -92,6 +117,12 @@ export type WorkerResponse =
       /** The second-opinion model that was compared, when it ran successfully. */
       secondOpinionModelId?: WhisperModelId;
       backendUsed: 'webgpu' | 'wasm';
+    }
+  | {
+      type: 'phonemes-done';
+      jobId: string;
+      model: string;
+      phones: HeardPhone[];
     }
   | {
       type: 'error';
@@ -544,7 +575,7 @@ async function ensurePipeline(
   return { transcriber: activePipeline, backendUsed };
 }
 
-function buildDiagnosticDetails(error: unknown, modelId: WhisperModelId, modelSource: ModelSource): string {
+function buildDiagnosticDetails(error: unknown, modelId: string, modelSource: ModelSource): string {
   const stack = error instanceof Error ? error.stack : undefined;
   const cause =
     error instanceof Error && (error as Error & { cause?: unknown }).cause
@@ -569,7 +600,7 @@ function buildDiagnosticDetails(error: unknown, modelId: WhisperModelId, modelSo
 
 function describeWorkerError(
   error: unknown,
-  modelId: WhisperModelId,
+  modelId: string,
   modelSource: ModelSource
 ): { message: string; details: string } {
   const name = error instanceof Error ? error.name : '';
@@ -618,11 +649,70 @@ function describeWorkerError(
   return { message: `${summary}\n${cause}`, details };
 }
 
+/**
+ * Speech-sound recognition: frees Whisper's memory, loads the phoneme model and returns timed IPA
+ * phones for the whole recording, processed in pause-aligned slices of up to ~15 s.
+ */
+async function runPhonemeJob(req: Extract<WorkerRequest, { type: 'phonemes' }>): Promise<void> {
+  setStage('preparing speech-sound recognition');
+  // Large models one at a time: release Whisper before loading the phoneme model (iPad memory)
+  if (activePipeline) {
+    try {
+      await activePipeline.dispose();
+    } catch {
+      // ignore
+    }
+    activePipeline = null;
+    loadedKey = null;
+    loadedBackend = null;
+  }
+  await configureSelfHostedRuntime(req.appBaseUrl, req.modelSource, req.customModelBaseUrl, 'wasm', false);
+
+  const fileProgress = new Map<string, { loaded: number; total: number }>();
+  setStage('downloading the speech-sound model');
+  const recognizer = await loadPhonemeRecognizer((info: ProgressInfo) => {
+    if (info.status === 'progress' && info.file) {
+      fileProgress.set(info.file, { loaded: info.loaded ?? 0, total: info.total ?? 0 });
+      let loaded = 0;
+      let total = 0;
+      for (const f of fileProgress.values()) {
+        loaded += f.loaded;
+        total += f.total;
+      }
+      post({
+        type: 'progress',
+        jobId: req.jobId,
+        stage: 'Loading speech-sound model',
+        progress: total > 0 ? Math.min(0.3, 0.02 + (loaded / total) * 0.28) : 0.05,
+        detail: `${(loaded / 1048576).toFixed(0)} MB${total > 0 ? ` / ${(total / 1048576).toFixed(0)} MB` : ''} (downloaded once, then cached)`,
+      });
+    }
+  });
+
+  const slices = sliceAudioIntoPauseAwareChunks(req.audio, 16000, 12, 6, 15);
+  const phones: HeardPhone[] = [];
+  for (let i = 0; i < slices.length; i++) {
+    setStage(`recognizing speech sounds ${i + 1} of ${slices.length}`);
+    post({
+      type: 'progress',
+      jobId: req.jobId,
+      stage: `Recognizing speech sounds: segment ${i + 1} of ${slices.length}`,
+      progress: 0.3 + (i / slices.length) * 0.68,
+      detail: 'Listening for the sounds actually produced (IPA)',
+    });
+    phones.push(...(await recognizePhones(recognizer, slices[i].samples, slices[i].startSec)));
+    if (i + 1 < slices.length) await yieldToEventLoop();
+  }
+  if (isLowMemoryDevice()) await disposePhonemeRecognizer();
+  post({ type: 'phonemes-done', jobId: req.jobId, model: PHONEME_MODEL_ID, phones });
+}
+
 // Catch errors that escape the try/catch below (e.g. thrown inside ONNX Runtime callbacks).
 let lastRequest: WorkerRequest | null = null;
 function reportEscapedError(error: unknown): void {
   if (!activeJobId || !lastRequest) return;
-  const { message, details } = describeWorkerError(error, lastRequest.modelId, lastRequest.modelSource);
+  const modelId = 'modelId' in lastRequest ? lastRequest.modelId : PHONEME_MODEL_ID;
+  const { message, details } = describeWorkerError(error, modelId, lastRequest.modelSource);
   post({ type: 'error', jobId: activeJobId, message, details });
 }
 self.addEventListener('error', (event: ErrorEvent) => {
@@ -661,6 +751,11 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
         modelId: req.modelId,
         backendUsed,
       });
+      return;
+    }
+
+    if (req.type === 'phonemes') {
+      await runPhonemeJob(req);
       return;
     }
 
@@ -724,12 +819,16 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
 
         setStage(`transcribing segment ${i + 1} of ${slices.length}`);
         let recorder = new TokenConfidenceRecorder();
+        let usedPrompt = false;
         const runSegment = (pipe: AutomaticSpeechRecognitionPipeline) => {
           recorder = new TokenConfidenceRecorder();
+          const promptIds = buildVocabularyPromptIds(pipe, req.vocabulary);
+          usedPrompt = promptIds !== null;
           return pipe(slice.samples, {
             return_timestamps: true,
             max_new_tokens: maxNewTokens,
             logits_processor: new RecorderLastProcessorList(recorder),
+            ...(promptIds ? { decoder_input_ids: promptIds } : {}),
           } as Parameters<AutomaticSpeechRecognitionPipeline>[1]);
         };
 
@@ -763,8 +862,11 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
         sliceWords[i] = tokenSegmentsFromRecorder(transcriber, recorder).flat();
 
         const singleOutput = Array.isArray(output) ? output[0] : output;
-        if (singleOutput?.chunks && singleOutput.chunks.length > 0) {
-          for (const ch of singleOutput.chunks) {
+        // With a vocabulary prompt, the pipeline's decoded text would start with the prompt words,
+        // so rebuild the timestamped chunks from the generated tokens only.
+        const sliceChunks = usedPrompt ? chunksFromRecorder(transcriber, recorder) : singleOutput?.chunks;
+        if (sliceChunks && sliceChunks.length > 0) {
+          for (const ch of sliceChunks) {
             const relStart = ch.timestamp?.[0] ?? 0;
             const relEnd = ch.timestamp?.[1] ?? null;
             allChunks.push({
@@ -775,7 +877,7 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
               text: ch.text,
             });
           }
-        } else if (singleOutput?.text?.trim()) {
+        } else if (!usedPrompt && singleOutput?.text?.trim()) {
           allChunks.push({
             timestamp: [slice.startSec, slice.endSec],
             text: singleOutput.text,
@@ -819,10 +921,12 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
             });
             setStage(`second-opinion segment ${i + 1} of ${slices.length}`);
             const secondRecorder = new TokenConfidenceRecorder();
+            const secondPrompt = buildVocabularyPromptIds(second.transcriber, req.vocabulary);
             await second.transcriber(slices[i].samples, {
               return_timestamps: true,
               max_new_tokens: maxTokensFor(slices[i]),
               logits_processor: new RecorderLastProcessorList(secondRecorder),
+              ...(secondPrompt ? { decoder_input_ids: secondPrompt } : {}),
             } as Parameters<AutomaticSpeechRecognitionPipeline>[1]);
             const secondWords = tokenSegmentsFromRecorder(second.transcriber, secondRecorder).flat();
             if (sliceWords[i] && secondWords.length > 0) {
@@ -848,7 +952,8 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
       const transcript = utterances.map((u) => `[${u.timestampStr}] ${u.text}`).join('\n');
       let wordConfidence: WordConfidenceMap | undefined;
       try {
-        wordConfidence = buildWordConfidenceMap(transcript, allWords);
+        // Store nearly every word's confidence so review thresholds can be tuned live
+        wordConfidence = buildWordConfidenceMap(transcript, allWords, STORE_CONFIDENCE_BELOW);
       } catch {
         wordConfidence = undefined; // confidence is a review aid; never fail transcription over it
       }
@@ -863,7 +968,11 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
       });
     }
   } catch (err) {
-    const { message, details } = describeWorkerError(err, req.modelId, req.modelSource);
+    const { message, details } = describeWorkerError(
+      err,
+      'modelId' in req ? req.modelId : PHONEME_MODEL_ID,
+      req.modelSource
+    );
     post({
       type: 'error',
       jobId: req.jobId,
