@@ -1,8 +1,11 @@
 import {
   env,
+  LogitsProcessor,
+  LogitsProcessorList,
   pipeline,
   type AutomaticSpeechRecognitionPipeline,
   type ProgressInfo,
+  type Tensor,
 } from '@huggingface/transformers';
 import { sliceAudioIntoPauseAwareChunks } from '../engine/audioProcessing';
 import { purgeHtmlModelCacheEntries } from '../engine/modelCache';
@@ -11,7 +14,60 @@ import {
   formatWhisperChunks,
   type FormattedWhisperUtterance,
 } from '../engine/transcriptFormat';
+import {
+  buildWordConfidenceMap,
+  groupTokensIntoWords,
+  type TokenProbability,
+  type WordConfidenceMap,
+  type WordProbability,
+} from '../engine/wordConfidence';
 import type { ComputeDevice, ModelSource, WhisperModelId } from '../types/saltify';
+
+/**
+ * Records the probability of the token Whisper picks at each decoding step (greedy decoding
+ * picks the highest-scoring token after all logits processors, so p = softmax max).
+ * Must run LAST so it sees Whisper's timestamp rules; see RecorderLastProcessorList.
+ */
+class TokenConfidenceRecorder extends LogitsProcessor {
+  steps: Array<{ id: number; p: number }> = [];
+
+  _call(_inputIds: bigint[][], logits: Tensor) {
+    const row = (logits as unknown as Record<number, { data: Float32Array }>)[0];
+    const data = row?.data;
+    if (data && data.length > 0) {
+      let max = -Infinity;
+      let arg = -1;
+      for (let i = 0; i < data.length; i++) {
+        if (data[i] > max) {
+          max = data[i];
+          arg = i;
+        }
+      }
+      let sum = 0;
+      for (let i = 0; i < data.length; i++) {
+        const v = data[i];
+        if (v !== -Infinity) sum += Math.exp(v - max);
+      }
+      this.steps.push({ id: arg, p: sum > 0 ? 1 / sum : 0 });
+    }
+    return logits;
+  }
+}
+
+/**
+ * A logits-processor list that keeps the confidence recorder at the end, even when Whisper's
+ * generate() pushes its own timestamp processor onto the list.
+ */
+class RecorderLastProcessorList extends LogitsProcessorList {
+  constructor(recorder: TokenConfidenceRecorder) {
+    super();
+    super.push(recorder);
+  }
+
+  push(item: LogitsProcessor) {
+    this.processors.splice(Math.max(0, this.processors.length - 1), 0, item);
+  }
+}
 
 // IMPORTANT: do not import speakerDiarizer / childGrammarEngine (or anything that pulls in
 // wink-pos-tagger / wink-lexicon) into this worker. Those multi-MB CommonJS data modules overflow
@@ -77,6 +133,8 @@ export type WorkerResponse =
       jobId: string;
       transcript: string;
       utterances?: FormattedWhisperUtterance[];
+      /** Uncertain words per line (Whisper token probability below threshold). */
+      wordConfidence?: WordConfidenceMap;
       backendUsed: 'webgpu' | 'wasm';
     }
   | {
@@ -527,6 +585,28 @@ async function ensurePipeline(
   return { transcriber: activePipeline, backendUsed };
 }
 
+/** Converts recorded token probabilities into words using the pipeline's tokenizer. */
+function tokenWordsFromRecorder(
+  pipe: AutomaticSpeechRecognitionPipeline,
+  recorder: TokenConfidenceRecorder
+): WordProbability[] {
+  try {
+    const tokenizer = pipe.tokenizer as unknown as {
+      timestamp_begin?: number;
+      decode: (ids: number[], opts?: { skip_special_tokens?: boolean }) => string;
+    };
+    const timestampBegin = tokenizer.timestamp_begin ?? Number.MAX_SAFE_INTEGER;
+    const tokens: TokenProbability[] = [];
+    for (const step of recorder.steps) {
+      if (step.id < 0 || step.id >= timestampBegin) continue; // timestamps & end-of-text
+      tokens.push({ text: tokenizer.decode([step.id], { skip_special_tokens: true }), p: step.p });
+    }
+    return groupTokensIntoWords(tokens);
+  } catch {
+    return [];
+  }
+}
+
 function buildDiagnosticDetails(error: unknown, modelId: WhisperModelId, modelSource: ModelSource): string {
   const stack = error instanceof Error ? error.stack : undefined;
   const cause =
@@ -681,6 +761,7 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
       }
 
       const allChunks: Array<{ timestamp: [number, number | null]; text: string }> = [];
+      const allWords: WordProbability[] = [];
 
       for (let i = 0; i < slices.length; i++) {
         const slice = slices[i];
@@ -699,11 +780,15 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
         const maxNewTokens = Math.min(224, Math.max(64, Math.ceil(segDurationSec * 6)));
 
         setStage(`transcribing segment ${i + 1} of ${slices.length}`);
-        const runSegment = (pipe: AutomaticSpeechRecognitionPipeline) =>
-          pipe(slice.samples, {
+        let recorder = new TokenConfidenceRecorder();
+        const runSegment = (pipe: AutomaticSpeechRecognitionPipeline) => {
+          recorder = new TokenConfidenceRecorder();
+          return pipe(slice.samples, {
             return_timestamps: true,
             max_new_tokens: maxNewTokens,
-          });
+            logits_processor: new RecorderLastProcessorList(recorder),
+          } as Parameters<AutomaticSpeechRecognitionPipeline>[1]);
+        };
 
         let output: Awaited<ReturnType<typeof runSegment>>;
         try {
@@ -731,6 +816,8 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
           setStage(`transcribing segment ${i + 1} of ${slices.length} (WASM retry)`);
           output = await runSegment(transcriber);
         }
+
+        allWords.push(...tokenWordsFromRecorder(transcriber, recorder));
 
         const singleOutput = Array.isArray(output) ? output[0] : output;
         if (singleOutput?.chunks && singleOutput.chunks.length > 0) {
@@ -765,11 +852,19 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
       }
 
       const utterances = extractWhisperUtterances(allChunks);
+      const transcript = utterances.map((u) => `[${u.timestampStr}] ${u.text}`).join('\n');
+      let wordConfidence: WordConfidenceMap | undefined;
+      try {
+        wordConfidence = buildWordConfidenceMap(transcript, allWords);
+      } catch {
+        wordConfidence = undefined; // confidence is a review aid; never fail transcription over it
+      }
       post({
         type: 'done',
         jobId: req.jobId,
-        transcript: utterances.map((u) => `[${u.timestampStr}] ${u.text}`).join('\n'),
+        transcript,
         utterances,
+        wordConfidence,
         backendUsed,
       });
     }

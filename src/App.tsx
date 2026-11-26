@@ -32,6 +32,7 @@ import { ModelManagerModal } from './components/ModelManagerModal';
 import { OverflowMenu } from './components/OverflowMenu';
 import { SettingsPage } from './components/SettingsPage';
 import { Sidebar } from './components/Sidebar';
+import { SpectrogramModal } from './components/SpectrogramModal';
 import { LabelSpeakersModal, SpeakerAliasesModal } from './components/SpeakerModals';
 import { ToastStack } from './components/Toast';
 import { TranscriptionPane } from './components/TranscriptionPane';
@@ -232,6 +233,8 @@ export default function App() {
   const [showAliasesModal, setShowAliasesModal] = useState(false);
   const [showClauseModal, setShowClauseModal] = useState(false);
   const [showWaveformModal, setShowWaveformModal] = useState(false);
+  /** Transcript line index shown in the Spectrogram view, or null when closed. */
+  const [spectrogramLine, setSpectrogramLine] = useState<number | null>(null);
 
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const [errorLogs, setErrorLogs] = useState<ErrorLogEntry[]>(() => loadErrorLogs());
@@ -444,7 +447,8 @@ export default function App() {
     showLabelSpeakersModal ||
     showAliasesModal ||
     showClauseModal ||
-    showWaveformModal;
+    showWaveformModal ||
+    spectrogramLine !== null;
 
   useEffect(() => {
     if (activeView !== 'settings' || anyModalOpen) return;
@@ -879,6 +883,7 @@ export default function App() {
       updateActiveSession((s) => ({
         ...s,
         transcriptionText: result.transcript,
+        wordConfidence: result.wordConfidence,
       }));
       setMobileTab('transcript');
       pushToast(
@@ -1314,6 +1319,35 @@ export default function App() {
   const activeDuration = activeSession.audioMeta?.duration ?? null;
   const activeClientInfo = activeSession.clientInfo;
 
+  const transcriptLines = useMemo(
+    () => parseUtteranceLines(activeTranscript, activeAliases),
+    [activeTranscript, activeAliases]
+  );
+
+  /** 16 kHz mono samples for the active session (cached after the first decode). */
+  const loadSessionSamples = useCallback(async () => {
+    if (!activeId || !activeAudioBlob) return null;
+    const cached = mono16kCacheRef.current.get(activeId);
+    if (cached) return cached;
+    const decoded = await decodeAudioBlob(activeAudioBlob);
+    mono16kCacheRef.current.set(activeId, decoded.mono16k);
+    return decoded.mono16k;
+  }, [activeId, activeAudioBlob]);
+
+  /** Opens the Spectrogram at the line under the playhead (or the first line). */
+  const openSpectrogramAtPlayhead = useCallback(() => {
+    let target = -1;
+    for (const l of transcriptLines) {
+      if (l.timestampSec !== null && l.body.trim() && l.timestampSec <= player.currentTime + 0.4) {
+        target = l.index;
+      }
+    }
+    if (target < 0) {
+      target = transcriptLines.find((l) => l.timestampSec !== null && l.body.trim())?.index ?? 0;
+    }
+    setSpectrogramLine(target);
+  }, [transcriptLines, player.currentTime]);
+
   const utteranceTimestamps = useMemo(() => {
     if (!activeTranscript) return [];
     return parseUtteranceLines(activeTranscript, activeAliases)
@@ -1742,6 +1776,7 @@ export default function App() {
                   onToggleTranscribe={handleToggleTranscribe}
                   onOpenModelManager={() => setShowModelModal(true)}
                   onExpandWaveform={() => setShowWaveformModal(true)}
+                  onOpenSpectrogram={openSpectrogramAtPlayhead}
                   onLoadDemoSample={handleLoadDemoSample}
                 />
               </div>
@@ -1758,6 +1793,12 @@ export default function App() {
                 >
                   <TranscriptionPane
                     headerLeft={splitView ? splitTranscriptHeader : editorTabsFor('transcript')}
+                    wordConfidence={activeSession.wordConfidence}
+                    highlightUncertainWords={settings.highlightUncertainWords}
+                    onToggleHighlightUncertainWords={() =>
+                      updateSettings({ highlightUncertainWords: !settings.highlightUncertainWords })
+                    }
+                    onInspectLine={activeAudioBlob ? (i) => setSpectrogramLine(i) : undefined}
                     text={activeSession.transcriptionText}
                     aliases={activeSession.speakerAliases}
                     hasAudio={Boolean(activeAudioBlob)}
@@ -1964,6 +2005,19 @@ export default function App() {
         onOpenSettings={() => openSettings('models')}
         onClose={() => setShowModelModal(false)}
       />
+
+      {spectrogramLine !== null && (
+        <SpectrogramModal
+          open
+          lines={transcriptLines}
+          lineIndex={spectrogramLine}
+          onChangeLine={setSpectrogramLine}
+          loadSamples={loadSessionSamples}
+          player={player}
+          wordConfidence={activeSession.wordConfidence}
+          onClose={() => setSpectrogramLine(null)}
+        />
+      )}
 
       <WaveformModal
         open={showWaveformModal}

@@ -5,6 +5,7 @@ import type {
   WhisperModelId,
 } from '../types/saltify';
 import { autoAssignSpeakersInTranscript } from '../engine/speakerDiarizer';
+import type { WordConfidenceMap } from '../engine/wordConfidence';
 import type { WorkerRequest, WorkerResponse } from './whisper.worker';
 
 export interface TranscribeCallbacks {
@@ -14,6 +15,8 @@ export interface TranscribeCallbacks {
 
 export interface TranscribeResult {
   transcript: string;
+  /** Uncertain words per transcript line (Whisper token probability). */
+  wordConfidence?: WordConfidenceMap;
   backendUsed: 'webgpu' | 'wasm';
   speakerCount: 1 | 2;
 }
@@ -108,6 +111,7 @@ export class WhisperWorkerClient {
     const raw = await this.runJob<{
       transcript: string;
       utterances?: Array<{ startSec: number; endSec: number; text: string }>;
+      wordConfidence?: WordConfidenceMap;
       backendUsed: 'webgpu' | 'wasm';
     }>(
       (jobId) => ({
@@ -144,6 +148,7 @@ export class WhisperWorkerClient {
     );
     return {
       transcript: diarized.transcript,
+      wordConfidence: raw.wordConfidence,
       backendUsed: raw.backendUsed,
       speakerCount: diarized.speakerCount,
     };
@@ -206,6 +211,7 @@ export class WhisperWorkerClient {
           resolve({
             transcript: msg.transcript,
             utterances: msg.utterances,
+            wordConfidence: msg.wordConfidence,
             backendUsed: msg.backendUsed,
           } as T);
         } else if (msg.type === 'error') {

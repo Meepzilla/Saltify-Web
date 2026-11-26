@@ -24,6 +24,54 @@ export const APP_VERSION: string = __APP_VERSION__;
  */
 export const CHANGELOG_RELEASES: readonly ChangelogRelease[] = [
   {
+    version: '1.5.0',
+    date: '2026-11-26',
+    title: 'Uncertain-Word Flags & Spectrogram View',
+    summary:
+      'Highlights the words Whisper was unsure about so you know where to listen again, and adds a spectrogram with formant (F1–F3) and pitch tracks for checking what the child actually said.',
+    changes: [
+      {
+        category: 'added',
+        summary: 'Uncertain words are highlighted in the Transcript',
+        detail:
+          'Whisper\'s confidence is recorded for every word during transcription. Words below 60% get an amber wavy underline (red below 35%); hover or long-press to see the percentage and tap to open that utterance in the spectrogram. Editing a line clears its highlights. Toggle in Transcript ⋯ → Highlight uncertain words.',
+      },
+      {
+        category: 'added',
+        summary: 'Spectrogram with formant and pitch tracks',
+        detail:
+          'Open from Transcript ⋯ → Spectrogram, the audio bar ⋯ menu, or by tapping an uncertain word. Shows a wideband (formants) or narrowband (harmonics) spectrogram up to 6 kHz with F1/F2/F3 dots, an F0 pitch track, a time/frequency readout, play-this-utterance, and ← / → to step through utterances. Formants use LPC with an 8000 Hz ceiling suited to children; values are approximate and never change your transcript.',
+      },
+    ],
+  },
+  {
+    version: '1.4.2',
+    date: '2026-11-26',
+    title: 'More Accurate Grammar Check for are / is / was / were',
+    summary:
+      'Grammar Check now finds the real subject before checking verb agreement, so it stops flagging correct sentences and catches errors it used to miss.',
+    changes: [
+      {
+        category: 'fixed',
+        summary: 'Correct "are" no longer flagged',
+        detail:
+          'Relative clauses ("the toys that are broken"), compound subjects ("He and she are playing") and questions ("What are you doing?") are no longer coded as errors or given an extra *are.',
+      },
+      {
+        category: 'improved',
+        summary: 'Catches agreement errors with nouns, questions and "there"',
+        detail:
+          'Codes "The dog are", "The dogs is", "My mom and dad is", "Are he coming?", "Where is they?", "There is two dogs", "Does they like it?" and "The cookies was", including plural-only nouns like pants and irregular plurals like children and feet.',
+      },
+      {
+        category: 'fixed',
+        summary: 'Fewer false /*3s and omitted-auxiliary codes',
+        detail:
+          '"He and she walk" and "the dogs that walk" no longer get /*3s, and *is / *am / *are is only inserted for a pronoun that starts its clause ("He running"), not "I saw him running". Subjunctive "if I were" is left alone, and imperatives like "Do it!" are not treated as questions.',
+      },
+    ],
+  },
+  {
     version: '1.4.1',
     date: '2026-11-26',
     title: 'Redesigned, Less Cluttered Workspace',

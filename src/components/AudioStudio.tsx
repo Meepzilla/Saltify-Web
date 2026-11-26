@@ -1,4 +1,5 @@
 import {
+  AudioLines,
   Cpu,
   Download,
   Maximize2,
@@ -52,6 +53,7 @@ interface AudioStudioProps {
   onToggleTranscribe: () => void;
   onOpenModelManager: () => void;
   onExpandWaveform: () => void;
+  onOpenSpectrogram?: () => void;
   onLoadDemoSample: () => void;
 }
 
@@ -77,6 +79,7 @@ export function AudioStudio({
   onToggleTranscribe,
   onOpenModelManager,
   onExpandWaveform,
+  onOpenSpectrogram,
   onLoadDemoSample,
 }: AudioStudioProps) {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -150,6 +153,17 @@ export function AudioStudio({
       disabled: !hasAudio,
       onSelect: onExpandWaveform,
     },
+    ...(onOpenSpectrogram
+      ? [
+          {
+            key: 'spectrogram',
+            label: 'Spectrogram & formants',
+            icon: <AudioLines size={15} />,
+            disabled: !hasAudio || isRecording,
+            onSelect: onOpenSpectrogram,
+          },
+        ]
+      : []),
     {
       key: 'rename',
       label: 'Rename audio',

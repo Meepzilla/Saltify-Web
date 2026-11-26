@@ -3178,6 +3178,145 @@
   padding: 8px 10px 10px;
 }
 
+/* Uncertain words (low Whisper confidence): tap to listen / open spectrogram */
+.uncertain-word {
+  display: inline;
+  padding: 0;
+  margin: 0;
+  border: none;
+  background: hsla(38, 95%, 55%, 0.16);
+  color: inherit;
+  font: inherit;
+  text-align: inherit;
+  border-radius: 3px;
+  text-decoration: underline wavy hsl(38, 92%, 48%);
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.uncertain-word.very {
+  background: hsla(0, 85%, 60%, 0.14);
+  text-decoration-color: hsl(0, 78%, 52%);
+}
+
+.uncertain-word:hover,
+.uncertain-word:focus-visible {
+  background: hsla(38, 95%, 55%, 0.3);
+  outline: none;
+}
+
+.uncertain-word.static {
+  cursor: default;
+}
+
+/* Spectrogram view */
+.modal-card.spectrogram-modal {
+  max-width: min(1100px, calc(100vw - 24px));
+}
+
+.spectrogram-body {
+  gap: 10px;
+}
+
+.spectrogram-utterance {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.spectrogram-utterance-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 0.95rem;
+  line-height: 1.5;
+}
+
+.spectrogram-ts {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.spectrogram-speaker {
+  font-weight: 700;
+  color: var(--text-secondary);
+}
+
+.spectrogram-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px 14px;
+  flex-wrap: wrap;
+}
+
+.spectrogram-canvas-wrap {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+}
+
+.spectrogram-canvas {
+  display: block;
+  touch-action: none;
+  cursor: crosshair;
+  border-radius: var(--radius-sm);
+}
+
+.spectrogram-empty {
+  position: absolute;
+  inset: 0 10px 32px 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: hsl(0, 0%, 85%);
+  font-size: 0.85rem;
+  z-index: 1;
+  pointer-events: none;
+}
+
+.spectrogram-readout {
+  display: flex;
+  align-items: center;
+  gap: 6px 14px;
+  flex-wrap: wrap;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  min-height: 22px;
+}
+
+.spectrogram-formant-chip,
+.spectrogram-pitch-chip {
+  padding: 1px 7px;
+  border-radius: var(--radius-pill);
+  background: #0f0c26;
+  font-weight: 700;
+}
+
+.spectrogram-pitch-chip {
+  color: #38bdf8;
+}
+
+.spectrogram-note {
+  margin: 0;
+  font-size: 0.74rem;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+@media (max-width: 768px) {
+  .modal-card.spectrogram-modal {
+    max-width: 100%;
+  }
+
+  .spectrogram-controls .editor-tablist {
+    display: inline-flex;
+  }
+}
+
 /* Sessions sidebar becomes a slide-out drawer on iPad & laptops (keep in sync with DRAWER_MAX_WIDTH) */
 @media (max-width: 1440px) {
   .app-shell,
