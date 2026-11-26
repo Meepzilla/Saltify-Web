@@ -108,6 +108,10 @@ export interface SessionRecord {
   secondOpinionModelId?: WhisperModelId;
   /** Expected words for this sample (names, story vocabulary), given to Whisper as a hint. */
   vocabulary?: string;
+  /** Speech sounds actually produced (timed IPA from the phoneme recognizer). */
+  speechSounds?: { model: string; phones: Array<[string, number, number]> };
+  /** Whisper's precise utterance timing from the last transcription. */
+  utteranceSpans?: Array<{ k: string; s: number; e: number }>;
 }
 
 export interface UtteranceLine {
@@ -178,7 +182,7 @@ export interface GrammarCheckOptions {
 }
 
 export interface ProcessingState {
-  kind: 'transcription' | 'grammar' | 'model-download';
+  kind: 'transcription' | 'grammar' | 'model-download' | 'speech-sounds';
   stage: string;
   progress: number; // 0..1
   detail?: string;
@@ -212,6 +216,8 @@ export interface AppSettings {
   uncertainWordThreshold: number;
   /** Review sensitivity: flag model disagreements when the main model was less sure than this (0–1). */
   disagreementThreshold: number;
+  /** Show heard speech sounds under each utterance (when they have been detected). */
+  showSpeechSounds: boolean;
 }
 
 export const DEFAULT_APP_SETTINGS: AppSettings = {
@@ -232,6 +238,7 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   secondOpinionModelId: 'off',
   uncertainWordThreshold: 0.6,
   disagreementThreshold: 0.9,
+  showSpeechSounds: true,
 };
 
 export interface ToastMessage {

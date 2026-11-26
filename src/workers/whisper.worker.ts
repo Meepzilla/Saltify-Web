@@ -6,6 +6,7 @@ import {
 } from '@huggingface/transformers';
 import { sliceAudioIntoPauseAwareChunks } from '../engine/audioProcessing';
 import { purgeHtmlModelCacheEntries } from '../engine/modelCache';
+import type { HeardPhone } from '../engine/speechSounds';
 import {
   extractWhisperUtterances,
   formatWhisperChunks,
@@ -18,6 +19,12 @@ import {
   type WordConfidenceMap,
   type WordProbability,
 } from '../engine/wordConfidence';
+import {
+  disposePhonemeRecognizer,
+  loadPhonemeRecognizer,
+  PHONEME_MODEL_ID,
+  recognizePhones,
+} from './phonemeRecognizer';
 import {
   buildVocabularyPromptIds,
   chunksFromRecorder,
@@ -70,6 +77,15 @@ export type WorkerRequest =
       customModelBaseUrl: string;
       appBaseUrl: string;
       audio: Float32Array;
+    }
+  | {
+      /** Recognize the speech sounds actually produced (IPA), independent of Whisper's words. */
+      type: 'phonemes';
+      jobId: string;
+      modelSource: ModelSource;
+      customModelBaseUrl: string;
+      appBaseUrl: string;
+      audio: Float32Array;
     };
 
 export type WorkerResponse =
@@ -101,6 +117,12 @@ export type WorkerResponse =
       /** The second-opinion model that was compared, when it ran successfully. */
       secondOpinionModelId?: WhisperModelId;
       backendUsed: 'webgpu' | 'wasm';
+    }
+  | {
+      type: 'phonemes-done';
+      jobId: string;
+      model: string;
+      phones: HeardPhone[];
     }
   | {
       type: 'error';
@@ -553,7 +575,7 @@ async function ensurePipeline(
   return { transcriber: activePipeline, backendUsed };
 }
 
-function buildDiagnosticDetails(error: unknown, modelId: WhisperModelId, modelSource: ModelSource): string {
+function buildDiagnosticDetails(error: unknown, modelId: string, modelSource: ModelSource): string {
   const stack = error instanceof Error ? error.stack : undefined;
   const cause =
     error instanceof Error && (error as Error & { cause?: unknown }).cause
@@ -578,7 +600,7 @@ function buildDiagnosticDetails(error: unknown, modelId: WhisperModelId, modelSo
 
 function describeWorkerError(
   error: unknown,
-  modelId: WhisperModelId,
+  modelId: string,
   modelSource: ModelSource
 ): { message: string; details: string } {
   const name = error instanceof Error ? error.name : '';
@@ -627,11 +649,70 @@ function describeWorkerError(
   return { message: `${summary}\n${cause}`, details };
 }
 
+/**
+ * Speech-sound recognition: frees Whisper's memory, loads the phoneme model and returns timed IPA
+ * phones for the whole recording, processed in pause-aligned slices of up to ~15 s.
+ */
+async function runPhonemeJob(req: Extract<WorkerRequest, { type: 'phonemes' }>): Promise<void> {
+  setStage('preparing speech-sound recognition');
+  // Large models one at a time: release Whisper before loading the phoneme model (iPad memory)
+  if (activePipeline) {
+    try {
+      await activePipeline.dispose();
+    } catch {
+      // ignore
+    }
+    activePipeline = null;
+    loadedKey = null;
+    loadedBackend = null;
+  }
+  await configureSelfHostedRuntime(req.appBaseUrl, req.modelSource, req.customModelBaseUrl, 'wasm', false);
+
+  const fileProgress = new Map<string, { loaded: number; total: number }>();
+  setStage('downloading the speech-sound model');
+  const recognizer = await loadPhonemeRecognizer((info: ProgressInfo) => {
+    if (info.status === 'progress' && info.file) {
+      fileProgress.set(info.file, { loaded: info.loaded ?? 0, total: info.total ?? 0 });
+      let loaded = 0;
+      let total = 0;
+      for (const f of fileProgress.values()) {
+        loaded += f.loaded;
+        total += f.total;
+      }
+      post({
+        type: 'progress',
+        jobId: req.jobId,
+        stage: 'Loading speech-sound model',
+        progress: total > 0 ? Math.min(0.3, 0.02 + (loaded / total) * 0.28) : 0.05,
+        detail: `${(loaded / 1048576).toFixed(0)} MB${total > 0 ? ` / ${(total / 1048576).toFixed(0)} MB` : ''} (downloaded once, then cached)`,
+      });
+    }
+  });
+
+  const slices = sliceAudioIntoPauseAwareChunks(req.audio, 16000, 12, 6, 15);
+  const phones: HeardPhone[] = [];
+  for (let i = 0; i < slices.length; i++) {
+    setStage(`recognizing speech sounds ${i + 1} of ${slices.length}`);
+    post({
+      type: 'progress',
+      jobId: req.jobId,
+      stage: `Recognizing speech sounds: segment ${i + 1} of ${slices.length}`,
+      progress: 0.3 + (i / slices.length) * 0.68,
+      detail: 'Listening for the sounds actually produced (IPA)',
+    });
+    phones.push(...(await recognizePhones(recognizer, slices[i].samples, slices[i].startSec)));
+    if (i + 1 < slices.length) await yieldToEventLoop();
+  }
+  if (isLowMemoryDevice()) await disposePhonemeRecognizer();
+  post({ type: 'phonemes-done', jobId: req.jobId, model: PHONEME_MODEL_ID, phones });
+}
+
 // Catch errors that escape the try/catch below (e.g. thrown inside ONNX Runtime callbacks).
 let lastRequest: WorkerRequest | null = null;
 function reportEscapedError(error: unknown): void {
   if (!activeJobId || !lastRequest) return;
-  const { message, details } = describeWorkerError(error, lastRequest.modelId, lastRequest.modelSource);
+  const modelId = 'modelId' in lastRequest ? lastRequest.modelId : PHONEME_MODEL_ID;
+  const { message, details } = describeWorkerError(error, modelId, lastRequest.modelSource);
   post({ type: 'error', jobId: activeJobId, message, details });
 }
 self.addEventListener('error', (event: ErrorEvent) => {
@@ -670,6 +751,11 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
         modelId: req.modelId,
         backendUsed,
       });
+      return;
+    }
+
+    if (req.type === 'phonemes') {
+      await runPhonemeJob(req);
       return;
     }
 
@@ -882,7 +968,11 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
       });
     }
   } catch (err) {
-    const { message, details } = describeWorkerError(err, req.modelId, req.modelSource);
+    const { message, details } = describeWorkerError(
+      err,
+      'modelId' in req ? req.modelId : PHONEME_MODEL_ID,
+      req.modelSource
+    );
     post({
       type: 'error',
       jobId: req.jobId,

@@ -2,6 +2,7 @@ import {
   AlignLeft,
   AudioLines,
   Check,
+  Ear,
   Replace,
   List,
   Lock,
@@ -17,6 +18,7 @@ import {
   parseUtteranceLines,
 } from '../engine/transcriptFormat';
 import {
+  confidenceLineKey,
   countFlaggedWords,
   DEFAULT_FLAG_THRESHOLDS,
   flaggedWordsForLine,
@@ -29,6 +31,15 @@ import { OverflowMenu, type OverflowMenuItem } from './OverflowMenu';
 import { FlagSensitivityControls, ReplaceWordField } from './WordReviewControls';
 import { IpaUtteranceText } from './IpaText';
 import { PosColoredText, PosLegend } from './PartsOfSpeech';
+import { SpeechSoundsLegend, SpeechSoundsLine } from './SpeechSounds';
+import { useIpaDictionaryReady } from '../hooks/useIpaDictionaryReady';
+import {
+  lineWindow,
+  phonesInWindow,
+  type HeardPhone,
+  type SpeechSoundsRecord,
+  type UtteranceSpan,
+} from '../engine/speechSounds';
 
 interface TranscriptionPaneProps {
   text: string;
@@ -64,6 +75,15 @@ interface TranscriptionPaneProps {
   /** Live review sensitivity for flags. */
   flagThresholds?: FlagThresholds;
   onChangeFlagThresholds?: (next: FlagThresholds) => void;
+  /** Sounds heard by the phoneme recognizer (raw speech), shown under the interpreted words. */
+  speechSounds?: SpeechSoundsRecord | null;
+  /** Precise utterance timing from transcription, for matching heard sounds to lines. */
+  utteranceSpans?: UtteranceSpan[];
+  audioDurationSec?: number;
+  showSpeechSounds?: boolean;
+  onToggleShowSpeechSounds?: () => void;
+  /** Runs speech-sound detection on the session audio. */
+  onDetectSpeechSounds?: () => void;
 }
 
 export function TranscriptionPane({
@@ -89,6 +109,12 @@ export function TranscriptionPane({
   onResolveWord,
   flagThresholds,
   onChangeFlagThresholds,
+  speechSounds = null,
+  utteranceSpans,
+  audioDurationSec = 0,
+  showSpeechSounds = true,
+  onToggleShowSpeechSounds,
+  onDetectSpeechSounds,
 }: TranscriptionPaneProps) {
   const [locked, setLocked] = useState(true);
   const [viewMode, setViewMode] = useState<'interactive' | 'raw'>('interactive');
@@ -120,6 +146,37 @@ export function TranscriptionPane({
     [nonEmptyLines, wordConfidence, thresholds]
   );
   const showUncertain = highlightUncertainWords && uncertainCount > 0;
+
+  const speechSoundsVisible =
+    Boolean(speechSounds && speechSounds.phones.length > 0) && showSpeechSounds && !showIpaTranscription;
+  const ipaReady = useIpaDictionaryReady(speechSoundsVisible);
+  /** Heard sounds per line index, matched by Whisper's utterance timing (or the line timestamps). */
+  const heardByLine = useMemo(() => {
+    const map = new Map<number, HeardPhone[]>();
+    if (!speechSoundsVisible || !speechSounds) return map;
+    const used = new Set<number>();
+    const duration =
+      audioDurationSec > 0 ? audioDurationSec : speechSounds.phones[speechSounds.phones.length - 1]?.[1] ?? 0;
+    nonEmptyLines.forEach((line, k) => {
+      let next: number | null = null;
+      for (let j = k + 1; j < nonEmptyLines.length; j++) {
+        if (nonEmptyLines[j].timestampSec !== null) {
+          next = nonEmptyLines[j].timestampSec;
+          break;
+        }
+      }
+      const win = lineWindow(
+        confidenceLineKey(line.body),
+        line.timestampSec,
+        next,
+        utteranceSpans,
+        used,
+        duration
+      );
+      if (win) map.set(line.index, phonesInWindow(speechSounds.phones, win.start, win.end));
+    });
+    return map;
+  }, [speechSoundsVisible, speechSounds, nonEmptyLines, utteranceSpans, audioDurationSec]);
 
   /**
    * Every flagged word opens the same fix menu: use the other model's word (when the models
@@ -331,6 +388,29 @@ export function TranscriptionPane({
                     },
                   ]
                 : []),
+              ...(onDetectSpeechSounds
+                ? [
+                    {
+                      key: 'detect-sounds',
+                      label: speechSounds ? 'Re-detect speech sounds' : 'Detect speech sounds',
+                      hint: speechSounds ? `${speechSounds.phones.length}` : '~230 MB once',
+                      icon: <Ear size={15} />,
+                      dividerBefore: true,
+                      disabled: !hasAudio || disabled,
+                      onSelect: onDetectSpeechSounds,
+                    },
+                  ]
+                : []),
+              ...(speechSounds && onToggleShowSpeechSounds
+                ? [
+                    {
+                      key: 'show-sounds',
+                      label: 'Show heard sounds',
+                      checked: showSpeechSounds,
+                      onSelect: onToggleShowSpeechSounds,
+                    },
+                  ]
+                : []),
               ...(onToggleHighlightUncertainWords
                 ? [
                     {
@@ -423,6 +503,7 @@ export function TranscriptionPane({
         ) : (
           <div className="utterance-list">
             {colorPartsOfSpeech && <PosLegend compact />}
+            {speechSoundsVisible && <SpeechSoundsLegend />}
             {nonEmptyLines.map((line) => (
               <div
                 key={line.index}
@@ -470,7 +551,14 @@ export function TranscriptionPane({
                         : 'var(--text-primary)',
                   }}
                 >
-                  {showIpaTranscription ? (
+                  {speechSoundsVisible && heardByLine.has(line.index) ? (
+                    <SpeechSoundsLine
+                      body={line.body}
+                      heard={heardByLine.get(line.index) ?? []}
+                      dictionaryReady={ipaReady}
+                      decorateWord={showUncertain ? decorateFor(line.index, line.body) : undefined}
+                    />
+                  ) : showIpaTranscription ? (
                     <IpaUtteranceText
                       body={line.body}
                       colorPartsOfSpeech={colorPartsOfSpeech}

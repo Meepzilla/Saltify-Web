@@ -24,6 +24,32 @@ export const APP_VERSION: string = __APP_VERSION__;
  */
 export const CHANGELOG_RELEASES: readonly ChangelogRelease[] = [
   {
+    version: '1.8.0',
+    date: '2026-11-26',
+    title: 'Speech Sounds: What Was Heard vs. What Whisper Wrote',
+    summary:
+      'A second, on-device phoneme recognizer transcribes the sounds actually produced, so each utterance can show the interpreted words, their expected pronunciation, and the raw sounds heard side by side.',
+    changes: [
+      {
+        category: 'added',
+        summary: 'Detect speech sounds (Transcript or Audio ⋯ menu)',
+        detail:
+          'Runs wav2vec2 phoneme recognition (≈230 MB, downloaded once and cached) over the session audio. Unlike Whisper, it does not correct the speaker: "wabbit" stays [wæbɪt]. In testing it got 91% of phones right on clean speech and stayed close to that in noise and at child-like pitch.',
+      },
+      {
+        category: 'added',
+        summary: 'Word / expected / heard rows under every utterance',
+        detail:
+          'Each word shows its dictionary pronunciation and the sounds heard. Sounds that differ are highlighted, expected sounds that were not heard are struck through, and extra sounds are underlined. Turn the rows off with "Show heard sounds".',
+      },
+      {
+        category: 'added',
+        summary: 'Heard-sounds strip in the spectrogram',
+        detail: 'Every recognized sound is labeled at its time under the spectrogram; tap one to move the playhead there.',
+      },
+    ],
+  },
+  {
     version: '1.7.0',
     date: '2026-11-26',
     title: 'Expected Words: Teach Whisper Your Sample\'s Vocabulary',
