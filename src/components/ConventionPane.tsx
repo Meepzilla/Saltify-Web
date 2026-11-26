@@ -13,11 +13,12 @@ import {
   Unlock,
   XCircle,
 } from 'lucide-react';
-import { useMemo, useRef, useState } from 'react';
+import { useMemo, useRef, useState, type ReactNode } from 'react';
 import { parseUtteranceClauseCoding } from '../engine/clauseAnalysis';
 import { hasPosCodes } from '../engine/posCodes';
 import { parseUtteranceLines } from '../engine/transcriptFormat';
 import type { SpeakerAliases } from '../types/saltify';
+import { OverflowMenu } from './OverflowMenu';
 import { PosColoredText, PosLegend } from './PartsOfSpeech';
 
 interface ConventionPaneProps {
@@ -43,6 +44,8 @@ interface ConventionPaneProps {
   onAddMorphemes: () => void;
   /** Inserts part-of-speech codes (dog[N]) on every word, or removes them if present. */
   onTogglePosCodes: () => void;
+  /** Replaces the title area (e.g. with Transcript / SALT tabs). */
+  headerLeft?: ReactNode;
   /** Color each word by part of speech (Settings → SALT & Export). */
   colorPartsOfSpeech?: boolean;
   onOpenClauseCoder: () => void;
@@ -155,6 +158,7 @@ export function ConventionPane({
   onAutoApplyAllRemaining,
   onAddMorphemes,
   onTogglePosCodes,
+  headerLeft,
   colorPartsOfSpeech = false,
   onOpenClauseCoder,
   onQuickCycleLineSi,
@@ -206,145 +210,118 @@ export function ConventionPane({
     <section className="pane-card" aria-label="SALT Convention Box">
       <div className="pane-header">
         <div className="pane-title-group">
-          <h2 className="pane-title">SALT Convention Box</h2>
-          <span className="pane-count-badge">{lines.length} lines</span>
+          {headerLeft ?? (
+            <>
+              <h2 className="pane-title">SALT Coding</h2>
+              <span className="pane-count-badge">{lines.length}</span>
+            </>
+          )}
         </div>
 
-        <div className="pane-toolbar">
-          <button
-            id="convention-view-toggle-btn"
-            type="button"
-            className="btn btn-subtle btn-sm"
-            onClick={() =>
-              setViewMode((m) => (m === 'highlighted' ? 'raw' : 'highlighted'))
-            }
-          >
-            {viewMode === 'highlighted' ? <AlignLeft size={14} /> : <Eye size={14} />}
-            <span>{viewMode === 'highlighted' ? 'Edit Text' : 'SALT View'}</span>
-          </button>
+        {/* SALT workflow: Grammar Check -> Morphemes -> Clauses -> POS codes */}
+        <div className="pane-toolbar pane-toolbar-wide">
+          <div className="workflow-steps" role="group" aria-label="SALT coding steps">
+            <button
+              id="grammar-check-btn"
+              type="button"
+              className={`btn btn-sm ${grammarActive ? 'btn-danger' : 'btn-primary'}`}
+              disabled={(!hasTranscript && !grammarActive) || disabled}
+              onClick={onStartOrCancelGrammarCheck}
+              title={
+                grammarActive
+                  ? 'Stop the grammar review'
+                  : `Review child grammar and code SALT errors, omissions and mazes${
+                      checkAllSentences ? ' (all lines)' : ''
+                    }`
+              }
+            >
+              {grammarActive ? <XCircle size={14} /> : <SpellCheck size={14} />}
+              <span>{grammarActive ? 'Stop Review' : 'Grammar'}</span>
+            </button>
 
-          <button
-            id="convention-lock-btn"
-            type="button"
-            className={`btn btn-icon ${locked ? 'btn-subtle' : 'btn-primary'}`}
-            title={
-              locked
-                ? 'Unlock to manually edit SALT conventions'
-                : 'Lock SALT conventions box'
-            }
-            aria-label={locked ? 'Unlock convention box' : 'Lock convention box'}
-            onClick={() => {
-              const nextLocked = !locked;
-              setLocked(nextLocked);
-              if (!nextLocked) setViewMode('raw');
-            }}
-          >
-            {locked ? <Lock size={15} /> : <Unlock size={15} />}
-          </button>
+            <button
+              id="add-morphemes-btn"
+              type="button"
+              className={`btn btn-sm ${morphemesApplied ? 'btn-subtle step-done' : 'btn-secondary'}`}
+              disabled={grammarActive || disabled || (!text.trim() && !hasTranscript)}
+              onClick={onAddMorphemes}
+              title="Apply SALT bound morphemes (/s, /z, /ed, /3s, /ing, contractions)"
+            >
+              <SplitSquareHorizontal size={14} />
+              <span>Morphemes</span>
+            </button>
 
-          <button
-            id="convention-clear-btn"
-            type="button"
-            className="btn btn-ghost btn-icon"
-            title="Clear SALT Convention Box"
-            aria-label="Clear SALT Convention Box"
-            disabled={!text.trim() || disabled}
-            onClick={handleClear}
-          >
-            <Trash2 size={15} />
-          </button>
-        </div>
-      </div>
+            <button
+              id="mark-clauses-btn"
+              type="button"
+              className="btn btn-secondary btn-sm"
+              disabled={grammarActive || disabled || (!text.trim() && !hasTranscript)}
+              onClick={onOpenClauseCoder}
+              title="Mark SALT clauses ([SI-0]..[SI-4+], [SI-X], [MC]/[SC]…) and compute Clausal Density"
+            >
+              <GitBranch size={14} />
+              <span>Clauses</span>
+            </button>
 
-      {/* Primary SALT Workflow Bar: Grammar Check -> Add Morphemes -> Mark Clauses */}
-      <div className="pane-subtoolbar">
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-          <button
-            id="grammar-check-btn"
-            type="button"
-            className={`btn btn-sm ${grammarActive ? 'btn-danger' : 'btn-primary'}`}
-            disabled={(!hasTranscript && !grammarActive) || disabled}
-            onClick={onStartOrCancelGrammarCheck}
-          >
-            {grammarActive ? (
-              <>
-                <XCircle size={14} />
-                <span>Stop Review</span>
-              </>
-            ) : (
-              <>
-                <SpellCheck size={14} />
-                <span>Grammar Check</span>
-              </>
-            )}
-          </button>
+            <button
+              id="pos-codes-btn"
+              type="button"
+              className={`btn btn-sm ${hasPosCodes(text) ? 'btn-subtle step-done' : 'btn-secondary'}`}
+              disabled={grammarActive || disabled || (!text.trim() && !hasTranscript)}
+              onClick={onTogglePosCodes}
+              title={
+                hasPosCodes(text)
+                  ? 'Remove part-of-speech codes ([N], [V], …) from every word'
+                  : 'Insert part-of-speech codes after every word, e.g. dog[N] run/3s[V]'
+              }
+              aria-pressed={hasPosCodes(text)}
+            >
+              <Palette size={14} />
+              <span>POS</span>
+            </button>
 
-          <button
-            id="add-morphemes-btn"
-            type="button"
-            className="btn btn-secondary btn-sm"
-            disabled={
-              grammarActive ||
-              disabled ||
-              (!text.trim() && !hasTranscript)
-            }
-            onClick={onAddMorphemes}
-            title="Apply SALT bound inflectional morphemes (/s, /z, /ed, /3s, /ing, contractions)"
-          >
-            <SplitSquareHorizontal size={14} />
-            <span>{morphemesApplied ? 'Re-Apply Morphemes' : 'Add Morphemes'}</span>
-          </button>
+          </div>
 
-          <button
-            id="mark-clauses-btn"
-            type="button"
-            className="btn btn-secondary btn-sm"
-            disabled={
-              grammarActive ||
-              disabled ||
-              (!text.trim() && !hasTranscript)
-            }
-            onClick={onOpenClauseCoder}
-            title="Mark SALT clauses ([SI-0]..[SI-4+], [SI-X] & inline [MC]/[SC]/[RC]/[AC]/[NC]) and compute Clausal Density"
-          >
-            <GitBranch size={14} />
-            <span>Mark Clauses</span>
-          </button>
-
-          <button
-            id="pos-codes-btn"
-            type="button"
-            className="btn btn-secondary btn-sm"
-            disabled={
-              grammarActive ||
-              disabled ||
-              (!text.trim() && !hasTranscript)
-            }
-            onClick={onTogglePosCodes}
-            title={
-              hasPosCodes(text)
-                ? 'Remove part-of-speech codes ([N], [V], …) from every word'
-                : 'Insert part-of-speech codes after every word, e.g. dog[N] run/3s[V]'
-            }
-          >
-            <Palette size={14} />
-            <span>{hasPosCodes(text) ? 'Remove POS Codes' : 'POS Codes'}</span>
-          </button>
-        </div>
-
-        <label
-          className="checkbox-row"
-          style={{ fontSize: '0.76rem', color: 'var(--text-secondary)' }}
-          title="Review every single utterance instead of only flagged utterances"
-        >
-          <input
-            type="checkbox"
-            checked={checkAllSentences}
-            disabled={grammarActive}
-            onChange={(e) => onToggleCheckAll(e.target.checked)}
+          <OverflowMenu
+            id="convention-menu-btn"
+            label="SALT coding options"
+            items={[
+              {
+                key: 'view',
+                label: viewMode === 'highlighted' ? 'Edit as plain text' : 'Show coded lines',
+                icon: viewMode === 'highlighted' ? <AlignLeft size={15} /> : <Eye size={15} />,
+                onSelect: () =>
+                  setViewMode((m) => (m === 'highlighted' ? 'raw' : 'highlighted')),
+              },
+              {
+                key: 'lock',
+                label: locked ? 'Unlock for typing' : 'Lock editing',
+                icon: locked ? <Unlock size={15} /> : <Lock size={15} />,
+                onSelect: () => {
+                  const nextLocked = !locked;
+                  setLocked(nextLocked);
+                  if (!nextLocked) setViewMode('raw');
+                },
+              },
+              {
+                key: 'review-all',
+                label: 'Grammar: review all lines',
+                checked: checkAllSentences,
+                disabled: grammarActive,
+                onSelect: () => onToggleCheckAll(!checkAllSentences),
+              },
+              {
+                key: 'clear',
+                label: 'Clear SALT coding',
+                icon: <Trash2 size={15} />,
+                danger: true,
+                dividerBefore: true,
+                disabled: !text.trim() || disabled,
+                onSelect: handleClear,
+              },
+            ]}
           />
-          <span>Review all lines</span>
-        </label>
+        </div>
       </div>
 
       <div className="pane-body">

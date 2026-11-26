@@ -2,12 +2,18 @@ import {
   Activity,
   ArrowLeft,
   BarChart3,
+  Bug,
+  Columns2,
+  Cpu,
   Download,
   FileText,
+  HelpCircle,
+  History,
   Menu,
   Mic,
   Pause,
   Play,
+  RectangleVertical,
   Settings,
   Share,
   SpellCheck,
@@ -23,6 +29,7 @@ import { ExportModal } from './components/ExportModal';
 import { HelpModal } from './components/HelpModal';
 import { MetricsPanel } from './components/MetricsPanel';
 import { ModelManagerModal } from './components/ModelManagerModal';
+import { OverflowMenu } from './components/OverflowMenu';
 import { SettingsPage } from './components/SettingsPage';
 import { Sidebar } from './components/Sidebar';
 import { LabelSpeakersModal, SpeakerAliasesModal } from './components/SpeakerModals';
@@ -94,6 +101,10 @@ import {
 import { getErrorDetails, isCancelledError, whisperClient } from './workers/whisperClient';
 
 type MobileTab = 'audio' | 'transcript' | 'salt' | 'metrics';
+
+/** At or below this width the sessions sidebar is a slide-out drawer (iPad, laptops). Keep in sync with app.css. */
+const DRAWER_MAX_WIDTH = 1440;
+const SPLIT_VIEW_KEY = 'saltify-web-split-view';
 
 function parseHashRoute(hash: string): { view: AppView; tab: SettingsTab } {
   const clean = hash.replace(/^#\/?/, '').toLowerCase();
@@ -185,7 +196,28 @@ export default function App() {
   // Layout & Modals
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
-  const [mobileTab, setMobileTab] = useState<MobileTab>('audio');
+  const [mobileTab, setMobileTabState] = useState<MobileTab>('audio');
+  // Tablet/desktop editor: Transcript or SALT tab, or both side by side (remembered per device)
+  const [editorTab, setEditorTab] = useState<'transcript' | 'salt'>('transcript');
+  const [splitView, setSplitView] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(SPLIT_VIEW_KEY) === '1';
+    } catch {
+      return false;
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem(SPLIT_VIEW_KEY, splitView ? '1' : '0');
+    } catch {
+      // storage unavailable (private mode) — keep in memory only
+    }
+  }, [splitView]);
+  // Actions that jump to the SALT or Transcript view on phones also switch the tablet tab
+  const setMobileTab = useCallback((tab: MobileTab) => {
+    setMobileTabState(tab);
+    if (tab === 'transcript' || tab === 'salt') setEditorTab(tab);
+  }, []);
   const [iosBannerDismissed, setIosBannerDismissed] = useState(false);
   const [dragOver, setDragOver] = useState(false);
 
@@ -879,6 +911,7 @@ export default function App() {
     settings.customModelBaseUrl,
     updateActiveSession,
     pushToast,
+    setMobileTab,
   ]);
 
   useEffect(() => {
@@ -954,7 +987,7 @@ export default function App() {
       'Demo language sample loaded',
       'Click Grammar Check → Add Morphemes to preview full SALT coding and clinical metrics.'
     );
-  }, [resetGrammarReview, updateActiveSession, pushToast]);
+  }, [resetGrammarReview, updateActiveSession, pushToast, setMobileTab]);
 
   // Step-by-Step SALT Grammar Check Workflow (Desktop Saltify parity + batch option)
   const advanceGrammarStep = useCallback(
@@ -1023,6 +1056,7 @@ export default function App() {
     settings.useOverregularizationTag,
     advanceGrammarStep,
     pushToast,
+    setMobileTab,
   ]);
 
   const handleSubmitCorrection = useCallback(() => {
@@ -1104,7 +1138,7 @@ export default function App() {
       'Inflectional morphemes coded',
       'Applied SALT /s, /z, /ed, /3s, /ing, and contraction conventions.'
     );
-  }, [activeSession, updateActiveSession, pushToast]);
+  }, [activeSession, updateActiveSession, pushToast, setMobileTab]);
 
   // Part-of-speech codes: insert dog[N] run/3s[V] on every word, or remove them
   const handleTogglePosCodes = useCallback(() => {
@@ -1131,7 +1165,7 @@ export default function App() {
       'Part-of-speech codes inserted',
       'Each spoken word now has a code such as [N], [V] or [PRO]. Mazes, comments and SALT codes were left as they were. Review them before exporting.'
     );
-  }, [activeSession, updateActiveSession, pushToast]);
+  }, [activeSession, updateActiveSession, pushToast, setMobileTab]);
 
   // SALT Clause Marking & Clausal Density (Subordination Index)
   const handleApplyClauseText = useCallback(
@@ -1157,7 +1191,7 @@ export default function App() {
           : 'Clause codes cleared.'
       );
     },
-    [activeSession, updateActiveSession, pushToast]
+    [activeSession, updateActiveSession, pushToast, setMobileTab]
   );
 
   const handleQuickCycleLineSi = useCallback(
@@ -1295,6 +1329,79 @@ export default function App() {
 
   if (!activeSession) return null;
 
+  const transcriptLineCount = activeSession.transcriptionText
+    .split(/\r?\n/)
+    .filter((l) => l.trim()).length;
+  const saltLineCount = activeSession.conventionText
+    .split(/\r?\n/)
+    .filter((l) => l.trim()).length;
+  const selectEditorTab = (tab: 'transcript' | 'salt') => {
+    setEditorTab(tab);
+    setMobileTab(tab);
+  };
+
+  // Rendered in whichever box is showing; ids only on the active copy to keep them unique
+  const editorTabsFor = (slot: 'transcript' | 'salt') => {
+    const primary = slot === editorTab;
+    return (
+      <div className="editor-tabs">
+        <div className="editor-tablist" role="tablist" aria-label="Editor view">
+          <button
+            id={primary ? 'editor-tab-transcript' : undefined}
+            type="button"
+            role="tab"
+            aria-selected={editorTab === 'transcript'}
+            className={`editor-tab ${editorTab === 'transcript' ? 'active' : ''}`}
+            onClick={() => selectEditorTab('transcript')}
+          >
+            <FileText size={14} />
+            <span>Transcript</span>
+            <span className="editor-tab-count">{transcriptLineCount}</span>
+          </button>
+          <button
+            id={primary ? 'editor-tab-salt' : undefined}
+            type="button"
+            role="tab"
+            aria-selected={editorTab === 'salt'}
+            className={`editor-tab ${editorTab === 'salt' ? 'active' : ''}`}
+            onClick={() => selectEditorTab('salt')}
+          >
+            <SpellCheck size={14} />
+            <span>SALT</span>
+            <span className="editor-tab-count">{saltLineCount}</span>
+          </button>
+        </div>
+        <button
+          id={primary ? 'split-view-btn' : undefined}
+          type="button"
+          className="btn btn-ghost btn-icon split-toggle"
+          title="Show Transcript and SALT side by side"
+          aria-label="Show Transcript and SALT side by side"
+          onClick={() => setSplitView(true)}
+        >
+          <Columns2 size={17} />
+        </button>
+      </div>
+    );
+  };
+
+  const splitTranscriptHeader = (
+    <>
+      <button
+        id="single-view-btn"
+        type="button"
+        className="btn btn-ghost btn-icon split-toggle"
+        title="Show one box at a time"
+        aria-label="Show one box at a time (tabs)"
+        onClick={() => setSplitView(false)}
+      >
+        <RectangleVertical size={16} />
+      </button>
+      <h2 className="pane-title">Transcript</h2>
+      <span className="pane-count-badge">{transcriptLineCount}</span>
+    </>
+  );
+
   return (
     <div
       className={`app-shell ${sidebarCollapsed ? 'sidebar-collapsed' : ''} ${
@@ -1328,9 +1435,6 @@ export default function App() {
         sessions={sessions}
         activeSessionId={activeSession.id}
         activeView={activeView}
-        settingsTab={settingsTab}
-        appVersion={APP_VERSION}
-        theme={settings.theme}
         isOnline={pwa.isOnline}
         canPromptInstall={pwa.canPromptInstall}
         onSelectSession={handleSelectSession}
@@ -1338,14 +1442,11 @@ export default function App() {
         onRenameSession={handleRenameSession}
         onDeleteSession={handleDeleteSession}
         onImportSessionJson={(file) => void handleImportSessionJson(file)}
-        onChangeTheme={(theme) => updateSettings({ theme })}
-        onOpenSettings={(tab) => openSettings(tab ?? 'general')}
-        onOpenHelp={() => setShowHelpModal(true)}
         onPromptInstall={() => void pwa.promptInstall()}
         onCloseMobileDrawer={() => setMobileDrawerOpen(false)}
         onCollapseSidebar={() => {
           setMobileDrawerOpen(false);
-          if (window.innerWidth > 1040) {
+          if (window.innerWidth > DRAWER_MAX_WIDTH) {
             setSidebarCollapsed(true);
           }
         }}
@@ -1363,7 +1464,7 @@ export default function App() {
                   className="btn btn-ghost btn-icon"
                   aria-label="Toggle sessions sidebar"
                   onClick={() => {
-                    if (window.innerWidth <= 1040) {
+                    if (window.innerWidth <= DRAWER_MAX_WIDTH) {
                       setMobileDrawerOpen((v) => !v);
                     } else {
                       setSidebarCollapsed((v) => !v);
@@ -1449,7 +1550,7 @@ export default function App() {
                   className="btn btn-ghost btn-icon"
                   aria-label="Toggle sessions sidebar"
                   onClick={() => {
-                    if (window.innerWidth <= 1040) {
+                    if (window.innerWidth <= DRAWER_MAX_WIDTH) {
                       setMobileDrawerOpen((v) => !v);
                     } else {
                       setSidebarCollapsed((v) => !v);
@@ -1476,26 +1577,55 @@ export default function App() {
               </div>
 
               <div className="topbar-right">
-                <button
-                  type="button"
-                  className="btn btn-ghost btn-icon"
-                  title="Client & Sample Info"
-                  aria-label="Edit Client Info"
-                  onClick={() => setShowClientModal(true)}
-                >
-                  <UserRound size={17} />
-                </button>
-
-                <button
-                  id="topbar-settings-btn"
-                  type="button"
-                  className="btn btn-ghost btn-icon"
-                  title={`Settings & Change Log (v${APP_VERSION})`}
-                  aria-label="Open Settings and Change Log"
-                  onClick={() => openSettings('general')}
-                >
-                  <Settings size={17} />
-                </button>
+                <OverflowMenu
+                  id="app-menu-btn"
+                  label="More options"
+                  items={[
+                    {
+                      key: 'client',
+                      label: 'Client & sample info',
+                      icon: <UserRound size={15} />,
+                      onSelect: () => setShowClientModal(true),
+                    },
+                    {
+                      key: 'models',
+                      label: 'Speech models',
+                      icon: <Cpu size={15} />,
+                      onSelect: () => openSettings('models'),
+                    },
+                    {
+                      key: 'help',
+                      label: 'Help & SALT guide',
+                      icon: <HelpCircle size={15} />,
+                      onSelect: () => setShowHelpModal(true),
+                    },
+                    {
+                      key: 'settings',
+                      label: 'Settings',
+                      icon: <Settings size={15} />,
+                      dividerBefore: true,
+                      onSelect: () => openSettings('general'),
+                    },
+                    {
+                      key: 'changelog',
+                      label: "What's new",
+                      icon: <History size={15} />,
+                      hint: `v${APP_VERSION}`,
+                      onSelect: () => openSettings('changelog'),
+                    },
+                    ...(errorLogs.length > 0
+                      ? [
+                          {
+                            key: 'logs',
+                            label: 'Error log',
+                            icon: <Bug size={15} />,
+                            hint: String(errorLogs.length),
+                            onSelect: () => openSettings('logs'),
+                          },
+                        ]
+                      : []),
+                  ]}
+                />
 
                 <button
                   id="open-export-btn"
@@ -1607,15 +1737,17 @@ export default function App() {
               </div>
 
               <div
-                className={`editor-panes ${
+                className={`editor-panes ${splitView ? 'split' : 'tabbed'} ${
                   mobileTab === 'audio' || mobileTab === 'metrics' ? 'mobile-hidden' : ''
                 }`}
               >
                 <div
-                  className={mobileTab !== 'transcript' ? 'mobile-hidden' : ''}
-                  style={{ display: 'flex', minHeight: 0 }}
+                  className={`editor-pane-slot ${editorTab === 'transcript' ? 'is-active' : ''} ${
+                    mobileTab !== 'transcript' ? 'mobile-hidden' : ''
+                  }`}
                 >
                   <TranscriptionPane
+                    headerLeft={splitView ? splitTranscriptHeader : editorTabsFor('transcript')}
                     text={activeSession.transcriptionText}
                     aliases={activeSession.speakerAliases}
                     hasAudio={Boolean(activeAudioBlob)}
@@ -1633,10 +1765,12 @@ export default function App() {
                 </div>
 
                 <div
-                  className={mobileTab !== 'salt' ? 'mobile-hidden' : ''}
-                  style={{ display: 'flex', minHeight: 0 }}
+                  className={`editor-pane-slot ${editorTab === 'salt' ? 'is-active' : ''} ${
+                    mobileTab !== 'salt' ? 'mobile-hidden' : ''
+                  }`}
                 >
                   <ConventionPane
+                    headerLeft={splitView ? undefined : editorTabsFor('salt')}
                     text={activeSession.conventionText}
                     hasTranscript={activeSession.transcriptionText.trim().length > 0}
                     aliases={activeSession.speakerAliases}
@@ -1672,12 +1806,6 @@ export default function App() {
                 <MetricsPanel
                   metrics={metrics}
                   alwaysExpanded={mobileTab === 'metrics'}
-                  canMarkClauses={
-                    !grammarActive &&
-                    processing === null &&
-                    Boolean(activeSession.conventionText.trim() || activeSession.transcriptionText.trim())
-                  }
-                  onOpenClauseCoder={() => setShowClauseModal(true)}
                 />
               </div>
             </main>

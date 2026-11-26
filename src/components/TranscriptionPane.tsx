@@ -8,12 +8,13 @@ import {
   Unlock,
   Users,
 } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import {
   applySpeakerLabelsToLines,
   parseUtteranceLines,
 } from '../engine/transcriptFormat';
 import type { SpeakerAliases } from '../types/saltify';
+import { OverflowMenu } from './OverflowMenu';
 import { PosColoredText, PosLegend } from './PartsOfSpeech';
 
 interface TranscriptionPaneProps {
@@ -24,6 +25,8 @@ interface TranscriptionPaneProps {
   disabled?: boolean;
   /** Color each word by part of speech (Settings → SALT & Export). */
   colorPartsOfSpeech?: boolean;
+  /** Replaces the title area (e.g. with Transcript / SALT tabs). */
+  headerLeft?: ReactNode;
   onChangeText: (nextText: string) => void;
   onSeekToTime: (seconds: number) => void;
   onOpenLabelSpeakers: () => void;
@@ -38,6 +41,7 @@ export function TranscriptionPane({
   currentTime,
   disabled = false,
   colorPartsOfSpeech = false,
+  headerLeft,
   onChangeText,
   onSeekToTime,
   onOpenLabelSpeakers,
@@ -95,86 +99,67 @@ export function TranscriptionPane({
     <section className="pane-card" aria-label="Transcription Box">
       <div className="pane-header">
         <div className="pane-title-group">
-          <h2 className="pane-title">Transcription Box</h2>
-          <span className="pane-count-badge">{nonEmptyLines.length} lines</span>
+          {headerLeft ?? (
+            <>
+              <h2 className="pane-title">Transcript</h2>
+              <span className="pane-count-badge">{nonEmptyLines.length}</span>
+            </>
+          )}
         </div>
 
         <div className="pane-toolbar">
-          <button
-            id="transcript-view-toggle-btn"
-            type="button"
-            className="btn btn-subtle btn-sm"
-            onClick={() => setViewMode((m) => (m === 'interactive' ? 'raw' : 'interactive'))}
-            title={
-              viewMode === 'interactive'
-                ? 'Switch to plain text editor'
-                : 'Switch to interactive utterance lines'
-            }
-          >
-            {viewMode === 'interactive' ? <AlignLeft size={14} /> : <List size={14} />}
-            <span>{viewMode === 'interactive' ? 'Edit Text' : 'Interactive'}</span>
-          </button>
-
-          <button
-            id="transcript-lock-btn"
-            type="button"
-            className={`btn btn-icon ${locked ? 'btn-subtle' : 'btn-primary'}`}
-            title={locked ? 'Unlock to manually edit transcript' : 'Lock transcript editing'}
-            aria-label={locked ? 'Unlock transcription box' : 'Lock transcription box'}
-            onClick={() => {
-              const nextLocked = !locked;
-              setLocked(nextLocked);
-              if (!nextLocked) setViewMode('raw');
-            }}
-          >
-            {locked ? <Lock size={15} /> : <Unlock size={15} />}
-          </button>
-
-          <button
-            id="transcript-clear-btn"
-            type="button"
-            className="btn btn-ghost btn-icon"
-            title="Clear Transcription Box"
-            aria-label="Clear Transcription Box"
-            disabled={!text.trim() || disabled}
-            onClick={handleClear}
-          >
-            <Trash2 size={15} />
-          </button>
-        </div>
-      </div>
-
-      {/* Speaker Labeling & Alias Subtoolbar (Desktop Saltify parity) */}
-      <div className="pane-subtoolbar">
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
           <button
             id="label-speakers-btn"
             type="button"
             className="btn btn-secondary btn-sm"
             disabled={!text.trim() || disabled}
             onClick={onOpenLabelSpeakers}
+            title="Assign Child / Examiner labels to lines (or tap a line's speaker badge)"
           >
             <Users size={14} />
-            <span>Label Speakers</span>
+            <span>Speakers</span>
           </button>
 
-          <button
-            id="apply-aliases-btn"
-            type="button"
-            className="btn btn-secondary btn-sm"
-            disabled={disabled}
-            onClick={onOpenAliases}
-          >
-            <Tag size={14} />
-            <span>
-              Aliases ({aliases.speaker1} / {aliases.speaker2})
-            </span>
-          </button>
+          <OverflowMenu
+            id="transcript-menu-btn"
+            label="Transcript options"
+            items={[
+              {
+                key: 'view',
+                label: viewMode === 'interactive' ? 'Edit as plain text' : 'Show utterance lines',
+                icon: viewMode === 'interactive' ? <AlignLeft size={15} /> : <List size={15} />,
+                onSelect: () => setViewMode((m) => (m === 'interactive' ? 'raw' : 'interactive')),
+              },
+              {
+                key: 'lock',
+                label: locked ? 'Unlock for typing' : 'Lock editing',
+                icon: locked ? <Unlock size={15} /> : <Lock size={15} />,
+                onSelect: () => {
+                  const nextLocked = !locked;
+                  setLocked(nextLocked);
+                  if (!nextLocked) setViewMode('raw');
+                },
+              },
+              {
+                key: 'aliases',
+                label: 'Speaker names',
+                icon: <Tag size={15} />,
+                hint: `${aliases.speaker1} / ${aliases.speaker2}`,
+                disabled,
+                onSelect: onOpenAliases,
+              },
+              {
+                key: 'clear',
+                label: 'Clear transcript',
+                icon: <Trash2 size={15} />,
+                danger: true,
+                dividerBefore: true,
+                disabled: !text.trim() || disabled,
+                onSelect: handleClear,
+              },
+            ]}
+          />
         </div>
-
-        <span style={{ fontSize: '0.74rem', color: 'var(--text-muted)' }}>
-          Tap speaker badge to toggle {aliases.speaker1}/{aliases.speaker2}
-        </span>
       </div>
 
       <div className="pane-body">
