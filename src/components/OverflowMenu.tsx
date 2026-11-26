@@ -49,7 +49,12 @@ export function OverflowMenu({
   disabled = false,
 }: OverflowMenuProps) {
   const [open, setOpen] = useState(false);
-  const [pos, setPos] = useState<{ top: number; right: number; maxHeight: number } | null>(null);
+  const [pos, setPos] = useState<{
+    top: number;
+    left?: number;
+    right?: number;
+    maxHeight: number;
+  } | null>(null);
   const buttonRef = useRef<HTMLButtonElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const menuId = useId();
@@ -61,11 +66,15 @@ export function OverflowMenu({
     const place = () => {
       const r = buttonRef.current!.getBoundingClientRect();
       const top = r.bottom + 6;
-      setPos({
-        top,
-        right: Math.max(8, window.innerWidth - r.right),
-        maxHeight: Math.max(160, window.innerHeight - top - 12),
-      });
+      const maxHeight = Math.max(160, window.innerHeight - top - 12);
+      // Right-align to the trigger when there is room (⋯ buttons); otherwise left-align
+      // (e.g. a flagged word near the left edge) so the menu never leaves the screen.
+      const approxWidth = Math.min(320, window.innerWidth - 16);
+      if (r.right - approxWidth >= 8) {
+        setPos({ top, right: Math.max(8, window.innerWidth - r.right), maxHeight });
+      } else {
+        setPos({ top, left: Math.max(8, Math.min(r.left, window.innerWidth - approxWidth - 8)), maxHeight });
+      }
     };
     place();
     window.addEventListener('resize', place);
@@ -139,7 +148,7 @@ export function OverflowMenu({
           role="menu"
           aria-label={label}
           className="overflow-menu"
-          style={{ top: pos.top, right: pos.right, maxHeight: pos.maxHeight }}
+          style={{ top: pos.top, left: pos.left, right: pos.right, maxHeight: pos.maxHeight }}
           onKeyDown={onMenuKeyDown}
         >
           {items.map((item) => (

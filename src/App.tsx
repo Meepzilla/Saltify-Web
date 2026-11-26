@@ -62,8 +62,10 @@ import {
   addInflectionalMorphemes,
   formatCorrectionForConventionBox,
 } from './engine/saltConventions';
+import { replaceWordInBody } from './engine/modelFusion';
 import { insertPosCodes } from './engine/partsOfSpeech';
 import { hasPosCodes, stripPosCodes } from './engine/posCodes';
+import { resolveFlagInMap } from './engine/wordConfidence';
 import { computeSaltMetrics } from './engine/saltMetrics';
 import { DEMO_CLIENT_INFO, DEMO_TRANSCRIPT } from './engine/sampleData';
 import {
@@ -101,6 +103,7 @@ import {
   type SpeakerAliases,
   type ToastMessage,
   type WhisperModelId,
+  WHISPER_MODELS,
 } from './types/saltify';
 import { getErrorDetails, isCancelledError, whisperClient } from './workers/whisperClient';
 
@@ -843,6 +846,11 @@ export default function App() {
         mono16k,
         {
           modelId: settings.modelId,
+          compareModelId:
+            settings.secondOpinionModelId !== 'off' &&
+            settings.secondOpinionModelId !== settings.modelId
+              ? settings.secondOpinionModelId
+              : undefined,
           device: settings.device,
           modelSource: settings.modelSource,
           customModelBaseUrl: settings.customModelBaseUrl,
@@ -884,6 +892,7 @@ export default function App() {
         ...s,
         transcriptionText: result.transcript,
         wordConfidence: result.wordConfidence,
+        secondOpinionModelId: result.secondOpinionModelId,
       }));
       setMobileTab('transcript');
       pushToast(
@@ -914,6 +923,7 @@ export default function App() {
     player,
     resetGrammarReview,
     settings.modelId,
+    settings.secondOpinionModelId,
     settings.device,
     settings.modelSource,
     settings.customModelBaseUrl,
@@ -1333,6 +1343,38 @@ export default function App() {
     mono16kCacheRef.current.set(activeId, decoded.mono16k);
     return decoded.mono16k;
   }, [activeId, activeAudioBlob]);
+
+  /**
+   * Resolves a flagged transcript word: swap in the other model's word, remove the word ('')
+   * or keep it (null). Only that flag is cleared; the line's other flags stay.
+   */
+  const handleResolveUncertainWord = useCallback(
+    (lineIndex: number, wordIndex: number, replacement: string | null) => {
+      updateActiveSession((s) => {
+        const parsed = parseUtteranceLines(s.transcriptionText, s.speakerAliases);
+        const line = parsed[lineIndex];
+        if (!line) return s;
+        const newBody =
+          replacement === null ? line.body : replaceWordInBody(line.body, wordIndex, replacement);
+        const rawTrim = line.raw.trim();
+        const prefix = rawTrim.slice(0, rawTrim.length - line.body.length);
+        const rawLines = s.transcriptionText.split(/\r?\n/);
+        rawLines[lineIndex] = `${prefix}${newBody}`;
+        return {
+          ...s,
+          transcriptionText: rawLines.join('\n'),
+          wordConfidence: resolveFlagInMap(
+            s.wordConfidence,
+            line.body,
+            newBody,
+            wordIndex,
+            replacement === ''
+          ),
+        };
+      });
+    },
+    [updateActiveSession]
+  );
 
   /** Opens the Spectrogram at the line under the playhead (or the first line). */
   const openSpectrogramAtPlayhead = useCallback(() => {
@@ -1799,6 +1841,11 @@ export default function App() {
                       updateSettings({ highlightUncertainWords: !settings.highlightUncertainWords })
                     }
                     onInspectLine={activeAudioBlob ? (i) => setSpectrogramLine(i) : undefined}
+                    onResolveWord={handleResolveUncertainWord}
+                    secondOpinionLabel={
+                      WHISPER_MODELS.find((m) => m.id === activeSession.secondOpinionModelId)
+                        ?.shortLabel ?? 'Second model'
+                    }
                     text={activeSession.transcriptionText}
                     aliases={activeSession.speakerAliases}
                     hasAudio={Boolean(activeAudioBlob)}

@@ -17,6 +17,8 @@ export interface TranscribeResult {
   transcript: string;
   /** Uncertain words per transcript line (Whisper token probability). */
   wordConfidence?: WordConfidenceMap;
+  /** Second-opinion model that was compared, when it ran. */
+  secondOpinionModelId?: WhisperModelId;
   backendUsed: 'webgpu' | 'wasm';
   speakerCount: 1 | 2;
 }
@@ -28,6 +30,8 @@ export interface PreloadResult {
 
 export interface WhisperModelRuntimeOptions {
   modelId: WhisperModelId;
+  /** Second model to compare against during transcription (flags disagreements). */
+  compareModelId?: WhisperModelId;
   device: ComputeDevice;
   modelSource: ModelSource;
   customModelBaseUrl: string;
@@ -112,12 +116,14 @@ export class WhisperWorkerClient {
       transcript: string;
       utterances?: Array<{ startSec: number; endSec: number; text: string }>;
       wordConfidence?: WordConfidenceMap;
+      secondOpinionModelId?: WhisperModelId;
       backendUsed: 'webgpu' | 'wasm';
     }>(
       (jobId) => ({
         type: 'transcribe',
         jobId,
         modelId: options.modelId,
+        compareModelId: options.compareModelId,
         device: options.device,
         modelSource: options.modelSource,
         customModelBaseUrl: options.customModelBaseUrl,
@@ -149,6 +155,7 @@ export class WhisperWorkerClient {
     return {
       transcript: diarized.transcript,
       wordConfidence: raw.wordConfidence,
+      secondOpinionModelId: raw.secondOpinionModelId,
       backendUsed: raw.backendUsed,
       speakerCount: diarized.speakerCount,
     };
@@ -212,6 +219,7 @@ export class WhisperWorkerClient {
             transcript: msg.transcript,
             utterances: msg.utterances,
             wordConfidence: msg.wordConfidence,
+            secondOpinionModelId: msg.secondOpinionModelId,
             backendUsed: msg.backendUsed,
           } as T);
         } else if (msg.type === 'error') {

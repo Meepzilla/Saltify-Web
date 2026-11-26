@@ -650,6 +650,50 @@ export function SettingsPage({
                 </div>
               </div>
 
+              {/* Second opinion: compare with another model during transcription */}
+              <div className="settings-card">
+                <div className="settings-card-header">
+                  <h3 className="settings-card-title">Second Opinion</h3>
+                </div>
+                <p className="settings-card-desc">
+                  Transcribe with a second Whisper model as well and flag the words where the two
+                  disagree. Your transcript still comes from the main model; tap a dashed word to
+                  see what the other model heard and swap it in with one tap. In testing this
+                  caught about 66% of Whisper Small&apos;s mistakes instead of 57%, with a similar
+                  number of flags. It adds roughly 50% to transcription time (Small + Base) and
+                  is best on a laptop or for shorter samples on iPad.
+                </p>
+                <div className="form-field">
+                  <label className="form-label" htmlFor="setting-second-opinion">
+                    Compare with
+                  </label>
+                  <select
+                    id="setting-second-opinion"
+                    className="field-select"
+                    value={settings.secondOpinionModelId}
+                    onChange={(e) =>
+                      onUpdateSettings({
+                        secondOpinionModelId: e.target.value as AppSettings['secondOpinionModelId'],
+                      })
+                    }
+                  >
+                    <option value="off">Off (main model only)</option>
+                    {WHISPER_MODELS.filter((m) => m.id !== settings.modelId).map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.label} · {m.sizeLabel}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                {settings.secondOpinionModelId !== 'off' &&
+                  settings.secondOpinionModelId === settings.modelId && (
+                    <p className="settings-card-desc" style={{ marginTop: 8 }}>
+                      This is the same as your main model, so no comparison will run. Choose a
+                      different model.
+                    </p>
+                  )}
+              </div>
+
               <div className="settings-card">
                 <div className="settings-card-header">
                   <h3 className="settings-card-title">
