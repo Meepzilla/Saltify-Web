@@ -19,6 +19,8 @@ import {
   type WordProbability,
 } from '../engine/wordConfidence';
 import {
+  buildVocabularyPromptIds,
+  chunksFromRecorder,
   RecorderLastProcessorList,
   TokenConfidenceRecorder,
   tokenSegmentsFromRecorder,
@@ -61,6 +63,8 @@ export type WorkerRequest =
       modelId: WhisperModelId;
       /** Optional second model to compare against (flags words where the two disagree). */
       compareModelId?: WhisperModelId;
+      /** Expected words (names, story vocabulary) given to Whisper as a prompt hint. */
+      vocabulary?: string;
       device: ComputeDevice;
       modelSource: ModelSource;
       customModelBaseUrl: string;
@@ -729,12 +733,16 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
 
         setStage(`transcribing segment ${i + 1} of ${slices.length}`);
         let recorder = new TokenConfidenceRecorder();
+        let usedPrompt = false;
         const runSegment = (pipe: AutomaticSpeechRecognitionPipeline) => {
           recorder = new TokenConfidenceRecorder();
+          const promptIds = buildVocabularyPromptIds(pipe, req.vocabulary);
+          usedPrompt = promptIds !== null;
           return pipe(slice.samples, {
             return_timestamps: true,
             max_new_tokens: maxNewTokens,
             logits_processor: new RecorderLastProcessorList(recorder),
+            ...(promptIds ? { decoder_input_ids: promptIds } : {}),
           } as Parameters<AutomaticSpeechRecognitionPipeline>[1]);
         };
 
@@ -768,8 +776,11 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
         sliceWords[i] = tokenSegmentsFromRecorder(transcriber, recorder).flat();
 
         const singleOutput = Array.isArray(output) ? output[0] : output;
-        if (singleOutput?.chunks && singleOutput.chunks.length > 0) {
-          for (const ch of singleOutput.chunks) {
+        // With a vocabulary prompt, the pipeline's decoded text would start with the prompt words,
+        // so rebuild the timestamped chunks from the generated tokens only.
+        const sliceChunks = usedPrompt ? chunksFromRecorder(transcriber, recorder) : singleOutput?.chunks;
+        if (sliceChunks && sliceChunks.length > 0) {
+          for (const ch of sliceChunks) {
             const relStart = ch.timestamp?.[0] ?? 0;
             const relEnd = ch.timestamp?.[1] ?? null;
             allChunks.push({
@@ -780,7 +791,7 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
               text: ch.text,
             });
           }
-        } else if (singleOutput?.text?.trim()) {
+        } else if (!usedPrompt && singleOutput?.text?.trim()) {
           allChunks.push({
             timestamp: [slice.startSec, slice.endSec],
             text: singleOutput.text,
@@ -824,10 +835,12 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
             });
             setStage(`second-opinion segment ${i + 1} of ${slices.length}`);
             const secondRecorder = new TokenConfidenceRecorder();
+            const secondPrompt = buildVocabularyPromptIds(second.transcriber, req.vocabulary);
             await second.transcriber(slices[i].samples, {
               return_timestamps: true,
               max_new_tokens: maxTokensFor(slices[i]),
               logits_processor: new RecorderLastProcessorList(secondRecorder),
+              ...(secondPrompt ? { decoder_input_ids: secondPrompt } : {}),
             } as Parameters<AutomaticSpeechRecognitionPipeline>[1]);
             const secondWords = tokenSegmentsFromRecorder(second.transcriber, secondRecorder).flat();
             if (sliceWords[i] && secondWords.length > 0) {

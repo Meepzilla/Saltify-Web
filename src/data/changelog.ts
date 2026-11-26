@@ -24,6 +24,27 @@ export const APP_VERSION: string = __APP_VERSION__;
  */
 export const CHANGELOG_RELEASES: readonly ChangelogRelease[] = [
   {
+    version: '1.7.0',
+    date: '2026-11-26',
+    title: 'Expected Words: Teach Whisper Your Sample\'s Vocabulary',
+    summary:
+      'Give Whisper the names and story words you expect in a sample and it spells them correctly far more often.',
+    changes: [
+      {
+        category: 'added',
+        summary: 'Expected words per session (Client & sample info, or audio ⋯ → Expected words…)',
+        detail:
+          'List the child\'s name, family names and story vocabulary (e.g. "Maya, frog, jar, gopher, beehive"). Whisper receives them as a hint before transcribing, including the Second Opinion model. In testing with a relevant word list, Whisper Small made 31% fewer errors on clean audio (5.8% → 4.0%) and fewer in noise (17.9% → 15.7%).',
+      },
+      {
+        category: 'improved',
+        summary: 'Use only words you expect',
+        detail:
+          'An unrelated word list made noisy recordings slightly worse in testing (17.9% → 20.8%), and a listed word can occasionally replace a similar-sounding one, so keep the list to words likely to be said. The hint never appears in the transcript.',
+      },
+    ],
+  },
+  {
     version: '1.6.1',
     date: '2026-11-26',
     title: 'Type Your Own Fix & Live Review Sensitivity',

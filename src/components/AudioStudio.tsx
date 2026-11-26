@@ -1,5 +1,6 @@
 import {
   AudioLines,
+  BookText,
   Cpu,
   Download,
   Maximize2,
@@ -54,6 +55,10 @@ interface AudioStudioProps {
   onOpenModelManager: () => void;
   onExpandWaveform: () => void;
   onOpenSpectrogram?: () => void;
+  /** Opens the session's expected-words (vocabulary hint) editor. */
+  onEditVocabulary?: () => void;
+  /** Number of expected words currently set for this session. */
+  vocabularyCount?: number;
   onLoadDemoSample: () => void;
 }
 
@@ -80,6 +85,8 @@ export function AudioStudio({
   onOpenModelManager,
   onExpandWaveform,
   onOpenSpectrogram,
+  onEditVocabulary,
+  vocabularyCount = 0,
   onLoadDemoSample,
 }: AudioStudioProps) {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -181,6 +188,18 @@ export function AudioStudio({
       disabled: !hasAudio || isRecording || processing !== null,
       onSelect: onDownloadAudio,
     },
+    ...(onEditVocabulary
+      ? [
+          {
+            key: 'vocabulary',
+            label: 'Expected words…',
+            hint: vocabularyCount > 0 ? `${vocabularyCount} set` : 'none',
+            icon: <BookText size={15} />,
+            dividerBefore: true,
+            onSelect: onEditVocabulary,
+          },
+        ]
+      : []),
     {
       key: 'sample',
       label: 'Load demo sample',

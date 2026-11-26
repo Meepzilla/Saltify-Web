@@ -106,6 +106,8 @@ export interface SessionRecord {
   wordConfidence?: Record<string, Array<{ i: number; w: string; p: number; a?: string; ap?: number }>>;
   /** The second-opinion model compared during the last transcription, if any. */
   secondOpinionModelId?: WhisperModelId;
+  /** Expected words for this sample (names, story vocabulary), given to Whisper as a hint. */
+  vocabulary?: string;
 }
 
 export interface UtteranceLine {

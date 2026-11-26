@@ -851,6 +851,7 @@ export default function App() {
             settings.secondOpinionModelId !== settings.modelId
               ? settings.secondOpinionModelId
               : undefined,
+          vocabulary: activeSession.vocabulary,
           device: settings.device,
           modelSource: settings.modelSource,
           customModelBaseUrl: settings.customModelBaseUrl,
@@ -920,6 +921,7 @@ export default function App() {
     activeAudioBlob,
     activeId,
     activeSession.speakerAliases,
+    activeSession.vocabulary,
     player,
     resetGrammarReview,
     settings.modelId,
@@ -1821,6 +1823,10 @@ export default function App() {
                   onOpenModelManager={() => setShowModelModal(true)}
                   onExpandWaveform={() => setShowWaveformModal(true)}
                   onOpenSpectrogram={openSpectrogramAtPlayhead}
+                  onEditVocabulary={() => setShowClientModal(true)}
+                  vocabularyCount={
+                    (activeSession.vocabulary ?? '').split(/[,;\n]+/).filter((w) => w.trim()).length
+                  }
                   onLoadDemoSample={handleLoadDemoSample}
                 />
               </div>
@@ -1990,8 +1996,9 @@ export default function App() {
           open
           clientInfo={activeSession.clientInfo}
           aliases={activeSession.speakerAliases}
-          onSave={(clientInfo: ClientInfo) =>
-            updateActiveSession((s) => ({ ...s, clientInfo }))
+          vocabulary={activeSession.vocabulary ?? ''}
+          onSave={(clientInfo: ClientInfo, vocabulary: string) =>
+            updateActiveSession((s) => ({ ...s, clientInfo, vocabulary }))
           }
           onClose={() => setShowClientModal(false)}
         />

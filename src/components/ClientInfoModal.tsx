@@ -7,7 +7,9 @@ interface ClientInfoModalProps {
   open: boolean;
   clientInfo: ClientInfo;
   aliases: SpeakerAliases;
-  onSave: (info: ClientInfo) => void;
+  /** Session vocabulary used as a Whisper hint (names, story words). */
+  vocabulary?: string;
+  onSave: (info: ClientInfo, vocabulary: string) => void;
   onClose: () => void;
 }
 
@@ -24,10 +26,12 @@ export function ClientInfoModal({
   open,
   clientInfo,
   aliases,
+  vocabulary = '',
   onSave,
   onClose,
 }: ClientInfoModalProps) {
   const [draft, setDraft] = useState<ClientInfo>(clientInfo);
+  const [vocab, setVocab] = useState(vocabulary);
 
   if (!open) return null;
 
@@ -37,7 +41,7 @@ export function ClientInfoModal({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    onSave(draft);
+    onSave(draft, vocab.trim());
     onClose();
   };
 
@@ -175,6 +179,25 @@ export function ClientInfoModal({
                 ))}
               </datalist>
             </div>
+          </div>
+
+          <div className="form-field">
+            <label htmlFor="ci-vocabulary" className="form-label">
+              Expected words (helps transcription)
+            </label>
+            <textarea
+              id="ci-vocabulary"
+              className="field-input vocabulary-input"
+              rows={2}
+              value={vocab}
+              onChange={(e) => setVocab(e.target.value)}
+              placeholder="e.g. Maya, Grandma Rosa, frog, jar, gopher, beehive, owl"
+            />
+            <span className="field-help">
+              Names and story words you expect in this sample, separated by commas. Whisper is
+              more likely to spell them correctly. Leave empty if unsure: unrelated words can
+              make noisy recordings worse. Used the next time you transcribe.
+            </span>
           </div>
 
           <div className="form-field">

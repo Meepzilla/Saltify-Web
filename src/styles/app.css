@@ -3210,6 +3210,19 @@
   cursor: default;
 }
 
+.field-help {
+  font-size: 0.74rem;
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+
+textarea.vocabulary-input {
+  min-height: 60px;
+  padding: 8px 10px;
+  resize: vertical;
+  font-family: inherit;
+}
+
 /* Word fix menu: "Replace with…" field and live review sensitivity sliders */
 .replace-word-field {
   display: flex;

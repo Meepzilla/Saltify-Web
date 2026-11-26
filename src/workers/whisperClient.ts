@@ -32,6 +32,8 @@ export interface WhisperModelRuntimeOptions {
   modelId: WhisperModelId;
   /** Second model to compare against during transcription (flags disagreements). */
   compareModelId?: WhisperModelId;
+  /** Expected words (names, story vocabulary) given to Whisper as a hint. */
+  vocabulary?: string;
   device: ComputeDevice;
   modelSource: ModelSource;
   customModelBaseUrl: string;
@@ -124,6 +126,7 @@ export class WhisperWorkerClient {
         jobId,
         modelId: options.modelId,
         compareModelId: options.compareModelId,
+        vocabulary: options.vocabulary,
         device: options.device,
         modelSource: options.modelSource,
         customModelBaseUrl: options.customModelBaseUrl,
