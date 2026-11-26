@@ -65,7 +65,10 @@ import { insertPosCodes } from './engine/partsOfSpeech';
 import { hasPosCodes, stripPosCodes } from './engine/posCodes';
 import { computeSaltMetrics } from './engine/saltMetrics';
 import { DEMO_CLIENT_INFO, DEMO_TRANSCRIPT } from './engine/sampleData';
-import { autoAssignSpeakersInTranscript } from './engine/speakerDiarizer';
+import {
+  autoAssignSpeakersInTranscript,
+  type SpeakerDetectionMode,
+} from './engine/speakerDiarizer';
 import {
   deleteSessionRecord,
   loadAllSessions,
@@ -1253,34 +1256,41 @@ export default function App() {
     [activeSession, updateActiveSession, pushToast]
   );
 
-  const handleAutoAssignSpeakers = useCallback(async () => {
-    if (!activeSession?.transcriptionText.trim()) return;
-    let audio16k = mono16kCacheRef.current.get(activeId) ?? null;
-    if (!audio16k && activeAudioBlob) {
-      try {
-        const decoded = await decodeAudioBlob(activeAudioBlob);
-        audio16k = decoded.mono16k;
-        mono16kCacheRef.current.set(activeId, audio16k);
-      } catch {
-        audio16k = null;
+  const handleAutoAssignSpeakers = useCallback(
+    async (mode: SpeakerDetectionMode = 'auto') => {
+      if (!activeSession?.transcriptionText.trim()) return;
+      let audio16k = mono16kCacheRef.current.get(activeId) ?? null;
+      if (mode !== 'single' && !audio16k && activeAudioBlob) {
+        try {
+          const decoded = await decodeAudioBlob(activeAudioBlob);
+          audio16k = decoded.mono16k;
+          mono16kCacheRef.current.set(activeId, audio16k);
+        } catch {
+          audio16k = null;
+        }
       }
-    }
-    const result = autoAssignSpeakersInTranscript(
-      activeSession.transcriptionText,
-      activeSession.speakerAliases,
-      audio16k,
-      16000
-    );
-    updateActiveSession((s) => ({
-      ...s,
-      transcriptionText: result.transcript,
-    }));
-    pushToast(
-      'success',
-      'Speakers auto-assigned',
-      `Detected ${result.speakerCount} speaker${result.speakerCount > 1 ? 's' : ''} using local ${result.method} analysis.`
-    );
-  }, [activeSession, activeId, activeAudioBlob, updateActiveSession, pushToast]);
+      const result = autoAssignSpeakersInTranscript(
+        activeSession.transcriptionText,
+        activeSession.speakerAliases,
+        audio16k,
+        16000,
+        { mode }
+      );
+      updateActiveSession((s) => ({
+        ...s,
+        transcriptionText: result.transcript,
+      }));
+      const primaryAlias = activeSession.speakerAliases.speaker1.trim() || 'C';
+      const description =
+        mode === 'single'
+          ? `Labeled all utterances as 1 speaker (${primaryAlias}).`
+          : mode === 'two'
+          ? `Labeled ${result.speakerCount} speaker${result.speakerCount > 1 ? 's' : ''} using local ${result.method} analysis.`
+          : `Detected ${result.speakerCount} speaker${result.speakerCount > 1 ? 's' : ''} using local ${result.method} analysis.`;
+      pushToast('success', 'Speakers auto-assigned', description);
+    },
+    [activeSession, activeId, activeAudioBlob, updateActiveSession, pushToast]
+  );
 
   const handleSwapSpeakers = useCallback(() => {
     if (!activeSession) return;
@@ -1754,6 +1764,10 @@ export default function App() {
                     currentTime={player.currentTime}
                     disabled={processing !== null}
                     colorPartsOfSpeech={settings.colorCodePartsOfSpeech}
+                    showIpaTranscription={settings.showIpaTranscription}
+                    onToggleIpaTranscription={() =>
+                      updateSettings({ showIpaTranscription: !settings.showIpaTranscription })
+                    }
                     onChangeText={(transcriptionText) =>
                       updateActiveSession((s) => ({ ...s, transcriptionText }))
                     }
@@ -1795,6 +1809,10 @@ export default function App() {
                     onAddMorphemes={handleAddMorphemes}
                     onTogglePosCodes={handleTogglePosCodes}
                     colorPartsOfSpeech={settings.colorCodePartsOfSpeech}
+                    showIpaTranscription={settings.showIpaTranscription}
+                    onToggleIpaTranscription={() =>
+                      updateSettings({ showIpaTranscription: !settings.showIpaTranscription })
+                    }
                     onOpenClauseCoder={() => setShowClauseModal(true)}
                     onQuickCycleLineSi={handleQuickCycleLineSi}
                     onSeekToTime={(sec) => player.seek(sec, player.isPlaying)}
@@ -1805,6 +1823,8 @@ export default function App() {
               <div className={mobileTab !== 'metrics' ? 'mobile-hidden' : 'mobile-scroll-slot'}>
                 <MetricsPanel
                   metrics={metrics}
+                  clientInfo={activeSession.clientInfo}
+                  onOpenClientInfo={() => setShowClientModal(true)}
                   alwaysExpanded={mobileTab === 'metrics'}
                 />
               </div>
@@ -1888,7 +1908,7 @@ export default function App() {
           onApplyText={(transcriptionText) =>
             updateActiveSession((s) => ({ ...s, transcriptionText }))
           }
-          onAutoAssignSpeakers={() => void handleAutoAssignSpeakers()}
+          onAutoAssignSpeakers={(mode) => void handleAutoAssignSpeakers(mode)}
           onSwapSpeakers={handleSwapSpeakers}
           onClose={() => setShowLabelSpeakersModal(false)}
         />
@@ -1915,21 +1935,24 @@ export default function App() {
         />
       )}
 
-      <ExportModal
-        open={showExportModal}
-        session={activeSession}
-        audioBlob={activeAudioBlob}
-        includeSaltHeaders={settings.includeSaltHeadersOnExport}
-        stripTimestamps={settings.stripTimestampsOnExport}
-        onUpdateExportPrefs={({ includeSaltHeaders, stripTimestamps }) =>
-          updateSettings({
-            includeSaltHeadersOnExport: includeSaltHeaders,
-            stripTimestampsOnExport: stripTimestamps,
-          })
-        }
-        onNotify={(title, desc) => pushToast('success', title, desc)}
-        onClose={() => setShowExportModal(false)}
-      />
+      {showExportModal && (
+        <ExportModal
+          open
+          session={activeSession}
+          audioBlob={activeAudioBlob}
+          includeSaltHeaders={settings.includeSaltHeadersOnExport}
+          stripTimestamps={settings.stripTimestampsOnExport}
+          defaultConvertToIpa={settings.showIpaTranscription}
+          onUpdateExportPrefs={({ includeSaltHeaders, stripTimestamps }) =>
+            updateSettings({
+              includeSaltHeadersOnExport: includeSaltHeaders,
+              stripTimestampsOnExport: stripTimestamps,
+            })
+          }
+          onNotify={(title, desc) => pushToast('success', title, desc)}
+          onClose={() => setShowExportModal(false)}
+        />
+      )}
 
       <ModelManagerModal
         open={showModelModal}

@@ -19,6 +19,7 @@ import { hasPosCodes } from '../engine/posCodes';
 import { parseUtteranceLines } from '../engine/transcriptFormat';
 import type { SpeakerAliases } from '../types/saltify';
 import { OverflowMenu } from './OverflowMenu';
+import { IpaUtteranceText } from './IpaText';
 import { PosColoredText, PosLegend } from './PartsOfSpeech';
 
 interface ConventionPaneProps {
@@ -48,6 +49,9 @@ interface ConventionPaneProps {
   headerLeft?: ReactNode;
   /** Color each word by part of speech (Settings → SALT & Export). */
   colorPartsOfSpeech?: boolean;
+  /** Display utterances in International Phonetic Alphabet (IPA) broad transcription. */
+  showIpaTranscription?: boolean;
+  onToggleIpaTranscription?: () => void;
   onOpenClauseCoder: () => void;
   onQuickCycleLineSi: (lineIndex: number) => void;
   onSeekToTime?: (seconds: number) => void;
@@ -160,6 +164,8 @@ export function ConventionPane({
   onTogglePosCodes,
   headerLeft,
   colorPartsOfSpeech = false,
+  showIpaTranscription = false,
+  onToggleIpaTranscription,
   onOpenClauseCoder,
   onQuickCycleLineSi,
   onSeekToTime,
@@ -303,6 +309,17 @@ export function ConventionPane({
                   if (!nextLocked) setViewMode('raw');
                 },
               },
+              ...(onToggleIpaTranscription
+                ? [
+                    {
+                      key: 'ipa',
+                      label: 'Show in IPA (broad)',
+                      checked: showIpaTranscription,
+                      disabled: grammarActive || disabled,
+                      onSelect: onToggleIpaTranscription,
+                    },
+                  ]
+                : []),
               {
                 key: 'review-all',
                 label: 'Grammar: review all lines',
@@ -380,7 +397,14 @@ export function ConventionPane({
                   )}
 
                   <span className="utterance-text">
-                    {colorPartsOfSpeech ? (
+                    {showIpaTranscription ? (
+                      <IpaUtteranceText
+                        body={line.body}
+                        preserveSaltCodes
+                        colorPartsOfSpeech={colorPartsOfSpeech}
+                        renderSaltToken={renderSaltTokens}
+                      />
+                    ) : colorPartsOfSpeech ? (
                       <PosColoredText body={line.body} renderToken={renderSaltTokens} />
                     ) : (
                       renderSaltTokens(line.body)

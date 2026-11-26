@@ -15,6 +15,7 @@ import {
 } from '../engine/transcriptFormat';
 import type { SpeakerAliases } from '../types/saltify';
 import { OverflowMenu } from './OverflowMenu';
+import { IpaUtteranceText } from './IpaText';
 import { PosColoredText, PosLegend } from './PartsOfSpeech';
 
 interface TranscriptionPaneProps {
@@ -27,6 +28,9 @@ interface TranscriptionPaneProps {
   colorPartsOfSpeech?: boolean;
   /** Replaces the title area (e.g. with Transcript / SALT tabs). */
   headerLeft?: ReactNode;
+  /** Display utterances in International Phonetic Alphabet (IPA) broad transcription. */
+  showIpaTranscription?: boolean;
+  onToggleIpaTranscription?: () => void;
   onChangeText: (nextText: string) => void;
   onSeekToTime: (seconds: number) => void;
   onOpenLabelSpeakers: () => void;
@@ -42,6 +46,8 @@ export function TranscriptionPane({
   disabled = false,
   colorPartsOfSpeech = false,
   headerLeft,
+  showIpaTranscription = false,
+  onToggleIpaTranscription,
   onChangeText,
   onSeekToTime,
   onOpenLabelSpeakers,
@@ -119,6 +125,28 @@ export function TranscriptionPane({
             <Users size={14} />
             <span>Speakers</span>
           </button>
+
+          {onToggleIpaTranscription && (
+            <button
+              id="transcript-ipa-toggle-btn"
+              type="button"
+              role="switch"
+              aria-checked={showIpaTranscription}
+              className={`btn btn-sm ${showIpaTranscription ? 'btn-primary' : 'btn-secondary'}`}
+              disabled={disabled}
+              onClick={onToggleIpaTranscription}
+              title={
+                showIpaTranscription
+                  ? 'Switch back to standard English spelling'
+                  : 'Show the transcript in broad IPA (hover a word for its spelling)'
+              }
+            >
+              <span className="ipa-badge-glyph" aria-hidden="true">
+                /ə/
+              </span>
+              <span>IPA</span>
+            </button>
+          )}
 
           <OverflowMenu
             id="transcript-menu-btn"
@@ -253,7 +281,16 @@ export function TranscriptionPane({
                         : 'var(--text-primary)',
                   }}
                 >
-                  {colorPartsOfSpeech ? <PosColoredText body={line.body} /> : line.body}
+                  {showIpaTranscription ? (
+                    <IpaUtteranceText
+                      body={line.body}
+                      colorPartsOfSpeech={colorPartsOfSpeech}
+                    />
+                  ) : colorPartsOfSpeech ? (
+                    <PosColoredText body={line.body} />
+                  ) : (
+                    line.body
+                  )}
                 </span>
               </div>
             ))}

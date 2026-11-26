@@ -9,7 +9,14 @@ import { describe, expect, it } from 'vitest';
  * "RangeError: Maximum call stack size exceeded" before any model code runs (iPad).
  * Guard the worker's import graph so those packages never get bundled into it again.
  */
-const FORBIDDEN = [/^wink-/, /childGrammarEngine/, /speakerDiarizer/, /grammarSession/];
+const FORBIDDEN = [
+  /^wink-/,
+  /childGrammarEngine/,
+  /speakerDiarizer/,
+  /grammarSession/,
+  /ipaTranscription/,
+  /cmu-pronouncing-dictionary/,
+];
 
 const here = dirname(fileURLToPath(import.meta.url));
 const workerEntry = resolve(here, '../../workers/whisper.worker.ts');

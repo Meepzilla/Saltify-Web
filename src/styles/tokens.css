@@ -4,6 +4,7 @@
   /* Typography — Native system fonts for instant offline load and zero third-party calls */
   --font-sans: 'Segoe UI Variable', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
   --font-mono: ui-monospace, 'SF Mono', 'Cascadia Code', Consolas, Menlo, Monaco, monospace;
+  --font-ipa: 'Segoe UI', 'SF Pro Text', -apple-system, BlinkMacSystemFont, 'Noto Sans', 'DejaVu Sans', 'Lucida Grande', 'Arial Unicode MS', sans-serif;
 
   /* Light Theme — Warm Clinical Alabaster & Deep Slate */
   --bg-canvas: hsl(216, 22%, 96%);

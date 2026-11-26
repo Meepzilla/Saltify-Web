@@ -1,5 +1,6 @@
 import { ArrowLeftRight, CheckSquare, Square, Wand2, X } from 'lucide-react';
 import { useMemo, useState } from 'react';
+import type { SpeakerDetectionMode } from '../engine/speakerDiarizer';
 import {
   applySpeakerLabelsToLines,
   parseUtteranceLines,
@@ -11,7 +12,7 @@ interface LabelSpeakersModalProps {
   text: string;
   aliases: SpeakerAliases;
   onApplyText: (nextText: string) => void;
-  onAutoAssignSpeakers?: () => void;
+  onAutoAssignSpeakers?: (mode: SpeakerDetectionMode) => void;
   onSwapSpeakers?: () => void;
   onClose: () => void;
 }
@@ -26,6 +27,7 @@ export function LabelSpeakersModal({
   onClose,
 }: LabelSpeakersModalProps) {
   const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [detectMode, setDetectMode] = useState<SpeakerDetectionMode>('auto');
 
   const lines = useMemo(
     () =>
@@ -89,22 +91,44 @@ export function LabelSpeakersModal({
             }}
           >
             <span style={{ fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
-              Auto-detect speakers on-device, swap labels, or select utterances to assign{' '}
+              Auto-detect 1 or 2 speakers on-device, swap labels, or select utterances to assign{' '}
               <strong style={{ color: 'var(--speaker1)' }}>{aliases.speaker1}</strong> /{' '}
               <strong style={{ color: 'var(--speaker2)' }}>{aliases.speaker2}</strong>.
             </span>
-            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
               {onAutoAssignSpeakers && (
-                <button
-                  id="auto-label-speakers-btn"
-                  type="button"
-                  className="btn btn-secondary btn-sm"
-                  onClick={onAutoAssignSpeakers}
-                  title="Auto-assign Child / Examiner labels using local acoustic & turn cues"
-                >
-                  <Wand2 size={14} />
-                  <span>Auto-Label</span>
-                </button>
+                <>
+                  <select
+                    id="auto-label-mode-select"
+                    className="field-select"
+                    value={detectMode}
+                    onChange={(e) => setDetectMode(e.target.value as SpeakerDetectionMode)}
+                    aria-label="Speaker count mode for Auto-Label"
+                    title="Auto-detect 1 or 2 speakers, force 1 speaker (monologue), or force 2 speakers"
+                    style={{
+                      width: 'auto',
+                      minHeight: 32,
+                      padding: '4px 10px',
+                      fontSize: '0.81rem',
+                    }}
+                  >
+                    <option value="auto">Auto (1 or 2)</option>
+                    <option value="single">1 Speaker ({aliases.speaker1})</option>
+                    <option value="two">
+                      2 Speakers ({aliases.speaker1}/{aliases.speaker2})
+                    </option>
+                  </select>
+                  <button
+                    id="auto-label-speakers-btn"
+                    type="button"
+                    className="btn btn-secondary btn-sm"
+                    onClick={() => onAutoAssignSpeakers(detectMode)}
+                    title="Auto-assign speaker labels using local acoustic & turn cues"
+                  >
+                    <Wand2 size={14} />
+                    <span>Auto-Label</span>
+                  </button>
+                </>
               )}
               {onSwapSpeakers && (
                 <button

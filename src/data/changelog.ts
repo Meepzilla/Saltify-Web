@@ -24,7 +24,7 @@ export const APP_VERSION: string = __APP_VERSION__;
  */
 export const CHANGELOG_RELEASES: readonly ChangelogRelease[] = [
   {
-    version: '1.4.0',
+    version: '1.4.1',
     date: '2026-11-26',
     title: 'Redesigned, Less Cluttered Workspace',
     summary:
@@ -52,6 +52,72 @@ export const CHANGELOG_RELEASES: readonly ChangelogRelease[] = [
         category: 'improved',
         summary: 'Metrics stay on one line',
         detail: 'The metrics bar no longer wraps, and the duplicate Mark Clauses button was removed.',
+      },
+    ],
+  },
+  {
+    version: '1.4.0',
+    date: '2026-11-25',
+    title: 'Age & Context Norms Comparison',
+    summary:
+      "Automatically compares the child's SALT metrics against published age norms using the age (or DOB + sample date) and sampling context from Client Info, with z-scores and SALT-style WNL / Borderline / Significant flags.",
+    changes: [
+      {
+        category: 'added',
+        summary: 'Age & Context Norms card in the metrics panel',
+        detail:
+          'Compares MLUm and MLUw (Miller & Chapman 1981; Rice et al. 2010), clausal density and TNW per 50 utterances (SUGAR, Pavelko & Owens 2017), % maze words (SALT databases) and intelligibility (Rice et al. 2010) against the matching age band. Shows norm mean ± SD, z-score, status and source citation, with narrative and expository genre bands for clausal density.',
+      },
+      {
+        category: 'added',
+        summary: 'Norm status dots and inline calculation tooltip comparisons',
+        detail:
+          'MLUm, MLUw, TNW, CD (SI) and Maze pills and primary speaker cells show a green, amber or red dot for within normal limits, borderline (−1 to −1.5 SD) or significant (≤ −1.5 SD). Clicking any normed metric displays its age norm range, z-score, status badge and caveats directly inside the calculation tooltip.',
+      },
+      {
+        category: 'improved',
+        summary: 'Clear caveats for sample size and context mismatches',
+        detail:
+          'Warns when there are fewer than 50 C&I utterances, when the sampling context is blank, or when a conversation norm is applied to a narrative or expository sample. Accepts ages like 4;6, 4y 6m and 54 months, with tap-to-expand row caveats for touch devices.',
+      },
+    ],
+  },
+  {
+    version: '1.3.6',
+    date: '2026-11-25',
+    title: 'IPA Broad Transcription & Reliable Monologue Auto-Labeling',
+    summary:
+      'Adds a non-destructive switch for General American English IPA broad transcription (/…/) with true IPA Unicode characters and export support, fixes false 2-speaker splits on monologues, and adds Auto / 1 Speaker / 2 Speakers modes to Label Speakers.',
+    changes: [
+      {
+        category: 'added',
+        summary: 'IPA broad transcription switch (/…/) with authentic IPA symbols',
+        detail:
+          'Toggle General American English broad phonemic IPA transcription directly from the Transcription Box, SALT Convention Box, Settings → SALT & Export, or Export & Print (Word, SALT .slt, plain text, clipboard, and print). Uses the 135k-word CMU Pronouncing Dictionary offline with true IPA Unicode characters (ɑ æ ʌ ə ɛ ɪ ɔ ʊ ɝ ɚ θ ð ʃ ʒ ŋ ɹ ɡ ˈ ˌ), Maximal Onset syllable stress, SALT morpheme & child overregularization support, and hover tooltips showing original spelling without altering your transcript or metrics.',
+      },
+      {
+        category: 'fixed',
+        summary: 'Single-speaker monologues are no longer randomly split into two speakers',
+        detail:
+          'Replaces noise-amplifying z-scored K-means thresholds with voiced-only acoustic feature extraction, sub-harmonic-safe YIN pitch tracking, and unsupervised 1D bimodality verification so natural pitch, vowel, or microphone-distance changes in a monologue stay labeled as one speaker.',
+      },
+      {
+        category: 'fixed',
+        summary: 'Multi-sentence Whisper chunks no longer collide on the same 0.6s audio slice',
+        detail:
+          'Preserves exact sub-second Whisper utterance boundaries and proportionally splits shared [M:SS] timestamps so each sentence is analyzed against its own audio segment.',
+      },
+      {
+        category: 'fixed',
+        summary: 'Narrative starters and quoted questions no longer trigger false Examiner labels',
+        detail:
+          'Text-only auto-labeling no longer flips monologues to Examiner on sentences starting with "When...", "What...", or "Okay, so...", or on quoted dialogue, while keeping clinical SLP prompts accurate.',
+      },
+      {
+        category: 'added',
+        summary: 'Auto / 1 Speaker / 2 Speakers mode selector in Label Speakers',
+        detail:
+          'Choose Auto-Detect (1 or 2 speakers), force 1 Speaker for monologues, or force 2 Speakers for close-voice conversations right next to the Auto-Label button.',
       },
     ],
   },

@@ -105,7 +105,11 @@ export class WhisperWorkerClient {
     callbacks: TranscribeCallbacks = {}
   ): Promise<TranscribeResult> {
     const copy = new Float32Array(audio16k);
-    const raw = await this.runJob<{ transcript: string; backendUsed: 'webgpu' | 'wasm' }>(
+    const raw = await this.runJob<{
+      transcript: string;
+      utterances?: Array<{ startSec: number; endSec: number; text: string }>;
+      backendUsed: 'webgpu' | 'wasm';
+    }>(
       (jobId) => ({
         type: 'transcribe',
         jobId,
@@ -132,7 +136,11 @@ export class WhisperWorkerClient {
       raw.transcript,
       options.aliases ?? { speaker1: 'C', speaker2: 'E' },
       audio16k,
-      16000
+      16000,
+      {
+        mode: 'auto',
+        exactSegments: raw.utterances,
+      }
     );
     return {
       transcript: diarized.transcript,
@@ -197,6 +205,7 @@ export class WhisperWorkerClient {
           cleanup();
           resolve({
             transcript: msg.transcript,
+            utterances: msg.utterances,
             backendUsed: msg.backendUsed,
           } as T);
         } else if (msg.type === 'error') {

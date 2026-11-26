@@ -1,10 +1,17 @@
 import { Calculator, X } from 'lucide-react';
+import {
+  formatZScore,
+  NORM_STATUS_LABELS,
+  type NormComparison,
+} from '../engine/languageNorms';
 import type { MetricCalculationBreakdown } from '../engine/saltMetrics';
 
 interface MetricCalculationTooltipProps {
   breakdown: MetricCalculationBreakdown;
   speakerLabel: string;
   accentVar?: string;
+  normComparison?: NormComparison;
+  ageLabel?: string | null;
   onClose: () => void;
 }
 
@@ -12,6 +19,8 @@ export function MetricCalculationTooltip({
   breakdown,
   speakerLabel,
   accentVar,
+  normComparison,
+  ageLabel,
   onClose,
 }: MetricCalculationTooltipProps) {
   return (
@@ -52,9 +61,32 @@ export function MetricCalculationTooltip({
           <span className="calc-tooltip-k">Calculation</span>
           <span className="calc-tooltip-math">{breakdown.calculation}</span>
         </div>
+        {normComparison && (
+          <div className="calc-tooltip-row">
+            <span className="calc-tooltip-k">
+              {ageLabel ? `Norm (${ageLabel})` : 'Age Norm'}
+            </span>
+            <span className="calc-tooltip-norm">
+              <span className="mono">{normComparison.rangeLabel}</span>
+              {normComparison.z !== null && (
+                <span className="mono">· z = {formatZScore(normComparison.z)}</span>
+              )}
+              <span className={`norm-badge norm-${normComparison.status}`}>
+                {NORM_STATUS_LABELS[normComparison.status]}
+              </span>
+              <span className="norms-source">
+                ({normComparison.source}
+                {!normComparison.contextMatch ? ' †' : ''})
+              </span>
+            </span>
+          </div>
+        )}
       </div>
 
-      <p className="calc-tooltip-note">{breakdown.note}</p>
+      <p className="calc-tooltip-note">
+        {breakdown.note}
+        {normComparison?.note ? ` Norm note: ${normComparison.note}` : ''}
+      </p>
     </div>
   );
 }

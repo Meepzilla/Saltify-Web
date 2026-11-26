@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   applySpeakerLabelsToLines,
   buildSaltHeader,
+  extractWhisperUtterances,
   formatWhisperChunks,
   parseUtteranceLines,
   remapSpeakerAliases,
@@ -17,6 +18,21 @@ describe('transcriptFormat', () => {
       { timestamp: [65.3, 70], text: ' I went to the park...' },
     ]);
     expect(out).toBe('[0:00] Hello there!\n[0:00] How are you?\n[1:05] I went to the park');
+  });
+
+  it('distributes multi-sentence Whisper chunks proportionally across [startSec, endSec]', () => {
+    const utts = extractWhisperUtterances([
+      { timestamp: [0, 6.0], text: ' Hello there! How are you doing today?' },
+      { timestamp: [6.0, 9.0], text: ' Doing great.' },
+    ]);
+    expect(utts).toHaveLength(3);
+    expect(utts[0].startSec).toBe(0);
+    expect(utts[0].endSec).toBeGreaterThan(1.0);
+    expect(utts[0].endSec).toBeLessThan(3.5);
+    expect(utts[1].startSec).toBeCloseTo(utts[0].endSec, 5);
+    expect(utts[1].endSec).toBeCloseTo(6.0, 5);
+    expect(utts[2].startSec).toBe(6.0);
+    expect(utts[2].endSec).toBe(9.0);
   });
 
   it('applies and replaces speaker labels without duplicating prefixes', () => {
