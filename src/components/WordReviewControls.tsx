@@ -5,15 +5,9 @@ import { DEFAULT_FLAG_THRESHOLDS, type FlagThresholds } from '../engine/wordConf
 export function ReplaceWordField({
   initial,
   onSubmit,
-  label = 'Replace with',
-  submitLabel = 'Replace',
-  placeholder,
 }: {
   initial: string;
   onSubmit: (text: string) => void;
-  label?: string;
-  submitLabel?: string;
-  placeholder?: string;
 }) {
   const [text, setText] = useState('');
   const submit = () => {
@@ -29,7 +23,7 @@ export function ReplaceWordField({
       }}
     >
       <label className="replace-word-label" htmlFor="replace-word-input">
-        {label}
+        Replace with
       </label>
       <div className="replace-word-row">
         <input
@@ -37,7 +31,7 @@ export function ReplaceWordField({
           type="text"
           className="replace-word-input"
           value={text}
-          placeholder={placeholder ?? (initial ? `Instead of “${initial}”` : 'Type the correct word')}
+          placeholder={initial ? `Instead of “${initial}”` : 'Type the correct word'}
           autoCapitalize="off"
           autoCorrect="off"
           spellCheck={false}
@@ -46,7 +40,7 @@ export function ReplaceWordField({
           onKeyDown={(e) => e.stopPropagation()}
         />
         <button type="submit" className="btn btn-primary btn-sm" disabled={!text.trim()}>
-          {submitLabel}
+          Replace
         </button>
       </div>
     </form>

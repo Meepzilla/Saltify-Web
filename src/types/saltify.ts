@@ -3,9 +3,7 @@ export type ThemeMode = 'system' | 'light' | 'dark';
 export type WhisperModelId =
   | 'onnx-community/whisper-tiny.en'
   | 'onnx-community/whisper-base.en'
-  | 'onnx-community/whisper-small.en'
-  | 'onnx-community/wav2vec2-lv-60-espeak-cv-ft-ONNX'
-  | 'onnx-community/hubert-base-english-ipa-ONNX';
+  | 'onnx-community/whisper-small.en';
 
 export type ComputeDevice = 'auto' | 'webgpu' | 'wasm';
 
@@ -19,11 +17,6 @@ export interface WhisperModelInfo {
   sizeMb: number;
   recommendedFor: string;
   description: string;
-  /**
-   * 'whisper' (default) writes English words. 'phoneme' models write the sounds produced in IPA,
-   * one line per stretch of speech; SALT word metrics do not apply to their output.
-   */
-  kind?: 'whisper' | 'phoneme';
 }
 
 export const WHISPER_MODELS: readonly WhisperModelInfo[] = [
@@ -54,33 +47,8 @@ export const WHISPER_MODELS: readonly WhisperModelInfo[] = [
     recommendedFor: 'Windows PCs & high-RAM devices (desktop Saltify parity)',
     description: 'Highest accuracy, matching the desktop Saltify small.en model. Best on Windows laptops/desktops.',
   },
-  {
-    id: 'onnx-community/wav2vec2-lv-60-espeak-cv-ft-ONNX',
-    label: 'wav2vec2 IPA (phonetic transcript)',
-    shortLabel: 'wav2vec2 IPA',
-    sizeLabel: '~242 MB',
-    sizeMb: 242,
-    recommendedFor: 'Phonetic (IPA) transcripts on laptops, iPad Pro & tablets',
-    description:
-      'Writes the sounds actually produced in IPA instead of English words, so it does not "correct" speech errors. Most accurate IPA model tested (≈91% of sounds right on clean speech). Word breaks are estimated from pauses. SALT word metrics do not apply.',
-    kind: 'phoneme',
-  },
-  {
-    id: 'onnx-community/hubert-base-english-ipa-ONNX',
-    label: 'HuBERT IPA (phonetic transcript)',
-    shortLabel: 'HuBERT IPA',
-    sizeLabel: '~90 MB',
-    sizeMb: 90,
-    recommendedFor: 'Phonetic (IPA) transcripts on phones & older iPads',
-    description:
-      'Smaller, faster IPA model. Less accurate than wav2vec2, especially in noise (≈86% of sounds right on clean speech, ≈78% with background noise). Word breaks are estimated from pauses. SALT word metrics do not apply.',
-    kind: 'phoneme',
-  },
 ] as const;
 
-export function isPhonemeModel(modelId: string): boolean {
-  return WHISPER_MODELS.some((m) => m.id === modelId && m.kind === 'phoneme');
-}
 
 export interface ClientInfo {
   name: string;
@@ -141,10 +109,6 @@ export interface SessionRecord {
   secondOpinionModelId?: WhisperModelId;
   /** Expected words for this sample (names, story vocabulary), given to Whisper as a hint. */
   vocabulary?: string;
-  /** Speech sounds actually produced (timed IPA from the phoneme recognizer). */
-  speechSounds?: { model: string; phones: Array<[string, number, number]> };
-  /** Whisper's precise utterance timing from the last transcription. */
-  utteranceSpans?: Array<{ k: string; s: number; e: number }>;
 }
 
 export interface UtteranceLine {
@@ -215,7 +179,7 @@ export interface GrammarCheckOptions {
 }
 
 export interface ProcessingState {
-  kind: 'transcription' | 'grammar' | 'model-download' | 'speech-sounds';
+  kind: 'transcription' | 'grammar' | 'model-download';
   stage: string;
   progress: number; // 0..1
   detail?: string;
@@ -249,10 +213,6 @@ export interface AppSettings {
   uncertainWordThreshold: number;
   /** Review sensitivity: flag model disagreements when the main model was less sure than this (0–1). */
   disagreementThreshold: number;
-  /** Show heard speech sounds under each utterance (when they have been detected). */
-  showSpeechSounds: boolean;
-  /** Experimental: speech-sound (phoneme) detection and phonological process analysis. Off by default. */
-  enableSpeechSounds: boolean;
 }
 
 export const DEFAULT_APP_SETTINGS: AppSettings = {
@@ -273,8 +233,6 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   secondOpinionModelId: 'off',
   uncertainWordThreshold: 0.6,
   disagreementThreshold: 0.9,
-  showSpeechSounds: true,
-  enableSpeechSounds: false,
 };
 
 export interface ToastMessage {

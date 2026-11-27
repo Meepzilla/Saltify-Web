@@ -1,7 +1,6 @@
 import {
   AudioLines,
   BookText,
-  Ear,
   Cpu,
   Download,
   Maximize2,
@@ -60,9 +59,6 @@ interface AudioStudioProps {
   onEditVocabulary?: () => void;
   /** Number of expected words currently set for this session. */
   vocabularyCount?: number;
-  /** Runs the phoneme recognizer (sounds actually heard). */
-  onDetectSpeechSounds?: () => void;
-  hasSpeechSounds?: boolean;
   onLoadDemoSample: () => void;
 }
 
@@ -91,8 +87,6 @@ export function AudioStudio({
   onOpenSpectrogram,
   onEditVocabulary,
   vocabularyCount = 0,
-  onDetectSpeechSounds,
-  hasSpeechSounds = false,
   onLoadDemoSample,
 }: AudioStudioProps) {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -203,18 +197,6 @@ export function AudioStudio({
             icon: <BookText size={15} />,
             dividerBefore: true,
             onSelect: onEditVocabulary,
-          },
-        ]
-      : []),
-    ...(onDetectSpeechSounds
-      ? [
-          {
-            key: 'speech-sounds',
-            label: hasSpeechSounds ? 'Re-detect speech sounds' : 'Detect speech sounds',
-            hint: hasSpeechSounds ? 'done' : '~230 MB once',
-            icon: <Ear size={15} />,
-            disabled: !hasAudio || isRecording || processing !== null,
-            onSelect: onDetectSpeechSounds,
           },
         ]
       : []),

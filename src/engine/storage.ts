@@ -106,6 +106,12 @@ export function loadAppSettings(): AppSettings {
     const parsed = JSON.parse(raw) as Partial<AppSettings>;
     const speaker1 = parsed.defaultSpeakerAliases?.speaker1?.trim();
     const speaker2 = parsed.defaultSpeakerAliases?.speaker2?.trim();
+    // Models can be retired (e.g. the IPA models in 1.11.0): fall back to supported ones
+    const known = (id: unknown) => WHISPER_MODELS.some((m) => m.id === id);
+    if (parsed.modelId !== undefined && !known(parsed.modelId)) delete parsed.modelId;
+    if (parsed.secondOpinionModelId !== undefined && parsed.secondOpinionModelId !== 'off' && !known(parsed.secondOpinionModelId)) {
+      delete parsed.secondOpinionModelId;
+    }
     return {
       ...DEFAULT_APP_SETTINGS,
       ...parsed,
@@ -185,11 +191,7 @@ export async function inspectCachedWhisperModels(): Promise<{
 
         const url = req.url;
         for (const model of WHISPER_MODELS) {
-          const repo = model.id.split('/')[1];
-          // IPA models count as cached once their weights are (vocab.json is fetched first)
-          if (url.includes(repo) && (model.kind !== 'phoneme' || /\.onnx(?:$|\?)/.test(url))) {
-            modelIds.add(model.id);
-          }
+          if (url.includes(model.id.split('/')[1])) modelIds.add(model.id);
         }
 
         const len = resp?.headers.get('content-length');

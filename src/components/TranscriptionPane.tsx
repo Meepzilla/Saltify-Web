@@ -2,7 +2,6 @@ import {
   AlignLeft,
   AudioLines,
   Check,
-  Ear,
   Replace,
   List,
   Lock,
@@ -18,7 +17,6 @@ import {
   parseUtteranceLines,
 } from '../engine/transcriptFormat';
 import {
-  confidenceLineKey,
   countFlaggedWords,
   DEFAULT_FLAG_THRESHOLDS,
   flaggedWordsForLine,
@@ -31,17 +29,6 @@ import { OverflowMenu, type OverflowMenuItem } from './OverflowMenu';
 import { FlagSensitivityControls, ReplaceWordField } from './WordReviewControls';
 import { IpaUtteranceText } from './IpaText';
 import { PosColoredText, PosLegend } from './PartsOfSpeech';
-import { PhonologicalProcessSummary, SpeechSoundsLegend, SpeechSoundsLine } from './SpeechSounds';
-import { compareUtterance } from '../engine/utteranceSounds';
-import { summarizeProcesses, isContentWord } from '../engine/phonologicalProcesses';
-import { useIpaDictionaryReady } from '../hooks/useIpaDictionaryReady';
-import {
-  lineWindow,
-  phonesInWindow,
-  type SpeechSoundsRecord,
-  type WordSoundComparison,
-  type UtteranceSpan,
-} from '../engine/speechSounds';
 
 interface TranscriptionPaneProps {
   text: string;
@@ -77,15 +64,6 @@ interface TranscriptionPaneProps {
   /** Live review sensitivity for flags. */
   flagThresholds?: FlagThresholds;
   onChangeFlagThresholds?: (next: FlagThresholds) => void;
-  /** Sounds heard by the phoneme recognizer (raw speech), shown under the interpreted words. */
-  speechSounds?: SpeechSoundsRecord | null;
-  /** Precise utterance timing from transcription, for matching heard sounds to lines. */
-  utteranceSpans?: UtteranceSpan[];
-  audioDurationSec?: number;
-  showSpeechSounds?: boolean;
-  onToggleShowSpeechSounds?: () => void;
-  /** Runs speech-sound detection on the session audio. */
-  onDetectSpeechSounds?: () => void;
 }
 
 export function TranscriptionPane({
@@ -111,12 +89,6 @@ export function TranscriptionPane({
   onResolveWord,
   flagThresholds,
   onChangeFlagThresholds,
-  speechSounds = null,
-  utteranceSpans,
-  audioDurationSec = 0,
-  showSpeechSounds = true,
-  onToggleShowSpeechSounds,
-  onDetectSpeechSounds,
 }: TranscriptionPaneProps) {
   const [locked, setLocked] = useState(true);
   const [viewMode, setViewMode] = useState<'interactive' | 'raw'>('interactive');
@@ -148,53 +120,6 @@ export function TranscriptionPane({
     [nonEmptyLines, wordConfidence, thresholds]
   );
   const showUncertain = highlightUncertainWords && uncertainCount > 0;
-
-  const speechSoundsVisible =
-    Boolean(speechSounds && speechSounds.phones.length > 0) && showSpeechSounds && !showIpaTranscription;
-  const ipaReady = useIpaDictionaryReady(speechSoundsVisible);
-  /**
-   * Word-by-word comparison (expected vs heard) per line index. Heard sounds are matched to lines by
-   * Whisper's utterance timing (or the line timestamps). Empty until the dictionary has loaded.
-   */
-  const soundsByLine = useMemo(() => {
-    const map = new Map<number, Map<number, WordSoundComparison>>();
-    if (!speechSoundsVisible || !speechSounds || !ipaReady) return map;
-    const used = new Set<number>();
-    const duration =
-      audioDurationSec > 0 ? audioDurationSec : speechSounds.phones[speechSounds.phones.length - 1]?.[1] ?? 0;
-    nonEmptyLines.forEach((line, k) => {
-      let next: number | null = null;
-      for (let j = k + 1; j < nonEmptyLines.length; j++) {
-        if (nonEmptyLines[j].timestampSec !== null) {
-          next = nonEmptyLines[j].timestampSec;
-          break;
-        }
-      }
-      const win = lineWindow(
-        confidenceLineKey(line.body),
-        line.timestampSec,
-        next,
-        utteranceSpans,
-        used,
-        duration
-      );
-      if (win) map.set(line.index, compareUtterance(line.body, phonesInWindow(speechSounds.phones, win.start, win.end)));
-    });
-    return map;
-  }, [speechSoundsVisible, speechSounds, ipaReady, nonEmptyLines, utteranceSpans, audioDurationSec]);
-
-  /** Phonological process totals: child utterances when lines are labeled, otherwise all lines. */
-  const processSummary = useMemo(() => {
-    if (soundsByLine.size === 0) return null;
-    const childLines = nonEmptyLines.filter((l) => l.speakerSlot === 'speaker1' && soundsByLine.has(l.index));
-    const scope = childLines.length > 0 ? childLines : nonEmptyLines.filter((l) => soundsByLine.has(l.index));
-    const words = scope.flatMap((l) => [...soundsByLine.get(l.index)!.values()]);
-    return {
-      rows: summarizeProcesses(words),
-      scopeLabel: childLines.length > 0 ? `${aliases.speaker1} utterances` : 'all utterances',
-      wordCount: words.filter((w) => isContentWord(w.word)).length,
-    };
-  }, [soundsByLine, nonEmptyLines, aliases.speaker1]);
 
   /**
    * Every flagged word opens the same fix menu: use the other model's word (when the models
@@ -283,56 +208,6 @@ export function TranscriptionPane({
           label={`${describe} Fix options`}
           trigger={node}
           triggerClassName={className}
-          items={items}
-        />
-      );
-    };
-  };
-
-  /**
-   * In the speech-sounds view every word opens a menu: set the intended (target) word, which is
-   * what phonological processes are measured against, or listen. Flagged words keep their menu.
-   */
-  const decorateForSounds = (lineIndex: number, body: string) => {
-    const flaggedDecorate = showUncertain ? decorateFor(lineIndex, body) : undefined;
-    const flagged = showUncertain ? flaggedWordsForLine(body, wordConfidence, thresholds) : new Map();
-    if (!onResolveWord) return flaggedDecorate;
-    const words = body.split(/\s+/).filter(Boolean);
-    return (wordIndex: number, node: ReactNode) => {
-      if (flaggedDecorate && flagged.has(wordIndex)) return flaggedDecorate(wordIndex, node);
-      const current = (words[wordIndex] ?? '').replace(/^[^A-Za-z0-9']+|[^A-Za-z0-9']+$/g, '');
-      const items: OverflowMenuItem[] = [
-        {
-          key: 'target',
-          label: 'Intended word…',
-          render: (close) => (
-            <ReplaceWordField
-              initial={current}
-              label="Intended (target) word"
-              placeholder={`What the child meant by “${current}”`}
-              submitLabel="Set"
-              onSubmit={(text) => {
-                close();
-                onResolveWord(lineIndex, wordIndex, text);
-              }}
-            />
-          ),
-        },
-      ];
-      if (onInspectLine) {
-        items.push({
-          key: 'spectrogram',
-          label: 'Listen & spectrogram',
-          icon: <AudioLines size={15} />,
-          dividerBefore: true,
-          onSelect: () => onInspectLine(lineIndex),
-        });
-      }
-      return (
-        <OverflowMenu
-          label={`“${current}”: set the intended word or listen`}
-          trigger={node}
-          triggerClassName="ss-word-btn"
           items={items}
         />
       );
@@ -456,29 +331,6 @@ export function TranscriptionPane({
                     },
                   ]
                 : []),
-              ...(onDetectSpeechSounds
-                ? [
-                    {
-                      key: 'detect-sounds',
-                      label: speechSounds ? 'Re-detect speech sounds' : 'Detect speech sounds',
-                      hint: speechSounds ? `${speechSounds.phones.length}` : '~230 MB once',
-                      icon: <Ear size={15} />,
-                      dividerBefore: true,
-                      disabled: !hasAudio || disabled,
-                      onSelect: onDetectSpeechSounds,
-                    },
-                  ]
-                : []),
-              ...(speechSounds && onToggleShowSpeechSounds
-                ? [
-                    {
-                      key: 'show-sounds',
-                      label: 'Show heard sounds',
-                      checked: showSpeechSounds,
-                      onSelect: onToggleShowSpeechSounds,
-                    },
-                  ]
-                : []),
               ...(onToggleHighlightUncertainWords
                 ? [
                     {
@@ -571,14 +423,6 @@ export function TranscriptionPane({
         ) : (
           <div className="utterance-list">
             {colorPartsOfSpeech && <PosLegend compact />}
-            {speechSoundsVisible && <SpeechSoundsLegend />}
-            {speechSoundsVisible && processSummary && (
-              <PhonologicalProcessSummary
-                rows={processSummary.rows}
-                scopeLabel={processSummary.scopeLabel}
-                wordCount={processSummary.wordCount}
-              />
-            )}
             {nonEmptyLines.map((line) => (
               <div
                 key={line.index}
@@ -626,14 +470,7 @@ export function TranscriptionPane({
                         : 'var(--text-primary)',
                   }}
                 >
-                  {speechSoundsVisible && (soundsByLine.has(line.index) || !ipaReady) ? (
-                    <SpeechSoundsLine
-                      body={line.body}
-                      comparison={soundsByLine.get(line.index) ?? null}
-                      showProcesses={line.speakerSlot !== 'speaker2'}
-                      decorateWord={decorateForSounds(line.index, line.body)}
-                    />
-                  ) : showIpaTranscription ? (
+                  {showIpaTranscription ? (
                     <IpaUtteranceText
                       body={line.body}
                       colorPartsOfSpeech={colorPartsOfSpeech}
