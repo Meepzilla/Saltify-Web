@@ -24,6 +24,21 @@ export const APP_VERSION: string = __APP_VERSION__;
  */
 export const CHANGELOG_RELEASES: readonly ChangelogRelease[] = [
   {
+    version: '1.11.0',
+    date: '2026-11-27',
+    title: 'IPA Models and Speech Sounds Removed',
+    summary:
+      'The wav2vec2 IPA and HuBERT IPA models, and the experimental speech-sound and phonological-process features built on them, have been removed. Their sound estimates were not accurate enough on real child recordings.',
+    changes: [
+      {
+        category: 'improved',
+        summary: 'Retired models fall back automatically',
+        detail:
+          'If an IPA model was selected as the main model, the app switches back to the default Whisper model.',
+      },
+    ],
+  },
+  {
     version: '1.10.0',
     date: '2026-11-26',
     title: 'IPA Transcription Models',

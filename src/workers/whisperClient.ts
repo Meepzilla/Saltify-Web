@@ -5,8 +5,7 @@ import type {
   WhisperModelId,
 } from '../types/saltify';
 import { autoAssignSpeakersInTranscript } from '../engine/speakerDiarizer';
-import type { SpeechSoundsRecord, UtteranceSpan } from '../engine/speechSounds';
-import { confidenceLineKey, type WordConfidenceMap } from '../engine/wordConfidence';
+import type { WordConfidenceMap } from '../engine/wordConfidence';
 import type { WorkerRequest, WorkerResponse } from './whisper.worker';
 
 export interface TranscribeCallbacks {
@@ -20,8 +19,6 @@ export interface TranscribeResult {
   wordConfidence?: WordConfidenceMap;
   /** Second-opinion model that was compared, when it ran. */
   secondOpinionModelId?: WhisperModelId;
-  /** Whisper's precise (sub-second) utterance timing, used to line up speech sounds. */
-  utteranceSpans?: UtteranceSpan[];
   backendUsed: 'webgpu' | 'wasm';
   speakerCount: 1 | 2;
 }
@@ -93,30 +90,6 @@ export class WhisperWorkerClient {
     return this.worker;
   }
 
-  /**
-   * Recognizes the speech sounds actually produced (timed IPA phones), independent of Whisper's
-   * interpreted words. Uses a separate phoneme model (~230 MB, downloaded once).
-   */
-  detectSpeechSounds(
-    audio16k: Float32Array,
-    options: Pick<WhisperModelRuntimeOptions, 'modelSource' | 'customModelBaseUrl'>,
-    onProgress?: (stage: string, progress: number, detail?: string) => void
-  ): Promise<SpeechSoundsRecord> {
-    const copy = new Float32Array(audio16k);
-    return this.runJob<SpeechSoundsRecord>(
-      (jobId) => ({
-        type: 'phonemes',
-        jobId,
-        modelSource: options.modelSource,
-        customModelBaseUrl: options.customModelBaseUrl,
-        appBaseUrl: getAppBaseUrl(),
-        audio: copy,
-      }),
-      { onProgress },
-      [copy.buffer]
-    );
-  }
-
   preloadModel(
     options: WhisperModelRuntimeOptions,
     onProgress?: (stage: string, progress: number, detail?: string) => void
@@ -186,11 +159,6 @@ export class WhisperWorkerClient {
       transcript: diarized.transcript,
       wordConfidence: raw.wordConfidence,
       secondOpinionModelId: raw.secondOpinionModelId,
-      utteranceSpans: raw.utterances?.map((u) => ({
-        k: confidenceLineKey(u.text),
-        s: Math.round(u.startSec * 100) / 100,
-        e: Math.round(u.endSec * 100) / 100,
-      })),
       backendUsed: raw.backendUsed,
       speakerCount: diarized.speakerCount,
     };
@@ -257,9 +225,6 @@ export class WhisperWorkerClient {
             secondOpinionModelId: msg.secondOpinionModelId,
             backendUsed: msg.backendUsed,
           } as T);
-        } else if (msg.type === 'phonemes-done') {
-          cleanup();
-          resolve({ model: msg.model, phones: msg.phones } as T);
         } else if (msg.type === 'error') {
           cleanup();
           reject(new WhisperWorkerError(msg.message, msg.details));

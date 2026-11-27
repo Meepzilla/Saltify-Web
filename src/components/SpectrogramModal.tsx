@@ -15,7 +15,6 @@ import {
   type WordConfidenceMap,
 } from '../engine/wordConfidence';
 import type { AudioPlayerState } from '../hooks/useAudioPlayer';
-import { phonesInWindow, type HeardPhone, type SpeechSoundsRecord } from '../engine/speechSounds';
 import type { UtteranceLine } from '../types/saltify';
 
 const SAMPLE_RATE = 16000;
@@ -43,8 +42,6 @@ interface SpectrogramModalProps {
   player: AudioPlayerState;
   wordConfidence?: WordConfidenceMap | null;
   flagThresholds?: FlagThresholds;
-  /** Heard speech sounds (phoneme recognizer), drawn as a strip under the spectrogram. */
-  speechSounds?: SpeechSoundsRecord | null;
   onClose: () => void;
 }
 
@@ -91,18 +88,6 @@ function nearest<T extends { t: number }>(frames: T[], t: number): T | null {
   return Math.abs(a.t - t) <= Math.abs(b.t - t) ? a : b;
 }
 
-/** Places phone labels on two rows so neighbouring labels do not overlap. */
-function staggerPhones(phones: HeardPhone[], toX: (t: number) => number) {
-  const lastX = [-Infinity, -Infinity];
-  return phones.map(([p, t, c]) => {
-    const x = toX(t);
-    const width = 8 + p.length * 8;
-    const row = x - lastX[0] >= width ? 0 : x - lastX[1] >= width ? 1 : lastX[0] <= lastX[1] ? 0 : 1;
-    lastX[row] = x;
-    return { p, t, c, x, row };
-  });
-}
-
 export function SpectrogramModal({
   open,
   lines,
@@ -112,7 +97,6 @@ export function SpectrogramModal({
   player,
   wordConfidence,
   flagThresholds,
-  speechSounds = null,
   onClose,
 }: SpectrogramModalProps) {
   const [samples, setSamples] = useState<Float32Array | null>(null);
@@ -528,30 +512,6 @@ export function SpectrogramModal({
               }}
             />
           </div>
-
-          {speechSounds && analysis && (
-            <div
-              className="spectrogram-phones"
-              style={{ width }}
-              aria-label="Speech sounds heard in this segment"
-            >
-              <span className="spectrogram-phones-label" style={{ width: LEFT }}>
-                heard
-              </span>
-              {staggerPhones(phonesInWindow(speechSounds.phones, analysis.start, analysis.end, 0), timeToX).map(({ p, t, c, x, row }, k) => (
-                <button
-                  key={k}
-                  type="button"
-                  className={`spectrogram-phone ${c < 0.5 ? 'low' : ''}`}
-                  style={{ left: x, top: 2 + row * 22 }}
-                  title={`/${p}/ at ${t.toFixed(2)}s (${Math.round(c * 100)}% sure). Tap to move the playhead.`}
-                  onClick={() => player.seek(t)}
-                >
-                  {p}
-                </button>
-              ))}
-            </div>
-          )}
 
           <div className="spectrogram-readout mono" aria-live="polite">
             <span>t {readoutTime !== null ? `${readoutTime.toFixed(2)}s` : '—'}</span>

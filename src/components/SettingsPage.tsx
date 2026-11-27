@@ -678,7 +678,7 @@ export function SettingsPage({
                     }
                   >
                     <option value="off">Off (main model only)</option>
-                    {WHISPER_MODELS.filter((m) => m.id !== settings.modelId && m.kind !== 'phoneme').map((m) => (
+                    {WHISPER_MODELS.filter((m) => m.id !== settings.modelId).map((m) => (
                       <option key={m.id} value={m.id}>
                         {m.label} · {m.sizeLabel}
                       </option>
@@ -692,30 +692,6 @@ export function SettingsPage({
                       different model.
                     </p>
                   )}
-              </div>
-
-              {/* Experimental: phoneme recognition + phonological processes */}
-              <div className="settings-card">
-                <div className="settings-card-header">
-                  <h3 className="settings-card-title">Speech Sounds (Experimental)</h3>
-                </div>
-                <label className="settings-toggle-row" htmlFor="setting-speech-sounds">
-                  <div className="settings-row-info">
-                    <div className="settings-row-title">Detect speech sounds &amp; phonological processes</div>
-                    <div className="settings-row-desc">
-                      Adds &ldquo;Detect speech sounds&rdquo; to the Transcript and Audio menus: a second on-device
-                      model (~230&nbsp;MB) lists the sounds heard under each word and estimates phonological
-                      processes. Its estimates are still unreliable on real recordings, so it is off by default.
-                    </div>
-                  </div>
-                  <input
-                    id="setting-speech-sounds"
-                    type="checkbox"
-                    className="settings-toggle-input"
-                    checked={settings.enableSpeechSounds}
-                    onChange={(e) => onUpdateSettings({ enableSpeechSounds: e.target.checked })}
-                  />
-                </label>
               </div>
 
               <div className="settings-card">

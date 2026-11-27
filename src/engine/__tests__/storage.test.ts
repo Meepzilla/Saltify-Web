@@ -70,6 +70,19 @@ describe('app settings storage', () => {
     expect(loaded.defaultSpeakerAliases).toEqual({ speaker1: 'C', speaker2: 'E' });
   });
 
+  it('falls back from retired models to supported ones', () => {
+    globalThis.localStorage.setItem(
+      'saltify-web-settings-v1',
+      JSON.stringify({
+        modelId: 'onnx-community/wav2vec2-lv-60-espeak-cv-ft-ONNX',
+        secondOpinionModelId: 'onnx-community/hubert-base-english-ipa-ONNX',
+      })
+    );
+    const loaded = loadAppSettings();
+    expect(loaded.modelId).toBe(DEFAULT_APP_SETTINGS.modelId);
+    expect(loaded.secondOpinionModelId).toBe(DEFAULT_APP_SETTINGS.secondOpinionModelId);
+  });
+
   it('sanitizes empty default speaker aliases back to C and E', () => {
     saveAppSettings({
       ...DEFAULT_APP_SETTINGS,

@@ -894,7 +894,6 @@ export default function App() {
         transcriptionText: result.transcript,
         wordConfidence: result.wordConfidence,
         secondOpinionModelId: result.secondOpinionModelId,
-        utteranceSpans: result.utteranceSpans,
       }));
       setMobileTab('transcript');
       pushToast(
@@ -1381,53 +1380,6 @@ export default function App() {
     [settings.uncertainWordThreshold, settings.disagreementThreshold]
   );
 
-  /** Runs the phoneme recognizer over the session audio and stores the heard speech sounds. */
-  const handleDetectSpeechSounds = useCallback(async () => {
-    if (processing) return;
-    const samples = await loadSessionSamples();
-    if (!samples) {
-      pushToast('warning', 'No audio to analyse', 'Record or upload audio for this session first.');
-      return;
-    }
-    setProcessing({ kind: 'speech-sounds', stage: 'Preparing speech-sound recognition', progress: 0.02 });
-    try {
-      const record = await whisperClient.detectSpeechSounds(
-        samples,
-        { modelSource: settings.modelSource, customModelBaseUrl: settings.customModelBaseUrl },
-        (stage, progress, detail) => setProcessing({ kind: 'speech-sounds', stage, progress, detail })
-      );
-      updateActiveSession((s) => ({ ...s, speechSounds: record }));
-      if (!settings.showSpeechSounds) updateSettings({ showSpeechSounds: true });
-      setProcessing(null);
-      setMobileTab('transcript');
-      pushToast(
-        'success',
-        'Speech sounds detected',
-        `${record.phones.length} sounds recognized. Each utterance now shows the interpreted words, their expected pronunciation, and the sounds actually heard.`
-      );
-    } catch (err) {
-      setProcessing(null);
-      if (!isCancelledError(err)) {
-        pushToast(
-          'error',
-          'Speech-sound detection failed',
-          err instanceof Error ? err.message : String(err),
-          undefined,
-          getErrorDetails(err)
-        );
-      }
-    }
-  }, [
-    processing,
-    loadSessionSamples,
-    settings.modelSource,
-    settings.customModelBaseUrl,
-    settings.showSpeechSounds,
-    updateSettings,
-    updateActiveSession,
-    pushToast,
-    setMobileTab,
-  ]);
 
   /** Opens the Spectrogram at the line under the playhead (or the first line). */
   const openSpectrogramAtPlayhead = useCallback(() => {
@@ -1873,10 +1825,6 @@ export default function App() {
                   onExpandWaveform={() => setShowWaveformModal(true)}
                   onOpenSpectrogram={openSpectrogramAtPlayhead}
                   onEditVocabulary={() => setShowClientModal(true)}
-                  onDetectSpeechSounds={
-                    settings.enableSpeechSounds ? () => void handleDetectSpeechSounds() : undefined
-                  }
-                  hasSpeechSounds={Boolean(activeSession.speechSounds)}
                   vocabularyCount={
                     (activeSession.vocabulary ?? '').split(/[,;\n]+/).filter((w) => w.trim()).length
                   }
@@ -1904,16 +1852,6 @@ export default function App() {
                     onInspectLine={activeAudioBlob ? (i) => setSpectrogramLine(i) : undefined}
                     onResolveWord={handleResolveUncertainWord}
                     flagThresholds={flagThresholds}
-                    speechSounds={settings.enableSpeechSounds ? activeSession.speechSounds ?? null : null}
-                    utteranceSpans={activeSession.utteranceSpans}
-                    audioDurationSec={activeSession.audioMeta?.duration ?? 0}
-                    showSpeechSounds={settings.enableSpeechSounds && settings.showSpeechSounds}
-                    onToggleShowSpeechSounds={() =>
-                      updateSettings({ showSpeechSounds: !settings.showSpeechSounds })
-                    }
-                    onDetectSpeechSounds={
-                      settings.enableSpeechSounds ? () => void handleDetectSpeechSounds() : undefined
-                    }
                     onChangeFlagThresholds={(next) =>
                       updateSettings({
                         uncertainWordThreshold: next.uncertainBelow,
@@ -2142,9 +2080,6 @@ export default function App() {
           player={player}
           wordConfidence={activeSession.wordConfidence}
           flagThresholds={flagThresholds}
-          speechSounds={
-            settings.enableSpeechSounds && settings.showSpeechSounds ? activeSession.speechSounds ?? null : null
-          }
           onClose={() => setSpectrogramLine(null)}
         />
       )}
