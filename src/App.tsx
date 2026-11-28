@@ -74,6 +74,7 @@ import {
 } from './engine/speakerDiarizer';
 import {
   deleteSessionRecord,
+  inspectCachedWhisperModels,
   loadAllSessions,
   loadAppSettings,
   loadAudioBlob,
@@ -104,8 +105,10 @@ import {
   type ToastMessage,
   type WhisperModelId,
   WHISPER_MODELS,
+  isCloudModel,
 } from './types/saltify';
 import { getErrorDetails, isCancelledError, whisperClient } from './workers/whisperClient';
+import { LiveTranscriber } from './workers/liveTranscriber';
 
 type MobileTab = 'audio' | 'transcript' | 'salt' | 'metrics';
 
@@ -186,6 +189,10 @@ export default function App() {
   const recorderRef = useRef<CrossPlatformAudioRecorder | null>(null);
   const [isRecording, setIsRecording] = useState(false);
   const [isRecordingPaused, setIsRecordingPaused] = useState(false);
+  /** Transcribing while recording: the live session and its status for the recording bar. */
+  const liveRef = useRef<LiveTranscriber | null>(null);
+  const startTranscriptionRef = useRef<() => Promise<void>>(async () => {});
+  const [liveStatus, setLiveStatus] = useState<string | null>(null);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
   const [recordingLevel, setRecordingLevel] = useState(0);
 
@@ -518,6 +525,9 @@ export default function App() {
   const handleNewSession = useCallback(() => {
     if (isRecording) {
       recorderRef.current?.cancel();
+      liveRef.current?.cancel();
+      liveRef.current = null;
+      setLiveStatus(null);
       setIsRecording(false);
       setIsRecordingPaused(false);
     }
@@ -736,24 +746,73 @@ export default function App() {
     player.pause();
     const recorder = new CrossPlatformAudioRecorder();
     recorderRef.current = recorder;
+
+    // Transcribe while recording when the model is already on this device (never start a large
+    // download mid-session) and the session has no transcript yet (never overwrite one).
+    let live: LiveTranscriber | null = null;
+    if (settings.transcribeWhileRecording && !activeSession.transcriptionText.trim()) {
+      const ready = isCloudModel(settings.modelId)
+        ? settings.cloudTranscriptionEnabled && settings.cloudAccessKey.trim() !== '' && navigator.onLine
+        : settings.modelSource === 'local-only' ||
+          (await inspectCachedWhisperModels()).cachedModelIds.includes(settings.modelId);
+      if (ready) {
+        live = new LiveTranscriber(
+          whisperClient,
+          {
+            modelId: settings.modelId,
+            vocabulary: activeSession.vocabulary,
+            chunking: settings.transcriptionMethod,
+            device: settings.device,
+            modelSource: settings.modelSource,
+            customModelBaseUrl: settings.customModelBaseUrl,
+            cloudAccessKey: settings.cloudTranscriptionEnabled ? settings.cloudAccessKey : '',
+          },
+          (text, lines) => {
+            updateActiveSession((s) => ({ ...s, transcriptionText: text }));
+            setLiveStatus(`Live · ${lines} line${lines === 1 ? '' : 's'}`);
+          }
+        );
+      }
+    }
+    liveRef.current = live;
+    setLiveStatus(live ? 'Live transcript on' : null);
+
     try {
       setRecordingSeconds(0);
       setRecordingLevel(0);
       await recorder.start({
         onLevel: setRecordingLevel,
         onDuration: setRecordingSeconds,
+        onPcm16k: live ? (pcm) => live.push(pcm) : undefined,
       });
       setIsRecording(true);
       setIsRecordingPaused(false);
     } catch (err) {
       recorderRef.current = null;
+      live?.cancel();
+      liveRef.current = null;
+      setLiveStatus(null);
       pushToast(
         'error',
         'Microphone Error',
         err instanceof Error ? err.message : 'Could not start recording.'
       );
     }
-  }, [player, pushToast]);
+  }, [
+    player,
+    pushToast,
+    settings.transcribeWhileRecording,
+    settings.modelSource,
+    settings.modelId,
+    settings.transcriptionMethod,
+    settings.device,
+    settings.customModelBaseUrl,
+    settings.cloudTranscriptionEnabled,
+    settings.cloudAccessKey,
+    activeSession.transcriptionText,
+    activeSession.vocabulary,
+    updateActiveSession,
+  ]);
 
   const handleTogglePauseRecording = useCallback(() => {
     const recorder = recorderRef.current;
@@ -774,18 +833,62 @@ export default function App() {
     setIsRecordingPaused(false);
     recorderRef.current = null;
 
+    const live = liveRef.current;
+    liveRef.current = null;
+    setLiveStatus(null);
+
     try {
       const blob = await recorder.stop();
       const stamp = new Date().toTimeString().slice(0, 8).replace(/:/g, '-');
       await ingestAudioBlob(blob, `Recording_${stamp}.wav`);
     } catch (err) {
+      live?.cancel();
       pushToast(
         'error',
         'Recording could not be saved',
         err instanceof Error ? err.message : 'Empty recording.'
       );
+      return;
     }
-  }, [ingestAudioBlob, pushToast]);
+
+    if (!live) return;
+    // Most of the recording was transcribed while recording: finish the last few seconds
+    setProcessing({ kind: 'transcription', stage: 'Finishing the transcript', progress: 0.2 });
+    try {
+      const result = await live.finish(activeSession.speakerAliases, (stage, progress, detail) =>
+        setProcessing({ kind: 'transcription', stage, progress, detail })
+      );
+      setProcessing(null);
+      if (!result.transcript.trim()) {
+        pushToast('warning', 'No speech detected', 'Check that the recording has audible speech, then tap Transcribe.');
+        return;
+      }
+      updateActiveSession((s) => ({
+        ...s,
+        transcriptionText: result.transcript,
+        wordConfidence: result.wordConfidence,
+        secondOpinionModelId: undefined,
+      }));
+      setMobileTab('transcript');
+      pushToast(
+        'success',
+        'Transcript ready',
+        `Transcribed while you recorded: finished ${Math.max(1, Math.round(result.finishSec))} s after you stopped, ${result.speakerCount} speaker${result.speakerCount > 1 ? 's' : ''} labeled.${
+          settings.secondOpinionModelId !== 'off' ? ' Tap Transcribe to also run Second Opinion.' : ''
+        }`
+      );
+    } catch (err) {
+      setProcessing(null);
+      if (isCancelledError(err)) return;
+      pushToast(
+        'warning',
+        'Live transcription stopped part-way',
+        'Your recording is saved. Tap Transcribe to transcribe it in full.',
+        { label: 'Transcribe', onRetry: () => void startTranscriptionRef.current() },
+        getErrorDetails(err)
+      );
+    }
+  }, [ingestAudioBlob, pushToast, activeSession.speakerAliases, updateActiveSession, setMobileTab, settings.secondOpinionModelId]);
 
   const handleDownloadAudio = useCallback(async () => {
     if (!activeAudioBlob || !activeSession) return;
@@ -821,7 +924,6 @@ export default function App() {
   }, [activeAudioBlob, activeId, activeSession, player.muted, player.volume, pushToast]);
 
   // On-Device Whisper Transcription
-  const startTranscriptionRef = useRef<() => Promise<void>>(async () => {});
 
   const startTranscription = useCallback(async () => {
     if (!activeAudioBlob || !activeId) return;
@@ -857,6 +959,7 @@ export default function App() {
           modelSource: settings.modelSource,
           customModelBaseUrl: settings.customModelBaseUrl,
           aliases: activeSession.speakerAliases,
+          cloudAccessKey: settings.cloudTranscriptionEnabled ? settings.cloudAccessKey : '',
         },
         {
           onProgress: (stage, progress, detail) => {
@@ -931,6 +1034,8 @@ export default function App() {
     settings.device,
     settings.modelSource,
     settings.customModelBaseUrl,
+    settings.cloudTranscriptionEnabled,
+    settings.cloudAccessKey,
     updateActiveSession,
     pushToast,
     setMobileTab,
@@ -1807,6 +1912,7 @@ export default function App() {
                   player={player}
                   isRecording={isRecording}
                   isRecordingPaused={isRecordingPaused}
+                  liveStatus={liveStatus}
                   recordingSeconds={recordingSeconds}
                   recordingLevel={recordingLevel}
                   processing={processing}
@@ -1868,7 +1974,7 @@ export default function App() {
                     aliases={activeSession.speakerAliases}
                     hasAudio={Boolean(activeAudioBlob)}
                     currentTime={player.currentTime}
-                    disabled={processing !== null}
+                    disabled={processing !== null || liveStatus !== null}
                     colorPartsOfSpeech={settings.colorCodePartsOfSpeech}
                     showIpaTranscription={settings.showIpaTranscription}
                     onToggleIpaTranscription={() =>

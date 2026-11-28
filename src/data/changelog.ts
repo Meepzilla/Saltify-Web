@@ -24,6 +24,54 @@ export const APP_VERSION: string = __APP_VERSION__;
  */
 export const CHANGELOG_RELEASES: readonly ChangelogRelease[] = [
   {
+    version: '1.18.0',
+    date: '2026-11-28',
+    title: 'Classic Transcription by Default; Optional Cloud Transcription',
+    summary:
+      'Classic transcription is the default again, and a much larger Whisper model can now run on your Cloudflare account instead of the device (off by default; needs a server access key, because audio leaves the device).',
+    changes: [
+      {
+        category: 'improved',
+        summary: 'Classic transcription method is the default again',
+        detail:
+          'Classic (fixed ~26-second chunks, as before 1.12) worked better than Speech-first on real language samples, so every device switches to it unless Speech-first was picked in Settings. Speech-first stays available in Settings → Transcription Method, and the cloud model follows the same setting.',
+      },
+      {
+        category: 'added',
+        summary: 'Whisper Large v3 Turbo on Cloudflare Workers AI',
+        detail:
+          'Turn it on in Settings → Speech & Models → Cloud Transcription, enter the access key and tap Test connection. Speech is sent in up to three parts at a time and assembled exactly like an on-device transcript (cleanup, timestamps, speaker labels, uncertain stretches flagged). Works with Transcribe while recording too.',
+      },
+      {
+        category: 'improved',
+        summary: 'Locked down by default',
+        detail:
+          'The server endpoint stays off until a CLOUD_TRANSCRIBE_KEY secret is set in the Cloudflare dashboard, and every request must carry that key, so no one else can use your account. Turning the option off also switches away from the cloud model.',
+      },
+    ],
+  },
+  {
+    version: '1.17.0',
+    date: '2026-11-28',
+    title: 'Transcribe While Recording',
+    summary:
+      'The transcript is now built in the background during the session, so it is ready a few seconds after you tap Stop instead of starting from scratch.',
+    changes: [
+      {
+        category: 'added',
+        summary: 'Transcribe while recording (on by default)',
+        detail:
+          'Audio is cut at natural pauses and transcribed in the background as you record; lines appear in the transcript during the session and a "Live · N lines" chip shows progress. When you stop, only the last few seconds remain, then speakers are labeled over the whole recording. In testing, a 95-second recording was ready 6.6 s after Stop vs 33 s with Transcribe.',
+      },
+      {
+        category: 'improved',
+        summary: 'Safe by design',
+        detail:
+          'It only runs when the chosen model is already downloaded (no large download mid-session) and the session has no transcript yet. If anything fails, the recording is saved and Transcribe works as before. Second Opinion runs when you tap Transcribe. Turn it off in Settings → Transcription Method.',
+      },
+    ],
+  },
+  {
     version: '1.16.0',
     date: '2026-11-28',
     title: 'Tap Any Word to Edit It',

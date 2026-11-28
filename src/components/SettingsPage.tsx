@@ -25,6 +25,7 @@ import type { ErrorLogEntry } from '../engine/errorLog';
 import { estimateLocalStorageUsage } from '../engine/storage';
 import { MAX_PLAYBACK_BOOST } from '../hooks/useAudioPlayer';
 import type { PwaInstallState } from '../hooks/usePwaInstall';
+import { CloudTranscriptionCard } from './CloudTranscriptionCard';
 import { useWhisperModelStatus } from '../hooks/useWhisperModelStatus';
 import {
   DEFAULT_SPEAKER_ALIASES,
@@ -594,7 +595,7 @@ export function SettingsPage({
                 </p>
 
                 <div className="settings-model-list">
-                  {WHISPER_MODELS.map((model) => {
+                  {WHISPER_MODELS.filter((m) => m.family !== 'cloud' || settings.cloudTranscriptionEnabled).map((model) => {
                     const isSelected = settings.modelId === model.id;
                     const isCached = modelStatus.cachedModels.includes(model.id);
                     const isSelfHosted = modelStatus.selfHostedModels.includes(model.id);
@@ -631,24 +632,29 @@ export function SettingsPage({
                           </span>
                         </div>
 
-                        <button
-                          type="button"
-                          className="btn btn-secondary btn-sm"
-                          disabled={processing !== null}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onUpdateSettings({ modelId: model.id });
-                            onPreloadModel(model.id);
-                          }}
-                        >
-                          <Download size={14} />
-                          <span>{isCached ? 'Verify' : 'Cache'}</span>
-                        </button>
+                        {model.family !== 'cloud' && (
+                          <button
+                            type="button"
+                            className="btn btn-secondary btn-sm"
+                            disabled={processing !== null}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onUpdateSettings({ modelId: model.id });
+                              onPreloadModel(model.id);
+                            }}
+                          >
+                            <Download size={14} />
+                            <span>{isCached ? 'Verify' : 'Cache'}</span>
+                          </button>
+                        )}
                       </div>
                     );
                   })}
                 </div>
               </div>
+
+              {/* Optional cloud transcription (Cloudflare Workers AI) */}
+              <CloudTranscriptionCard settings={settings} onUpdateSettings={onUpdateSettings} />
 
               {/* Transcription method: speech-first (default) or classic chunks */}
               <div className="settings-card">
@@ -656,11 +662,12 @@ export function SettingsPage({
                   <h3 className="settings-card-title">Transcription Method</h3>
                 </div>
                 <p className="settings-card-desc">
-                  <strong>Speech-first</strong> finds the speech, skips silence and re-checks phrases that
-                  look missed (at most one extra pass per segment). <strong>Classic</strong> sends the
-                  whole recording in fixed ~26-second chunks with no re-checks, as before version 1.12.
-                  If a recording comes out with missing words or takes much longer than expected, try
-                  the other method and compare.
+                  <strong>Classic</strong> (recommended) sends the whole recording in fixed ~26-second
+                  chunks, as before version 1.12; it worked best on real language samples.
+                  <strong> Speech-first</strong> finds the speech, skips silence and re-checks phrases that
+                  look missed (at most one extra pass per segment). If a recording comes out with missing
+                  words or takes much longer than expected, try the other method and compare. The cloud
+                  model follows this setting too.
                 </p>
                 <div className="form-field">
                   <label className="form-label" htmlFor="setting-transcription-method">
@@ -673,13 +680,32 @@ export function SettingsPage({
                     onChange={(e) =>
                       onUpdateSettings({
                         transcriptionMethod: e.target.value as AppSettings['transcriptionMethod'],
+                        transcriptionMethodChosen: true,
                       })
                     }
                   >
-                    <option value="speech-first">Speech-first (recommended)</option>
-                    <option value="classic">Classic (pre-1.12)</option>
+                    <option value="classic">Classic (recommended)</option>
+                    <option value="speech-first">Speech-first</option>
                   </select>
                 </div>
+                <label className="settings-toggle-row" htmlFor="setting-live-transcribe" style={{ marginTop: 12 }}>
+                  <div className="settings-row-info">
+                    <div className="settings-row-title">Transcribe while recording</div>
+                    <div className="settings-row-desc">
+                      Transcribes in the background during the session, so the transcript is ready a few
+                      seconds after you tap Stop. Runs only when the chosen model is already downloaded
+                      and the session has no transcript yet. Second Opinion runs only when you tap
+                      Transcribe.
+                    </div>
+                  </div>
+                  <input
+                    id="setting-live-transcribe"
+                    type="checkbox"
+                    className="settings-toggle-input"
+                    checked={settings.transcribeWhileRecording}
+                    onChange={(e) => onUpdateSettings({ transcribeWhileRecording: e.target.checked })}
+                  />
+                </label>
               </div>
 
               {/* Second opinion: compare with another model during transcription */}
@@ -710,7 +736,7 @@ export function SettingsPage({
                     }
                   >
                     <option value="off">Off (main model only)</option>
-                    {WHISPER_MODELS.filter((m) => m.id !== settings.modelId && m.family !== 'moonshine').map((m) => (
+                    {WHISPER_MODELS.filter((m) => m.id !== settings.modelId && m.family !== 'moonshine' && m.family !== 'cloud').map((m) => (
                       <option key={m.id} value={m.id}>
                         {m.label} · {m.sizeLabel}
                       </option>

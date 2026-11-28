@@ -4,7 +4,8 @@ export type WhisperModelId =
   | 'onnx-community/whisper-tiny.en'
   | 'onnx-community/whisper-base.en'
   | 'onnx-community/whisper-small.en'
-  | 'onnx-community/moonshine-base-ONNX';
+  | 'onnx-community/moonshine-base-ONNX'
+  | 'cloudflare/whisper-large-v3-turbo';
 
 export type ComputeDevice = 'auto' | 'webgpu' | 'wasm';
 
@@ -22,7 +23,7 @@ export interface WhisperModelInfo {
    * Model family. Whisper (default) pads audio to 30 s windows and supports the expected-words
    * prompt and second opinion; Moonshine transcribes each stretch of speech at its real length.
    */
-  family?: 'whisper' | 'moonshine';
+  family?: 'whisper' | 'moonshine' | 'cloud';
 }
 
 export const WHISPER_MODELS: readonly WhisperModelInfo[] = [
@@ -64,7 +65,22 @@ export const WHISPER_MODELS: readonly WhisperModelInfo[] = [
       'About 3× faster than Whisper Small on 10–13 minute samples, with accuracy close to Whisper Base (about 9 words in 100 wrong vs 6 for Small; more in noise). Each line starts exactly where its stretch of speech begins. Expected words and Second Opinion are not used with this model.',
     family: 'moonshine',
   },
+  {
+    id: 'cloudflare/whisper-large-v3-turbo',
+    label: 'Whisper Large v3 Turbo (Cloudflare cloud)',
+    shortLabel: 'Large v3 (cloud)',
+    sizeLabel: 'No download',
+    sizeMb: 0,
+    recommendedFor: 'Best accuracy and speed when your district approves cloud processing',
+    description:
+      'Runs on Cloudflare Workers AI instead of this device: a much larger Whisper model, typically done in seconds. Audio leaves the device (sent to Cloudflare, not stored). Requires the server access key; enable it in Settings → Cloud Transcription.',
+    family: 'cloud',
+  },
 ] as const;
+
+export function isCloudModel(modelId: string): boolean {
+  return WHISPER_MODELS.some((m) => m.id === modelId && m.family === 'cloud');
+}
 
 export function isMoonshineModel(modelId: string): boolean {
   return WHISPER_MODELS.some((m) => m.id === modelId && m.family === 'moonshine');
@@ -231,10 +247,18 @@ export interface AppSettings {
   /** Second model to compare against during transcription ('off' = single model). */
   secondOpinionModelId: WhisperModelId | 'off';
   /**
-   * 'speech-first' (default): detect speech, skip silence, re-check missed phrases.
-   * 'classic': fixed ~26 s chunks with silence included and no re-checks (pre-1.12 behavior).
+   * 'classic' (default): fixed ~26 s chunks with silence included and no re-checks (pre-1.12).
+   * 'speech-first': detect speech, skip silence, re-check missed phrases.
    */
   transcriptionMethod: 'speech-first' | 'classic';
+  /** True once the user picked a method in Settings (otherwise the current default applies). */
+  transcriptionMethodChosen: boolean;
+  /** Transcribe in the background while recording (when the model is already downloaded). */
+  transcribeWhileRecording: boolean;
+  /** Allow the Cloudflare-hosted model (audio leaves the device). Off by default. */
+  cloudTranscriptionEnabled: boolean;
+  /** Access key for this server's /api/transcribe (the CLOUD_TRANSCRIBE_KEY secret). */
+  cloudAccessKey: string;
   /** Review sensitivity: flag words Whisper was less sure of than this (0–1). */
   uncertainWordThreshold: number;
   /** Review sensitivity: flag model disagreements when the main model was less sure than this (0–1). */
@@ -257,7 +281,11 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   showIpaTranscription: false,
   highlightUncertainWords: true,
   secondOpinionModelId: 'off',
-  transcriptionMethod: 'speech-first',
+  transcriptionMethod: 'classic',
+  transcriptionMethodChosen: false,
+  transcribeWhileRecording: true,
+  cloudTranscriptionEnabled: false,
+  cloudAccessKey: '',
   uncertainWordThreshold: 0.6,
   disagreementThreshold: 0.9,
 };

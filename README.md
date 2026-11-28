@@ -31,6 +31,23 @@ Every step of the clinical workflow executes **100% locally in the browser** —
 
 ---
 
+## Optional Cloud Transcription (Cloudflare Workers AI)
+
+On-device transcription stays the default. If your district approves sending student audio to
+Cloudflare, Saltify Web can instead use **Whisper Large v3 Turbo** on Workers AI (about $0.0005
+per audio minute; Workers AI does not keep the audio). The endpoint is **off until you set a key**:
+
+1. Cloudflare dashboard → **Workers & Pages** → `saltify-web` → **Settings → Variables and Secrets** →
+   **Add** → type **Secret**, name `CLOUD_TRANSCRIBE_KEY`, value: a long random string.
+2. In Saltify Web: **Settings → Speech & Models → Cloud Transcription** → turn on **Allow cloud
+   transcription**, paste the same key, tap **Test connection**, then **Use the cloud model**.
+
+The Worker (`worker/index.ts`) only answers `/api/transcribe` and `/api/transcribe/status`; every
+other request is served from the static PWA as before. If the GitHub deploy fails with a
+permissions error after this change, add the **Workers AI** permission to the `CLOUDFLARE_API_TOKEN`.
+
+---
+
 ## Installing on Android, Windows, and iPad
 
 1. **iPad (iPadOS Safari):** Open Saltify Web in Safari → tap **Share** → **Add to Home Screen**. Recommended model: **Whisper Tiny (.en)** or **Whisper Base (.en)** for optimal iPad Safari memory stability.

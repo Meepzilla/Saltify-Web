@@ -82,7 +82,7 @@ export function ModelManagerModal({
           </p>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {WHISPER_MODELS.map((model) => {
+            {WHISPER_MODELS.filter((m) => m.family !== 'cloud' || settings.cloudTranscriptionEnabled).map((model) => {
               const isSelected = settings.modelId === model.id;
               const isCached = cachedModels.includes(model.id);
               const isSelfHosted = selfHostedModels.includes(model.id);
@@ -142,19 +142,21 @@ export function ModelManagerModal({
                     </span>
                   </div>
 
-                  <button
-                    type="button"
-                    className="btn btn-secondary btn-sm"
-                    disabled={processing !== null}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onUpdateSettings({ modelId: model.id });
-                      onPreloadModel(model.id);
-                    }}
-                  >
-                    <Download size={14} />
-                    <span>{isCached ? 'Verify' : 'Cache'}</span>
-                  </button>
+                  {model.family !== 'cloud' && (
+                    <button
+                      type="button"
+                      className="btn btn-secondary btn-sm"
+                      disabled={processing !== null}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onUpdateSettings({ modelId: model.id });
+                        onPreloadModel(model.id);
+                      }}
+                    >
+                      <Download size={14} />
+                      <span>{isCached ? 'Verify' : 'Cache'}</span>
+                    </button>
+                  )}
                 </div>
               );
             })}
