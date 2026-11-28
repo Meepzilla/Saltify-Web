@@ -74,4 +74,16 @@ describe('speech chunking', () => {
     expect(flagged).toHaveLength(1);
     expect(flagged[0].pieces).toHaveLength(3);
   });
+
+  it('ignores digital silence when judging background noise', () => {
+    // speech, exact-zero gap, 10 s of quiet room noise, exact-zero gap, speech
+    const x = new Float32Array(20 * SR);
+    for (let i = 0; i < 2 * SR; i++) x[i] = 0.3 * Math.sin(i / 7);
+    let s = 5;
+    for (let i = 4 * SR; i < 14 * SR; i++) x[i] = (((s = (s * 16807) % 2147483647) / 2147483647) - 0.5) * 0.006;
+    for (let i = 16 * SR; i < 18 * SR; i++) x[i] = 0.3 * Math.sin(i / 7);
+    const regions = detectSpeechRegions(x);
+    expect(regions).toHaveLength(2);
+    expect(regions.every((r) => r.end - r.start < 3)).toBe(true);
+  });
 });

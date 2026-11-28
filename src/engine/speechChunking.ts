@@ -45,9 +45,13 @@ export function detectSpeechRegions(samples: Float32Array, sampleRate = 16000, o
     for (let i = f * size; i < (f + 1) * size; i++) sum += samples[i] * samples[i];
     db[f] = 10 * Math.log10(sum / size + 1e-10);
   }
-  const sorted = Float32Array.from(db).sort();
-  const floor = sorted[Math.floor(frames * 0.1)];
-  const peak = sorted[Math.floor(frames * 0.98)];
+  // Digital silence (exact zeros from noise gates, edits or generated audio) is not the room's
+  // background level: estimate the noise floor from audible frames only.
+  const audible = Float32Array.from(db.filter((d) => d > -80)).sort();
+  if (audible.length === 0) return [];
+  const sorted = audible.length >= frames * 0.1 ? audible : Float32Array.from(db).sort();
+  const floor = sorted[Math.floor(sorted.length * 0.1)];
+  const peak = sorted[Math.floor(sorted.length * 0.98)];
   // Recordings with no clear speech/noise contrast: treat everything as speech
   if (peak - floor < 6) return [{ start: 0, end: durationSec }];
   const threshold = floor + thresholdRatio * (peak - floor) + 3;

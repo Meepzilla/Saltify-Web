@@ -159,9 +159,11 @@ env.fetch = async (input: string | URL, init?: RequestInit) => {
 let loadedKey: string | null = null;
 let loadedBackend: 'webgpu' | 'wasm' | null = null;
 
-/** Longest stretch of packed speech per Whisper window (seconds). */
+/**
+ * Longest stretch of packed speech per Whisper window (seconds). Whisper pads every window to
+ * 30 s, so shorter windows save no memory; 28 s tested best on 10–13 minute two-speaker samples.
+ */
 const SPEECH_WINDOW_SEC = 28;
-const SPEECH_WINDOW_SEC_LOW_MEMORY = 20;
 
 function post(msg: WorkerResponse): void {
   self.postMessage(msg);
@@ -698,8 +700,7 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
       // Speech-first windows: find the speech, skip silence (Whisper pads every window to 30 s
       // and invents text over silence), and pack utterances into windows joined by short
       // stretches of background noise. Times map back to the recording.
-      const lowMemory = isLowMemoryDevice();
-      const slices = buildSpeechSlices(req.audio, 16000, lowMemory ? SPEECH_WINDOW_SEC_LOW_MEMORY : SPEECH_WINDOW_SEC);
+      const slices = buildSpeechSlices(req.audio, 16000, SPEECH_WINDOW_SEC);
       const speechRegions = slices.flatMap((sl) => sl.pieces.map((p) => ({ start: p.srcStart, end: p.srcEnd })));
       if (slices.length === 0) {
         post({
