@@ -407,3 +407,32 @@ export function sliceAudioIntoPauseAwareChunks(
 
   return chunks;
 }
+
+/**
+ * Streaming downsampler (e.g. 48 kHz microphone → 16 kHz for speech models). Each output sample
+ * is the average of the input samples it covers (a simple anti-aliasing box filter); state carries
+ * across calls so chunk boundaries do not matter.
+ */
+export function createStreamingDownsampler(inputRate: number, outputRate = 16000) {
+  const ratio = inputRate / outputRate;
+  let carry: number[] = [];
+  let phase = 0; // fractional input position of the next output sample's start
+  return (input: Float32Array): Float32Array => {
+    if (ratio <= 1) return input.slice();
+    const data = carry.length ? Float32Array.from([...carry, ...input]) : input;
+    const out: number[] = [];
+    let pos = phase;
+    while (pos + ratio <= data.length) {
+      const a = Math.floor(pos);
+      const b = Math.floor(pos + ratio);
+      let sum = 0;
+      for (let i = a; i < b; i++) sum += data[i];
+      out.push(sum / Math.max(1, b - a));
+      pos += ratio;
+    }
+    const keepFrom = Math.floor(pos);
+    carry = Array.from(data.subarray(keepFrom));
+    phase = pos - keepFrom;
+    return Float32Array.from(out);
+  };
+}

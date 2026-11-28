@@ -235,6 +235,8 @@ export interface AppSettings {
    * 'classic': fixed ~26 s chunks with silence included and no re-checks (pre-1.12 behavior).
    */
   transcriptionMethod: 'speech-first' | 'classic';
+  /** Transcribe in the background while recording (when the model is already downloaded). */
+  transcribeWhileRecording: boolean;
   /** Review sensitivity: flag words Whisper was less sure of than this (0–1). */
   uncertainWordThreshold: number;
   /** Review sensitivity: flag model disagreements when the main model was less sure than this (0–1). */
@@ -258,6 +260,7 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   highlightUncertainWords: true,
   secondOpinionModelId: 'off',
   transcriptionMethod: 'speech-first',
+  transcribeWhileRecording: true,
   uncertainWordThreshold: 0.6,
   disagreementThreshold: 0.9,
 };

@@ -680,6 +680,24 @@ export function SettingsPage({
                     <option value="classic">Classic (pre-1.12)</option>
                   </select>
                 </div>
+                <label className="settings-toggle-row" htmlFor="setting-live-transcribe" style={{ marginTop: 12 }}>
+                  <div className="settings-row-info">
+                    <div className="settings-row-title">Transcribe while recording</div>
+                    <div className="settings-row-desc">
+                      Transcribes in the background during the session, so the transcript is ready a few
+                      seconds after you tap Stop. Runs only when the chosen model is already downloaded
+                      and the session has no transcript yet. Second Opinion runs only when you tap
+                      Transcribe.
+                    </div>
+                  </div>
+                  <input
+                    id="setting-live-transcribe"
+                    type="checkbox"
+                    className="settings-toggle-input"
+                    checked={settings.transcribeWhileRecording}
+                    onChange={(e) => onUpdateSettings({ transcribeWhileRecording: e.target.checked })}
+                  />
+                </label>
               </div>
 
               {/* Second opinion: compare with another model during transcription */}

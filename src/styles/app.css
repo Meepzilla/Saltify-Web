@@ -3978,3 +3978,14 @@ textarea.vocabulary-input {
   text-decoration: underline dotted;
   text-underline-offset: 3px;
 }
+
+/* "Live · 12 lines" chip on the recording bar while transcribing as you record */
+.live-transcribe-chip {
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent-soft-text);
+  white-space: nowrap;
+}

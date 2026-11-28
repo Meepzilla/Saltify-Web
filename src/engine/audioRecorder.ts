@@ -1,8 +1,13 @@
-import { encodeWavBlob } from './audioProcessing';
+import { createStreamingDownsampler, encodeWavBlob } from './audioProcessing';
 
 export interface RecorderCallbacks {
   onLevel?: (level01: number) => void;
   onDuration?: (seconds: number) => void;
+  /**
+   * Live 16 kHz mono audio while recording (not while paused), for transcribing as you record.
+   * Delivered in ~85 ms chunks.
+   */
+  onPcm16k?: (samples: Float32Array) => void;
 }
 
 /**
@@ -41,6 +46,8 @@ export class CrossPlatformAudioRecorder {
   private audioContext: AudioContext | null = null;
   private analyser: AnalyserNode | null = null;
   private scriptProcessor: ScriptProcessorNode | null = null;
+  private liveProcessor: ScriptProcessorNode | null = null;
+  private liveSink: GainNode | null = null;
   private chunks: Blob[] = [];
   private pcmFallbackChunks: Float32Array[] = [];
   private pcmSampleRate = 44100;
@@ -126,6 +133,23 @@ export class CrossPlatformAudioRecorder {
     this.analyser.fftSize = 512;
     this.analyser.smoothingTimeConstant = 0.72;
     source.connect(this.analyser);
+
+    // Live 16 kHz feed for transcription while recording. ScriptProcessor works in every target
+    // browser (incl. iPad Safari); it is routed through a muted gain so nothing is played back.
+    if (callbacks.onPcm16k) {
+      const down = createStreamingDownsampler(this.audioContext.sampleRate, 16000);
+      this.liveProcessor = this.audioContext.createScriptProcessor(4096, 1, 1);
+      this.liveSink = this.audioContext.createGain();
+      this.liveSink.gain.value = 0;
+      this.liveProcessor.onaudioprocess = (event) => {
+        if (this.paused) return;
+        const pcm = down(event.inputBuffer.getChannelData(0));
+        if (pcm.length > 0) this.callbacks.onPcm16k?.(pcm);
+      };
+      source.connect(this.liveProcessor);
+      this.liveProcessor.connect(this.liveSink);
+      this.liveSink.connect(this.audioContext.destination);
+    }
 
     const mimeType = pickSupportedRecordingMimeType();
     if (typeof MediaRecorder !== 'undefined') {
@@ -282,6 +306,15 @@ export class CrossPlatformAudioRecorder {
     if (this.scriptProcessor) {
       this.scriptProcessor.disconnect();
       this.scriptProcessor = null;
+    }
+    if (this.liveProcessor) {
+      this.liveProcessor.onaudioprocess = null;
+      this.liveProcessor.disconnect();
+      this.liveProcessor = null;
+    }
+    if (this.liveSink) {
+      this.liveSink.disconnect();
+      this.liveSink = null;
     }
     if (this.stream) {
       for (const track of this.stream.getTracks()) {

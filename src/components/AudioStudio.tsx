@@ -40,6 +40,8 @@ interface AudioStudioProps {
   player: AudioPlayerState;
   isRecording: boolean;
   isRecordingPaused: boolean;
+  /** Status of transcribing while recording (e.g. "Live · 12 lines"), when active. */
+  liveStatus?: string | null;
   recordingSeconds: number;
   recordingLevel: number;
   processing: ProcessingState | null;
@@ -70,6 +72,7 @@ export function AudioStudio({
   player,
   isRecording,
   isRecordingPaused,
+  liveStatus = null,
   recordingSeconds,
   recordingLevel,
   processing,
@@ -257,6 +260,11 @@ export function AudioStudio({
             <div className="live-meter-wrap" role="status" aria-live="polite">
               <span className="rec-dot" />
               <span className="mono">{formatDurationPadded(recordingSeconds)}</span>
+              {liveStatus && (
+                <span className="live-transcribe-chip" title="Transcribing while you record">
+                  {liveStatus}
+                </span>
+              )}
               <div className="live-meter-bar" aria-hidden="true">
                 <div
                   className="live-meter-fill"

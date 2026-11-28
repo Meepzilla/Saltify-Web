@@ -24,6 +24,27 @@ export const APP_VERSION: string = __APP_VERSION__;
  */
 export const CHANGELOG_RELEASES: readonly ChangelogRelease[] = [
   {
+    version: '1.17.0',
+    date: '2026-11-28',
+    title: 'Transcribe While Recording',
+    summary:
+      'The transcript is now built in the background during the session, so it is ready a few seconds after you tap Stop instead of starting from scratch.',
+    changes: [
+      {
+        category: 'added',
+        summary: 'Transcribe while recording (on by default)',
+        detail:
+          'Audio is cut at natural pauses and transcribed in the background as you record; lines appear in the transcript during the session and a "Live · N lines" chip shows progress. When you stop, only the last few seconds remain, then speakers are labeled over the whole recording. In testing, a 95-second recording was ready 6.6 s after Stop vs 33 s with Transcribe.',
+      },
+      {
+        category: 'improved',
+        summary: 'Safe by design',
+        detail:
+          'It only runs when the chosen model is already downloaded (no large download mid-session) and the session has no transcript yet. If anything fails, the recording is saved and Transcribe works as before. Second Opinion runs when you tap Transcribe. Turn it off in Settings → Transcription Method.',
+      },
+    ],
+  },
+  {
     version: '1.16.0',
     date: '2026-11-28',
     title: 'Tap Any Word to Edit It',

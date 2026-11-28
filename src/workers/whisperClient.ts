@@ -50,6 +50,15 @@ class CancelledError extends Error {
 }
 
 /** An error from the Whisper worker, carrying full diagnostics for the Error Log. */
+/** Worker output before speaker labeling. */
+export interface RawTranscription {
+  transcript: string;
+  utterances?: Array<{ startSec: number; endSec: number; timestampStr?: string; text: string }>;
+  wordConfidence?: WordConfidenceMap;
+  secondOpinionModelId?: WhisperModelId;
+  backendUsed: 'webgpu' | 'wasm';
+}
+
 /** Warn when the worker has said nothing for this long during a job. */
 const STALL_WARNING_MS = 90_000;
 
@@ -113,19 +122,42 @@ export class WhisperWorkerClient {
     );
   }
 
+  /**
+   * Transcription only (no speaker labeling): used for live segments while recording, where
+   * speakers are labeled once over the whole recording at the end.
+   */
+  transcribeRaw(
+    audio16k: Float32Array,
+    options: WhisperModelRuntimeOptions,
+    callbacks: TranscribeCallbacks = {}
+  ): Promise<RawTranscription> {
+    const copy = new Float32Array(audio16k);
+    return this.runJob<RawTranscription>(
+      (jobId) => ({
+        type: 'transcribe',
+        jobId,
+        modelId: options.modelId,
+        compareModelId: options.compareModelId,
+        vocabulary: options.vocabulary,
+        chunking: options.chunking,
+        device: options.device,
+        modelSource: options.modelSource,
+        customModelBaseUrl: options.customModelBaseUrl,
+        appBaseUrl: getAppBaseUrl(),
+        audio: copy,
+      }),
+      callbacks,
+      [copy.buffer]
+    );
+  }
+
   async transcribe(
     audio16k: Float32Array,
     options: WhisperModelRuntimeOptions,
     callbacks: TranscribeCallbacks = {}
   ): Promise<TranscribeResult> {
     const copy = new Float32Array(audio16k);
-    const raw = await this.runJob<{
-      transcript: string;
-      utterances?: Array<{ startSec: number; endSec: number; text: string }>;
-      wordConfidence?: WordConfidenceMap;
-      secondOpinionModelId?: WhisperModelId;
-      backendUsed: 'webgpu' | 'wasm';
-    }>(
+    const raw = await this.runJob<RawTranscription>(
       (jobId) => ({
         type: 'transcribe',
         jobId,
