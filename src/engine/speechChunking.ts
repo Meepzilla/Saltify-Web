@@ -258,3 +258,38 @@ export function uncoveredPieces(
     });
   });
 }
+
+/**
+ * Chunks whose text is too short for the speech they cover (Whisper skipped part of a phrase
+ * inside a segment). Returns, per suspicious chunk index, the speech pieces under it. Normal
+ * speech runs ~1.5–3 words per second, even for young children; below `minWordsPerSec` over at
+ * least `minSpeechSec` of detected speech, words were probably skipped.
+ */
+export function sparseChunks(
+  slice: Pick<TranscriptionSlice, 'pieces' | 'samples'>,
+  chunks: Array<{ timestamp: [number, number | null]; text: string }>,
+  sampleRate = 16000,
+  minWordsPerSec = 0.7,
+  minSpeechSec = 2
+): Array<{ index: number; pieces: PackedPiece[] }> {
+  const sliceEnd = slice.samples.length / sampleRate;
+  const out: Array<{ index: number; pieces: PackedPiece[] }> = [];
+  chunks.forEach((c, index) => {
+    const s = c.timestamp[0];
+    const e = c.timestamp[1] ?? sliceEnd;
+    let speech = 0;
+    const under: PackedPiece[] = [];
+    for (const p of slice.pieces) {
+      const a = p.packedStart;
+      const b = p.packedStart + (p.srcEnd - p.srcStart);
+      const overlap = Math.min(b, e) - Math.max(a, s);
+      if (overlap > 0.1) {
+        speech += overlap;
+        under.push(p);
+      }
+    }
+    const words = c.text.trim().split(/\s+/).filter((w) => /[A-Za-z0-9]/.test(w)).length;
+    if (speech >= minSpeechSec && words / speech < minWordsPerSec) out.push({ index, pieces: under });
+  });
+  return out;
+}

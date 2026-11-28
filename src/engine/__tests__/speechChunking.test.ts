@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildSpeechSlices, detectSpeechRegions, packSpeechWindows, packedToSourceTime, uncoveredPieces } from '../speechChunking';
+import { buildSpeechSlices, detectSpeechRegions, packSpeechWindows, packedToSourceTime, sparseChunks, uncoveredPieces } from '../speechChunking';
 
 const SR = 16000;
 /** Tone bursts ("speech") at the given [start, end] seconds over faint noise. */
@@ -61,5 +61,17 @@ describe('speech chunking', () => {
     expect(uncoveredPieces(slice, [{ timestamp: [0, null] }])).toEqual([]);
     // Slice times map back to the recording
     expect(slice.toSource(third.packedStart + 1)).toBeCloseTo(third.srcStart + 1, 5);
+  });
+
+  it('flags a segment whose text is too short for the speech it covers', () => {
+    const x = synth(40, [[1, 4], [10, 14], [20, 23]]);
+    const [slice] = buildSpeechSlices(x, SR, 28);
+    const end = slice.samples.length / SR;
+    const ok = [{ timestamp: [0, end] as [number, number | null], text: ' I saw a big dog at the park and it ran to me very fast today.' }];
+    expect(sparseChunks(slice, ok)).toEqual([]);
+    const skipped = [{ timestamp: [0, end] as [number, number | null], text: ' I saw a dog.' }];
+    const flagged = sparseChunks(slice, skipped);
+    expect(flagged).toHaveLength(1);
+    expect(flagged[0].pieces).toHaveLength(3);
   });
 });
