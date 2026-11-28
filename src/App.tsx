@@ -105,6 +105,7 @@ import {
   type ToastMessage,
   type WhisperModelId,
   WHISPER_MODELS,
+  isCloudModel,
 } from './types/saltify';
 import { getErrorDetails, isCancelledError, whisperClient } from './workers/whisperClient';
 import { LiveTranscriber } from './workers/liveTranscriber';
@@ -750,9 +751,10 @@ export default function App() {
     // download mid-session) and the session has no transcript yet (never overwrite one).
     let live: LiveTranscriber | null = null;
     if (settings.transcribeWhileRecording && !activeSession.transcriptionText.trim()) {
-      const ready =
-        settings.modelSource === 'local-only' ||
-        (await inspectCachedWhisperModels()).cachedModelIds.includes(settings.modelId);
+      const ready = isCloudModel(settings.modelId)
+        ? settings.cloudTranscriptionEnabled && settings.cloudAccessKey.trim() !== '' && navigator.onLine
+        : settings.modelSource === 'local-only' ||
+          (await inspectCachedWhisperModels()).cachedModelIds.includes(settings.modelId);
       if (ready) {
         live = new LiveTranscriber(
           whisperClient,
@@ -763,6 +765,7 @@ export default function App() {
             device: settings.device,
             modelSource: settings.modelSource,
             customModelBaseUrl: settings.customModelBaseUrl,
+            cloudAccessKey: settings.cloudTranscriptionEnabled ? settings.cloudAccessKey : '',
           },
           (text, lines) => {
             updateActiveSession((s) => ({ ...s, transcriptionText: text }));
@@ -804,6 +807,8 @@ export default function App() {
     settings.transcriptionMethod,
     settings.device,
     settings.customModelBaseUrl,
+    settings.cloudTranscriptionEnabled,
+    settings.cloudAccessKey,
     activeSession.transcriptionText,
     activeSession.vocabulary,
     updateActiveSession,
@@ -954,6 +959,7 @@ export default function App() {
           modelSource: settings.modelSource,
           customModelBaseUrl: settings.customModelBaseUrl,
           aliases: activeSession.speakerAliases,
+          cloudAccessKey: settings.cloudTranscriptionEnabled ? settings.cloudAccessKey : '',
         },
         {
           onProgress: (stage, progress, detail) => {
@@ -1028,6 +1034,8 @@ export default function App() {
     settings.device,
     settings.modelSource,
     settings.customModelBaseUrl,
+    settings.cloudTranscriptionEnabled,
+    settings.cloudAccessKey,
     updateActiveSession,
     pushToast,
     setMobileTab,

@@ -24,6 +24,27 @@ export const APP_VERSION: string = __APP_VERSION__;
  */
 export const CHANGELOG_RELEASES: readonly ChangelogRelease[] = [
   {
+    version: '1.18.0',
+    date: '2026-11-28',
+    title: 'Optional Cloud Transcription (Whisper Large v3 Turbo)',
+    summary:
+      'A much larger Whisper model can now run on your Cloudflare account instead of the device. It is off by default and needs a server access key, because audio leaves the device.',
+    changes: [
+      {
+        category: 'added',
+        summary: 'Whisper Large v3 Turbo on Cloudflare Workers AI',
+        detail:
+          'Turn it on in Settings → Speech & Models → Cloud Transcription, enter the access key and tap Test connection. Speech is sent in up to three parts at a time and assembled exactly like an on-device transcript (cleanup, timestamps, speaker labels, uncertain stretches flagged). Works with Transcribe while recording too.',
+      },
+      {
+        category: 'improved',
+        summary: 'Locked down by default',
+        detail:
+          'The server endpoint stays off until a CLOUD_TRANSCRIBE_KEY secret is set in the Cloudflare dashboard, and every request must carry that key, so no one else can use your account. Turning the option off also switches away from the cloud model.',
+      },
+    ],
+  },
+  {
     version: '1.17.0',
     date: '2026-11-28',
     title: 'Transcribe While Recording',

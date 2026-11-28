@@ -5,6 +5,8 @@ import type {
   WhisperModelId,
 } from '../types/saltify';
 import { autoAssignSpeakersInTranscript } from '../engine/speakerDiarizer';
+import { isCloudModel } from '../types/saltify';
+import { cloudTranscribeRaw } from './cloudTranscriber';
 import type { WordConfidenceMap } from '../engine/wordConfidence';
 import type { WorkerRequest, WorkerResponse } from './whisper.worker';
 
@@ -19,13 +21,13 @@ export interface TranscribeResult {
   wordConfidence?: WordConfidenceMap;
   /** Second-opinion model that was compared, when it ran. */
   secondOpinionModelId?: WhisperModelId;
-  backendUsed: 'webgpu' | 'wasm';
+  backendUsed: 'webgpu' | 'wasm' | 'cloud';
   speakerCount: 1 | 2;
 }
 
 export interface PreloadResult {
   modelId: WhisperModelId;
-  backendUsed: 'webgpu' | 'wasm';
+  backendUsed: 'webgpu' | 'wasm' | 'cloud';
 }
 
 export interface WhisperModelRuntimeOptions {
@@ -40,6 +42,8 @@ export interface WhisperModelRuntimeOptions {
   modelSource: ModelSource;
   customModelBaseUrl: string;
   aliases?: SpeakerAliases;
+  /** Access key for cloud transcription (Cloudflare model only). */
+  cloudAccessKey?: string;
 }
 
 class CancelledError extends Error {
@@ -56,7 +60,7 @@ export interface RawTranscription {
   utterances?: Array<{ startSec: number; endSec: number; timestampStr?: string; text: string }>;
   wordConfidence?: WordConfidenceMap;
   secondOpinionModelId?: WhisperModelId;
-  backendUsed: 'webgpu' | 'wasm';
+  backendUsed: 'webgpu' | 'wasm' | 'cloud';
 }
 
 /** Warn when the worker has said nothing for this long during a job. */
@@ -94,6 +98,7 @@ export class WhisperWorkerClient {
   private worker: Worker | null = null;
   private activeJobId: string | null = null;
   private activeReject: ((reason?: unknown) => void) | null = null;
+  private cloudAbort: AbortController | null = null;
 
   private getWorker(): Worker {
     if (!this.worker) {
@@ -131,6 +136,7 @@ export class WhisperWorkerClient {
     options: WhisperModelRuntimeOptions,
     callbacks: TranscribeCallbacks = {}
   ): Promise<RawTranscription> {
+    if (isCloudModel(options.modelId)) return this.cloudRaw(audio16k, options, callbacks);
     const copy = new Float32Array(audio16k);
     return this.runJob<RawTranscription>(
       (jobId) => ({
@@ -157,7 +163,9 @@ export class WhisperWorkerClient {
     callbacks: TranscribeCallbacks = {}
   ): Promise<TranscribeResult> {
     const copy = new Float32Array(audio16k);
-    const raw = await this.runJob<RawTranscription>(
+    const raw = isCloudModel(options.modelId)
+      ? await this.cloudRaw(audio16k, options, callbacks)
+      : await this.runJob<RawTranscription>(
       (jobId) => ({
         type: 'transcribe',
         jobId,
@@ -202,7 +210,33 @@ export class WhisperWorkerClient {
     };
   }
 
+  /** Cloud transcription (Cloudflare Workers AI); cancellable like a worker job. */
+  private async cloudRaw(
+    audio16k: Float32Array,
+    options: WhisperModelRuntimeOptions,
+    callbacks: TranscribeCallbacks
+  ): Promise<RawTranscription> {
+    const controller = new AbortController();
+    this.cloudAbort = controller;
+    try {
+      return await cloudTranscribeRaw(
+        audio16k,
+        { accessKey: options.cloudAccessKey ?? '', vocabulary: options.vocabulary, signal: controller.signal },
+        callbacks.onProgress
+      );
+    } catch (err) {
+      if (controller.signal.aborted) throw new CancelledError();
+      throw err;
+    } finally {
+      if (this.cloudAbort === controller) this.cloudAbort = null;
+    }
+  }
+
   cancel(): void {
+    if (this.cloudAbort) {
+      this.cloudAbort.abort();
+      this.cloudAbort = null;
+    }
     if (this.activeReject) {
       const reject = this.activeReject;
       this.activeReject = null;

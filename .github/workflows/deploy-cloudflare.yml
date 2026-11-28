@@ -50,4 +50,6 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          # Wrangler 4: needed for assets.run_worker_first path patterns (/api/*)
+          wranglerVersion: '4'
           command: deploy

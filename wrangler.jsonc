@@ -1,8 +1,15 @@
 {
   "name": "saltify-web",
   "compatibility_date": "2026-01-01",
+  // Worker script: serves the PWA and the optional /api/transcribe cloud endpoint
+  "main": "./worker/index.ts",
   "assets": {
     "directory": "./dist",
-    "not_found_handling": "single-page-application"
-  }
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
+  },
+  // Workers AI (Whisper Large v3 Turbo) for optional cloud transcription. The endpoint stays off
+  // until a CLOUD_TRANSCRIBE_KEY secret is added in the Cloudflare dashboard.
+  "ai": { "binding": "AI" }
 }

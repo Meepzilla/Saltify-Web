@@ -25,6 +25,7 @@ import type { ErrorLogEntry } from '../engine/errorLog';
 import { estimateLocalStorageUsage } from '../engine/storage';
 import { MAX_PLAYBACK_BOOST } from '../hooks/useAudioPlayer';
 import type { PwaInstallState } from '../hooks/usePwaInstall';
+import { CloudTranscriptionCard } from './CloudTranscriptionCard';
 import { useWhisperModelStatus } from '../hooks/useWhisperModelStatus';
 import {
   DEFAULT_SPEAKER_ALIASES,
@@ -594,7 +595,7 @@ export function SettingsPage({
                 </p>
 
                 <div className="settings-model-list">
-                  {WHISPER_MODELS.map((model) => {
+                  {WHISPER_MODELS.filter((m) => m.family !== 'cloud' || settings.cloudTranscriptionEnabled).map((model) => {
                     const isSelected = settings.modelId === model.id;
                     const isCached = modelStatus.cachedModels.includes(model.id);
                     const isSelfHosted = modelStatus.selfHostedModels.includes(model.id);
@@ -631,24 +632,29 @@ export function SettingsPage({
                           </span>
                         </div>
 
-                        <button
-                          type="button"
-                          className="btn btn-secondary btn-sm"
-                          disabled={processing !== null}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onUpdateSettings({ modelId: model.id });
-                            onPreloadModel(model.id);
-                          }}
-                        >
-                          <Download size={14} />
-                          <span>{isCached ? 'Verify' : 'Cache'}</span>
-                        </button>
+                        {model.family !== 'cloud' && (
+                          <button
+                            type="button"
+                            className="btn btn-secondary btn-sm"
+                            disabled={processing !== null}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onUpdateSettings({ modelId: model.id });
+                              onPreloadModel(model.id);
+                            }}
+                          >
+                            <Download size={14} />
+                            <span>{isCached ? 'Verify' : 'Cache'}</span>
+                          </button>
+                        )}
                       </div>
                     );
                   })}
                 </div>
               </div>
+
+              {/* Optional cloud transcription (Cloudflare Workers AI) */}
+              <CloudTranscriptionCard settings={settings} onUpdateSettings={onUpdateSettings} />
 
               {/* Transcription method: speech-first (default) or classic chunks */}
               <div className="settings-card">
@@ -728,7 +734,7 @@ export function SettingsPage({
                     }
                   >
                     <option value="off">Off (main model only)</option>
-                    {WHISPER_MODELS.filter((m) => m.id !== settings.modelId && m.family !== 'moonshine').map((m) => (
+                    {WHISPER_MODELS.filter((m) => m.id !== settings.modelId && m.family !== 'moonshine' && m.family !== 'cloud').map((m) => (
                       <option key={m.id} value={m.id}>
                         {m.label} · {m.sizeLabel}
                       </option>
