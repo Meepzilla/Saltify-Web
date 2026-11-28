@@ -10,11 +10,17 @@ import {
   type TranscriptionSlice,
   packedToSourceTime,
   packSpeechWindows,
+  duplicatesNearbyText,
   recheckReplaces,
   sparseChunks,
   uncoveredPieces,
 } from '../engine/speechChunking';
-import { collapseRepetitions, dropSilentChunks, looksLikeRepetitionLoop } from '../engine/hallucinationGuard';
+import {
+  collapseRepetitions,
+  dropInventedUtterances,
+  dropSilentChunks,
+  looksLikeRepetitionLoop,
+} from '../engine/hallucinationGuard';
 import { purgeHtmlModelCacheEntries } from '../engine/modelCache';
 import {
   extractWhisperUtterances,
@@ -1010,10 +1016,20 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
                 words: seg.words,
               }));
               const within = (t: number, a: number, b: number) => t >= a - 0.1 && t < b;
-              // Missed speech: add what the re-check heard there
+              // Text already transcribed within ~8 s of a time (excluding one segment being replaced)
+              const nearbyText = (a: number, b: number, exclude?: number) =>
+                mapped
+                  .filter((m, k) => m && k !== exclude && m.timestamp[0] < b + 8 && (m.timestamp[1] ?? m.timestamp[0]) > a - 8)
+                  .map((m) => m!.text);
+              // Missed speech: add what the re-check heard there, unless those words are already in
+              // the transcript nearby (boundaries do not line up exactly; never add them twice)
               for (const p of missed) {
-                allChunks.push(...got.filter((c) => within(c.timestamp[0], p.srcStart, p.srcEnd)));
-                sliceRecords.push(...gotRecords.filter((r) => within(r.start, p.srcStart, p.srcEnd)));
+                const heard = got.filter((c) => within(c.timestamp[0], p.srcStart, p.srcEnd));
+                const fresh = heard.filter((c) => !duplicatesNearbyText(c.text, nearbyText(p.srcStart, p.srcEnd)));
+                allChunks.push(...fresh);
+                if (fresh.length > 0) {
+                  sliceRecords.push(...gotRecords.filter((r) => within(r.start, p.srcStart, p.srcEnd)));
+                }
               }
               // Too-short segments: replace only when the re-check keeps the original and adds words
               for (const { index } of sparse) {
@@ -1021,7 +1037,10 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
                 if (!orig) continue;
                 const rs = orig.timestamp[0];
                 const re = orig.timestamp[1] ?? slice.endSec;
-                const inSeg = got.filter((c) => within(c.timestamp[0], rs, re));
+                // Re-checked text for this segment, minus anything that repeats a neighbouring segment
+                const inSeg = got
+                  .filter((c) => within(c.timestamp[0], rs, re))
+                  .filter((c) => !duplicatesNearbyText(c.text, nearbyText(rs, re, index)));
                 if (!recheckReplaces(orig.text, inSeg.map((c) => c.text).join(' '))) continue;
                 mapped[index] = null;
                 for (let r = sliceRecords.length - 1; r >= 0; r--) {
@@ -1118,7 +1137,8 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
       const allWords = records.flatMap((r) => r.words);
       // Remove leftover repetition loops and text produced over silence
       const cleanedChunks = dropSilentChunks(collapseRepetitions(allChunks), req.audio, 16000);
-      const utterances = extractWhisperUtterances(cleanedChunks, speechRegions);
+      // Drop Whisper's stock invented phrases ("Thank you." over noise) and same-moment duplicates
+      const utterances = dropInventedUtterances(extractWhisperUtterances(cleanedChunks, speechRegions), req.audio, 16000);
       const transcript = utterances.map((u) => `[${u.timestampStr}] ${u.text}`).join('\n');
       let wordConfidence: WordConfidenceMap | undefined;
       try {

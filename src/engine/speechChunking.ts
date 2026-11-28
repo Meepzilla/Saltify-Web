@@ -327,3 +327,26 @@ export function recheckReplaces(original: string, recheck: string, minKeptShare 
   }
   return prev[b.length] / a.length >= minKeptShare;
 }
+
+/**
+ * Whether re-checked text is already in the transcript nearby (its words appear, in order, in
+ * the neighbouring text). Boundaries from speech detection, Whisper's timestamps and window joins
+ * do not line up exactly, so a re-check can hear words that were already transcribed; those must
+ * not be added twice. Only re-checked text is tested, so real repetitions by the speaker stay.
+ */
+export function duplicatesNearbyText(recheck: string, nearby: string[], minShare = 0.6): boolean {
+  const a = wordsOf(recheck);
+  if (a.length === 0) return true;
+  const b = wordsOf(nearby.join(' '));
+  if (b.length === 0) return false;
+  const prev = new Array<number>(b.length + 1).fill(0);
+  for (let i = 1; i <= a.length; i++) {
+    let diag = 0;
+    for (let j = 1; j <= b.length; j++) {
+      const up = prev[j];
+      prev[j] = a[i - 1] === b[j - 1] ? diag + 1 : Math.max(prev[j], prev[j - 1]);
+      diag = up;
+    }
+  }
+  return prev[b.length] / a.length >= minShare;
+}

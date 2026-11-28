@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   collapseRepeatedPhrase,
   collapseRepetitions,
+  dropInventedUtterances,
   dropSilentChunks,
   looksLikeRepetitionLoop,
   type TimedChunk,
@@ -36,5 +37,38 @@ describe('hallucination guard', () => {
     for (let i = sr * 3; i < sr * 6; i++) audio[i] = 0.002 * Math.sin(i / 3); // near-silence 3–6 s
     const kept = dropSilentChunks([c(0, 'loud'), c(2, 'quiet'), c(4, 'What?')], audio, sr);
     expect(kept.map((x) => x.text)).toEqual(['loud', 'quiet']);
+  });
+
+  it('removes repeated stock phrases and same-moment duplicates, keeps real speech', () => {
+    const u = (t: number, text: string) => ({ startSec: t, endSec: t + 1.5, text });
+    const transcript = [
+      u(236, "Elijah, we'll go take a nap, wake up, it'll be dinner."),
+      u(236.4, "Elijah, we'll go take a nap, wake up, it'll be dinner."),
+      u(252, 'Thank you.'),
+      u(260, 'Look at that dinosaur'),
+      u(265, 'Thank you.'),
+      u(268, 'Bye!'),
+      u(300, 'Thank you.'),
+      u(329, "I'm going to do it."),
+      u(336, "I'm going to do it."),
+    ];
+    expect(dropInventedUtterances(transcript).map((x) => x.text)).toEqual([
+      "Elijah, we'll go take a nap, wake up, it'll be dinner.",
+      'Look at that dinosaur',
+      'Bye!',
+      "I'm going to do it.",
+      "I'm going to do it.",
+    ]);
+  });
+
+  it('keeps a single clearly spoken "Thank you." but drops one over near-quiet audio', () => {
+    const sr = 16000;
+    const audio = new Float32Array(sr * 10);
+    for (let i = 0; i < sr * 2; i++) audio[i] = 0.3 * Math.sin(i / 5); // speech 0-2 s
+    for (let i = sr * 5; i < sr * 6; i++) audio[i] = 0.02 * Math.sin(i / 5); // faint noise 5-6 s
+    const spoken = [{ startSec: 0, endSec: 2, text: 'Thank you.' }];
+    expect(dropInventedUtterances(spoken, audio, sr)).toHaveLength(1);
+    const overNoise = [{ startSec: 5, endSec: 6, text: 'Thank you.' }];
+    expect(dropInventedUtterances(overNoise, audio, sr)).toHaveLength(0);
   });
 });

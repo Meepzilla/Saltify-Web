@@ -122,3 +122,72 @@ export function dropSilentChunks(
     return peak >= speechLevel * ratio;
   });
 }
+
+/**
+ * Whisper's best-known invented phrases: produced over background noise, movement or silence
+ * (trained on subtitled video). Matched against whole utterances only.
+ */
+const STOCK_PHRASES = new Set([
+  'thank you',
+  'thank you so much',
+  'thank you very much',
+  'thanks',
+  'thanks for watching',
+  'thank you for watching',
+  'thanks for listening',
+  'thank you for listening',
+  'please subscribe',
+  'subscribe',
+  'bye',
+  'bye bye',
+  'you',
+]);
+
+export interface TimedUtterance {
+  startSec: number;
+  endSec: number;
+  text: string;
+}
+
+/**
+ * Removes likely invented utterances:
+ *  - a stock phrase ("Thank you.") that stands alone 3+ times in the sample, or once over audio
+ *    too quiet to be clear speech (loudest 20 ms frame under 25% of the recording's speech level);
+ *  - an exact repeat of the previous utterance starting within 2 s of it (the same words cannot
+ *    be spoken twice at the same moment; this comes from overlapping chunk boundaries).
+ */
+export function dropInventedUtterances<T extends TimedUtterance>(
+  utterances: T[],
+  samples?: Float32Array,
+  sampleRate = 16000
+): T[] {
+  const counts = new Map<string, number>();
+  for (const u of utterances) {
+    const n = normalizeChunkText(u.text);
+    if (STOCK_PHRASES.has(n)) counts.set(n, (counts.get(n) ?? 0) + 1);
+  }
+  let rms: Float32Array | null = null;
+  let speechLevel = 0;
+  if (samples && samples.length > 0) {
+    rms = frameRms(samples, sampleRate);
+    const sorted = Float32Array.from(rms).sort();
+    speechLevel = sorted[Math.floor(sorted.length * 0.95)] ?? 0;
+  }
+  const quiet = (u: T) => {
+    if (!rms || !(speechLevel > 0)) return false;
+    const a = Math.max(0, Math.floor(u.startSec / 0.02));
+    const b = Math.min(rms.length, Math.max(a + 1, Math.ceil(u.endSec / 0.02)));
+    let peak = 0;
+    for (let f = a; f < b; f++) if (rms[f] > peak) peak = rms[f];
+    return peak < speechLevel * 0.25;
+  };
+  const out: T[] = [];
+  for (const u of utterances) {
+    const n = normalizeChunkText(u.text);
+    if (STOCK_PHRASES.has(n) && ((counts.get(n) ?? 0) >= 3 || quiet(u))) continue;
+    const prev = out[out.length - 1];
+    if (prev && n !== '' && normalizeChunkText(prev.text) === n && u.startSec - prev.startSec < 2) continue;
+    out.push(u);
+  }
+  return out;
+}
