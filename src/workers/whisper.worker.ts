@@ -4,7 +4,7 @@ import {
   type AutomaticSpeechRecognitionPipeline,
   type ProgressInfo,
 } from '@huggingface/transformers';
-import { buildSpeechSlices, packSpeechWindows, sparseChunks, uncoveredPieces } from '../engine/speechChunking';
+import { buildSpeechSlices, sparseChunks, uncoveredPieces } from '../engine/speechChunking';
 import { collapseRepetitions, dropSilentChunks, looksLikeRepetitionLoop } from '../engine/hallucinationGuard';
 import { purgeHtmlModelCacheEntries } from '../engine/modelCache';
 import {
@@ -15,7 +15,6 @@ import {
 import { annotateDisagreements } from '../engine/modelFusion';
 import {
   buildWordConfidenceMap,
-  DISAGREEMENT_FLAG_BELOW,
   STORE_CONFIDENCE_BELOW,
   type WordConfidenceMap,
   type WordProbability,
@@ -68,8 +67,6 @@ export type WorkerRequest =
       compareModelId?: WhisperModelId;
       /** Expected words (names, story vocabulary) given to Whisper as a prompt hint. */
       vocabulary?: string;
-      /** Second opinion re-checks only stretches with a word below this confidence. */
-      secondOpinionBelow?: number;
       device: ComputeDevice;
       modelSource: ModelSource;
       customModelBaseUrl: string;
@@ -948,67 +945,53 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
         }
       }
 
-      // Second opinion, targeted: only the stretches holding a word the main model was unsure of
-      // (below the disagreement sensitivity) are re-transcribed by the other model, packed into
-      // speech windows. Disagreements are only shown for such words, so nothing is lost.
+      // Second opinion: run the other model over the same windows and mark where it disagrees.
+      // The transcript text stays the main model's; disagreements become review flags.
+      // (Re-checking only uncertain segments was tested and saved no time: most segments hold at
+      // least one word below the flag threshold.)
       records.sort((a, b) => a.start - b.start);
       let secondOpinionModelId: WhisperModelId | undefined;
       if (compareModelId) {
-        const bar = req.secondOpinionBelow ?? DISAGREEMENT_FLAG_BELOW;
-        const uncertain = records.filter((r) => r.words.some((w) => w.p < bar));
-        const durationSec = req.audio.length / 16000;
-        const regions: Array<{ start: number; end: number }> = [];
-        for (const r of uncertain) {
-          const a = Math.max(0, r.start - 0.3);
-          const b = Math.min(durationSec, r.end + 0.3);
-          const last = regions[regions.length - 1];
-          if (last && a <= last.end) last.end = Math.max(last.end, b);
-          else regions.push({ start: a, end: b });
-        }
         try {
-          if (regions.length > 0) {
-            const second = await ensurePipeline(
-              req.jobId,
-              compareModelId,
-              req.device,
-              req.modelSource,
-              req.customModelBaseUrl,
-              req.appBaseUrl,
-              [primaryEnd, primaryEnd + 0.05],
-              'Loading second-opinion model'
-            );
-            const windows = packSpeechWindows(req.audio, regions, 16000, SPEECH_WINDOW_SEC);
-            const checkedSec = regions.reduce((n, r) => n + r.end - r.start, 0);
-            const secondWords: WordProbability[] = [];
-            for (let i = 0; i < windows.length; i++) {
-              post({
-                type: 'progress',
-                jobId: req.jobId,
-                stage: `Second opinion: part ${i + 1} of ${windows.length}`,
-                progress: primaryEnd + 0.05 + (i / windows.length) * (0.93 - primaryEnd - 0.05),
-                detail: `Re-checking only the uncertain stretches (${Math.round(checkedSec)} s of ${Math.round(durationSec)} s)`,
-              });
-              setStage(`second-opinion part ${i + 1} of ${windows.length}`);
-              const secondRecorder = new TokenConfidenceRecorder();
-              const secondPrompt = buildVocabularyPromptIds(second.transcriber, req.vocabulary);
-              await second.transcriber(windows[i].samples, {
-                return_timestamps: true,
-                max_new_tokens: maxTokensFor(windows[i]),
-                logits_processor: new RecorderLastProcessorList(secondRecorder),
-                ...(secondPrompt ? { decoder_input_ids: secondPrompt } : {}),
-              } as Parameters<AutomaticSpeechRecognitionPipeline>[1]);
-              secondWords.push(...tokenSegmentsFromRecorder(second.transcriber, secondRecorder).flat());
-              if (i + 1 < windows.length) await yieldToEventLoop();
-            }
-            // Both models heard the same stretches in the same order: align and write back
-            const primary = uncertain.flatMap((r) => r.words);
-            if (secondWords.length > 0) {
-              const annotated = annotateDisagreements(primary, secondWords);
-              let k = 0;
-              for (const r of uncertain) {
-                r.words = annotated.slice(k, k + r.words.length);
-                k += r.words.length;
-              }
+          const second = await ensurePipeline(
+            req.jobId,
+            compareModelId,
+            req.device,
+            req.modelSource,
+            req.customModelBaseUrl,
+            req.appBaseUrl,
+            [primaryEnd, primaryEnd + 0.05],
+            'Loading second-opinion model'
+          );
+          const secondWords: WordProbability[] = [];
+          for (let i = 0; i < slices.length; i++) {
+            post({
+              type: 'progress',
+              jobId: req.jobId,
+              stage: `Second opinion: segment ${i + 1} of ${slices.length}`,
+              progress: primaryEnd + 0.05 + (i / slices.length) * (0.93 - primaryEnd - 0.05),
+              detail: 'Comparing with a second model to flag words worth re-checking',
+            });
+            setStage(`second-opinion segment ${i + 1} of ${slices.length}`);
+            const secondRecorder = new TokenConfidenceRecorder();
+            const secondPrompt = buildVocabularyPromptIds(second.transcriber, req.vocabulary);
+            await second.transcriber(slices[i].samples, {
+              return_timestamps: true,
+              max_new_tokens: maxTokensFor(slices[i]),
+              logits_processor: new RecorderLastProcessorList(secondRecorder),
+              ...(secondPrompt ? { decoder_input_ids: secondPrompt } : {}),
+            } as Parameters<AutomaticSpeechRecognitionPipeline>[1]);
+            secondWords.push(...tokenSegmentsFromRecorder(second.transcriber, secondRecorder).flat());
+            if (i + 1 < slices.length) await yieldToEventLoop();
+          }
+          // Both passes cover the same audio in order: align all words and write the result back
+          const primary = records.flatMap((r) => r.words);
+          if (secondWords.length > 0 && primary.length > 0) {
+            const annotated = annotateDisagreements(primary, secondWords);
+            let k = 0;
+            for (const r of records) {
+              r.words = annotated.slice(k, k + r.words.length);
+              k += r.words.length;
             }
           }
           secondOpinionModelId = compareModelId;

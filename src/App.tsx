@@ -852,7 +852,6 @@ export default function App() {
               ? settings.secondOpinionModelId
               : undefined,
           vocabulary: activeSession.vocabulary,
-          secondOpinionBelow: settings.disagreementThreshold,
           device: settings.device,
           modelSource: settings.modelSource,
           customModelBaseUrl: settings.customModelBaseUrl,
@@ -927,7 +926,6 @@ export default function App() {
     resetGrammarReview,
     settings.modelId,
     settings.secondOpinionModelId,
-    settings.disagreementThreshold,
     settings.device,
     settings.modelSource,
     settings.customModelBaseUrl,
