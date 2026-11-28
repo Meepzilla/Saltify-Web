@@ -132,7 +132,9 @@ export interface FormattedWhisperUtterance {
  * chunks across [startSec, endSec]) for accurate on-device acoustic diarization.
  */
 export function extractWhisperUtterances(
-  chunks: Array<{ timestamp: [number, number | null]; text: string }>
+  chunks: Array<{ timestamp: [number, number | null]; text: string }>,
+  /** Detected speech regions (seconds); sentence starts snap to them for accurate timestamps. */
+  speechRegions?: Array<{ start: number; end: number }>
 ): FormattedWhisperUtterance[] {
   const utterances: FormattedWhisperUtterance[] = [];
 
@@ -152,7 +154,6 @@ export function extractWhisperUtterances(
 
     if (!cleaned) continue;
 
-    const ts = formatTimestamp(startSec);
     const sentences: string[] = [];
     for (const rawSentence of splitIntoUtterances(cleaned)) {
       // SALT: periods are not legal word characters, so "Mr." -> "Mr"
@@ -169,8 +170,22 @@ export function extractWhisperUtterances(
 
     if (sentences.length === 0) continue;
 
-    // Proportionally split the chunk span across its sentences by character count
-    // so multi-sentence chunks do not collide on the exact same audio slice.
+    // Speech regions inside this chunk: when there is one per sentence, each sentence takes
+    // its region's timing (pauses separate utterances).
+    const inside = (speechRegions ?? []).filter(
+      (r) => Math.min(r.end, chunkEnd) - Math.max(r.start, startSec) > 0.1
+    );
+    if (sentences.length > 1 && inside.length === sentences.length) {
+      sentences.forEach((text, si) => {
+        const start = si === 0 ? startSec : Math.max(startSec, inside[si].start);
+        const end = si === sentences.length - 1 ? chunkEnd : Math.min(chunkEnd, inside[si].end);
+        utterances.push({ startSec: start, endSec: Math.max(start + 0.25, end), timestampStr: formatTimestamp(start), text });
+      });
+      continue;
+    }
+
+    // Otherwise split the chunk span across its sentences by character count, snapping each
+    // sentence start to a nearby speech-region start when one is within 1 s.
     const weights = sentences.map((s) => Math.max(4, s.replace(/\s+/g, '').length));
     const totalWeight = weights.reduce((a, b) => a + b, 0);
     const span = chunkEnd - startSec;
@@ -179,10 +194,18 @@ export function extractWhisperUtterances(
     for (let si = 0; si < sentences.length; si++) {
       const subDur = span * (weights[si] / totalWeight);
       const subEnd = si === sentences.length - 1 ? chunkEnd : cursor + subDur;
+      let start = cursor;
+      if (si > 0 && inside.length > 0) {
+        const near = inside
+          .map((r) => r.start)
+          .filter((t) => t > startSec + 0.1 && t < chunkEnd)
+          .sort((a, b) => Math.abs(a - cursor) - Math.abs(b - cursor))[0];
+        if (near !== undefined && Math.abs(near - cursor) <= 1) start = near;
+      }
       utterances.push({
-        startSec: cursor,
-        endSec: Math.max(cursor + 0.25, subEnd),
-        timestampStr: ts,
+        startSec: start,
+        endSec: Math.max(start + 0.25, subEnd),
+        timestampStr: formatTimestamp(start),
         text: sentences[si],
       });
       cursor = subEnd;

@@ -215,6 +215,8 @@ export interface TranscriptionSlice {
   samples: Float32Array;
   /** Maps a time within `samples` back to the original recording. */
   toSource: (t: number) => number;
+  /** The speech regions packed into this slice. */
+  pieces: PackedPiece[];
 }
 
 /**
@@ -230,5 +232,29 @@ export function buildSpeechSlices(samples: Float32Array, sampleRate = 16000, max
     endSec: w.endSec,
     samples: w.samples,
     toSource: (t: number) => packedToSourceTime(w, t),
+    pieces: w.pieces,
   }));
+}
+
+/**
+ * Speech pieces of a slice that no transcribed chunk overlaps (Whisper sometimes stops early
+ * and silently drops the last phrase of a window). Chunk times are within the slice.
+ */
+export function uncoveredPieces(
+  slice: Pick<TranscriptionSlice, 'pieces' | 'samples'>,
+  chunks: Array<{ timestamp: [number, number | null] }>,
+  sampleRate = 16000,
+  minSec = 0.5
+): PackedPiece[] {
+  const sliceEnd = slice.samples.length / sampleRate;
+  return slice.pieces.filter((p) => {
+    const a = p.packedStart;
+    const b = p.packedStart + (p.srcEnd - p.srcStart);
+    if (b - a < minSec) return false;
+    return !chunks.some((c) => {
+      const s = c.timestamp[0];
+      const e = c.timestamp[1] ?? sliceEnd;
+      return Math.min(b, e) - Math.max(a, s) >= Math.min(0.2, (b - a) / 2);
+    });
+  });
 }

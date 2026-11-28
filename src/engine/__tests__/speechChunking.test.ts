@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { detectSpeechRegions, packSpeechWindows, packedToSourceTime } from '../speechChunking';
+import { buildSpeechSlices, detectSpeechRegions, packSpeechWindows, packedToSourceTime, uncoveredPieces } from '../speechChunking';
 
 const SR = 16000;
 /** Tone bursts ("speech") at the given [start, end] seconds over faint noise. */
@@ -46,5 +46,20 @@ describe('speech chunking', () => {
   it('treats a recording with no speech/noise contrast as all speech', () => {
     const x = synth(5, [[0, 5]]);
     expect(detectSpeechRegions(x)).toEqual([{ start: 0, end: 5 }]);
+  });
+
+  it('finds speech that no transcribed text covers (dropped phrases)', () => {
+    const x = synth(40, [[1, 3], [10, 12], [20, 23]]);
+    const [slice] = buildSpeechSlices(x, SR, 28);
+    expect(slice.pieces).toHaveLength(3);
+    const third = slice.pieces[2];
+    // Whisper covered the first two pieces and stopped before the third
+    const chunks: Array<{ timestamp: [number, number | null] }> = [
+      { timestamp: [0, slice.pieces[1].packedStart + 1.5] },
+    ];
+    expect(uncoveredPieces(slice, chunks)).toEqual([third]);
+    expect(uncoveredPieces(slice, [{ timestamp: [0, null] }])).toEqual([]);
+    // Slice times map back to the recording
+    expect(slice.toSource(third.packedStart + 1)).toBeCloseTo(third.srcStart + 1, 5);
   });
 });
