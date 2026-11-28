@@ -24,6 +24,39 @@ export const APP_VERSION: string = __APP_VERSION__;
  */
 export const CHANGELOG_RELEASES: readonly ChangelogRelease[] = [
   {
+    version: '1.15.0',
+    date: '2026-11-28',
+    title: 'Fewer Re-Checks, No Duplicate or Invented Lines',
+    summary:
+      'Re-checks are batched into one extra pass at most, can no longer add text that is already in the transcript, and Whisper\'s invented "Thank you." lines are removed. A Classic method is available in Settings.',
+    changes: [
+      {
+        category: 'fixed',
+        summary: 'Duplicate utterances',
+        detail:
+          'Re-checked speech is compared with the text already transcribed nearby, and words that are already there are not added again (speech detection, Whisper\'s timestamps and window joins do not line up exactly). An identical line starting within 2 s of the previous one is also removed. Real repetitions by the speaker are kept.',
+      },
+      {
+        category: 'fixed',
+        summary: 'Invented "Thank you." lines',
+        detail:
+          'Whisper\'s stock phrases ("Thank you.", "Thanks for watching!", "Bye.") are removed when the same phrase stands alone 3 or more times in a sample, or when the audio under it is too quiet to be clear speech.',
+      },
+      {
+        category: 'improved',
+        summary: 'Re-checks batched, capped and safer',
+        detail:
+          'All re-checks for a segment run together in one extra pass at most (they used to take a full pass each), are triggered less often, and only replace text when they keep at least 75% of its words and add clearly more.',
+      },
+      {
+        category: 'added',
+        summary: 'Settings → Transcription Method: Speech-first or Classic',
+        detail:
+          'Classic sends the whole recording in fixed ~26-second chunks with no speech detection or re-checks, as before version 1.12. Use it to compare if a recording comes out wrong.',
+      },
+    ],
+  },
+  {
     version: '1.14.0',
     date: '2026-11-28',
     title: 'Faster Whisper Small and Live Progress',

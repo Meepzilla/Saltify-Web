@@ -4,8 +4,23 @@ import {
   type AutomaticSpeechRecognitionPipeline,
   type ProgressInfo,
 } from '@huggingface/transformers';
-import { buildSpeechSlices, packSpeechWindows, sparseChunks, uncoveredPieces } from '../engine/speechChunking';
-import { collapseRepetitions, dropSilentChunks, looksLikeRepetitionLoop } from '../engine/hallucinationGuard';
+import { sliceAudioIntoPauseAwareChunks } from '../engine/audioProcessing';
+import {
+  buildSpeechSlices,
+  type TranscriptionSlice,
+  packedToSourceTime,
+  packSpeechWindows,
+  duplicatesNearbyText,
+  recheckReplaces,
+  sparseChunks,
+  uncoveredPieces,
+} from '../engine/speechChunking';
+import {
+  collapseRepetitions,
+  dropInventedUtterances,
+  dropSilentChunks,
+  looksLikeRepetitionLoop,
+} from '../engine/hallucinationGuard';
 import { purgeHtmlModelCacheEntries } from '../engine/modelCache';
 import {
   extractWhisperUtterances,
@@ -67,6 +82,8 @@ export type WorkerRequest =
       compareModelId?: WhisperModelId;
       /** Expected words (names, story vocabulary) given to Whisper as a prompt hint. */
       vocabulary?: string;
+      /** 'speech-first' (default): skip silence, safety-net re-checks. 'classic': pre-1.12 chunks. */
+      chunking?: 'speech-first' | 'classic';
       device: ComputeDevice;
       modelSource: ModelSource;
       customModelBaseUrl: string;
@@ -714,8 +731,18 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
       // Speech-first windows: find the speech, skip silence (Whisper pads every window to 30 s
       // and invents text over silence), and pack utterances into windows joined by short
       // stretches of background noise. Times map back to the recording.
-      const slices = buildSpeechSlices(req.audio, 16000, SPEECH_WINDOW_SEC);
-      const speechRegions = slices.flatMap((sl) => sl.pieces.map((p) => ({ start: p.srcStart, end: p.srcEnd })));
+      // Classic (pre-1.12): fixed pause-aware chunks with silence included, no speech detection
+      // and no re-checks. Moonshine always needs the detected speech.
+      const classic = req.chunking === 'classic' && !isMoonshineModel(req.modelId);
+      const slices: TranscriptionSlice[] = classic
+        ? (isLowMemoryDevice()
+            ? sliceAudioIntoPauseAwareChunks(req.audio, 16000, 18, 12, 24)
+            : sliceAudioIntoPauseAwareChunks(req.audio, 16000, 26, 18, 29)
+          ).map((c) => ({ ...c, toSource: (t: number) => c.startSec + t, pieces: [] }))
+        : buildSpeechSlices(req.audio, 16000, SPEECH_WINDOW_SEC);
+      const speechRegions = classic
+        ? undefined
+        : slices.flatMap((sl) => sl.pieces.map((p) => ({ start: p.srcStart, end: p.srcEnd })));
       if (slices.length === 0) {
         post({
           type: 'done',
@@ -743,51 +770,10 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
       const maxTokensFor = (slice: { samples: Float32Array }) =>
         Math.min(224, Math.max(64, Math.ceil(Math.max(0.5, slice.samples.length / 16000) * 6)));
 
-      /**
-       * Re-transcribes one stretch of speech on its own (safety net for phrases Whisper dropped
-       * from a longer window). Returns chunks in recording time.
-       */
-      /** Heartbeat for safety-net re-checks (set per window). */
-      let pieceBeat: ((steps: number) => void) | undefined;
-      const transcribePiece = async (piece: {
-        srcStart: number;
-        srcEnd: number;
-      }): Promise<{ chunks: Array<{ timestamp: [number, number | null]; text: string }>; records: WordRecord[] }> => {
-        const samples = req.audio.subarray(Math.floor(piece.srcStart * 16000), Math.ceil(piece.srcEnd * 16000));
-        const rec = new TokenConfidenceRecorder();
-        rec.onStep = pieceBeat;
-        const promptIds = buildVocabularyPromptIds(transcriber, req.vocabulary);
-        const out = await transcriber(samples, {
-          return_timestamps: true,
-          max_new_tokens: Math.min(224, Math.max(32, Math.ceil((piece.srcEnd - piece.srcStart) * 6))),
-          logits_processor: new RecorderLastProcessorList(rec),
-          ...(promptIds ? { decoder_input_ids: promptIds } : {}),
-        } as Parameters<AutomaticSpeechRecognitionPipeline>[1]);
-        const single = Array.isArray(out) ? out[0] : out;
-        const rel = promptIds
-          ? chunksFromRecorder(transcriber, rec)
-          : single?.chunks ?? (single?.text?.trim() ? [{ timestamp: [0, null] as [number, number | null], text: single.text }] : []);
-        if (rel.length === 0 || looksLikeRepetitionLoop(rel)) return { chunks: [], records: [] };
-        return {
-          chunks: rel.map((c: { timestamp?: [number, number | null]; text: string }) => ({
-            timestamp: [
-              Math.min(piece.srcEnd, piece.srcStart + (c.timestamp?.[0] ?? 0)),
-              c.timestamp?.[1] != null ? Math.min(piece.srcEnd, piece.srcStart + c.timestamp[1]) : piece.srcEnd,
-            ] as [number, number | null],
-            text: c.text,
-          })),
-          records: timedWordSegmentsFromRecorder(transcriber, rec).map((seg) => ({
-            start: Math.min(piece.srcEnd, piece.srcStart + seg.start),
-            end: seg.end !== null ? Math.min(piece.srcEnd, piece.srcStart + seg.end) : piece.srcEnd,
-            words: seg.words,
-          })),
-        };
-      };
-
       if (isMoonshineModel(req.modelId)) {
         // Moonshine: no 30 s padding, so each stretch of speech (long ones split near 20 s) is
         // transcribed on its own; its line starts where the speech starts.
-        const pieces = packSpeechWindows(req.audio, speechRegions, 16000, 20).flatMap((w) => w.pieces);
+        const pieces = packSpeechWindows(req.audio, speechRegions ?? [], 16000, 20).flatMap((w) => w.pieces);
         for (let i = 0; i < pieces.length; i++) {
           const piece = pieces[i];
           post({
@@ -877,7 +863,6 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
           detail: `Running 100% locally (${backendUsed.toUpperCase()})`,
         });
         const beat = heartbeat(i, slice.samples.length / 16000);
-        pieceBeat = heartbeat(i, slice.samples.length / 16000, 're-checking a phrase');
 
         const segDurationSec = Math.max(0.5, slice.samples.length / 16000);
         // Cap generated tokens per segment (~6 tokens/sec max speech rate) to prevent
@@ -970,8 +955,9 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
           words: seg.words,
         }));
         const singleOutput = Array.isArray(output) ? output[0] : output;
+        let mapped: Array<{ timestamp: [number, number | null]; text: string } | null> = [];
         if (sliceChunks && sliceChunks.length > 0) {
-          const mapped: Array<{ timestamp: [number, number | null]; text: string } | null> = sliceChunks.map((ch: { timestamp?: [number, number | null]; text: string }) => {
+          mapped = sliceChunks.map((ch: { timestamp?: [number, number | null]; text: string }) => {
             const relStart = ch.timestamp?.[0] ?? 0;
             const relEnd = ch.timestamp?.[1] ?? null;
             return {
@@ -979,38 +965,6 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
               text: ch.text,
             };
           });
-          // Safety net: a segment with far too few words for its speech skipped part of a phrase.
-          // Re-transcribe each stretch of speech under it and keep that if it finds clearly more.
-          for (const { index, pieces } of sparseChunks(slice, sliceChunks)) {
-            setStage(`transcribing segment ${i + 1} of ${slices.length} (re-checking a short segment)`);
-            try {
-              const parts: Array<Awaited<ReturnType<typeof transcribePiece>>> = [];
-              for (const piece of pieces) parts.push(await transcribePiece(piece));
-              const countWords = (t: string) => t.trim().split(/\s+/).filter((w) => /[A-Za-z0-9]/.test(w)).length;
-              const before = countWords(sliceChunks[index].text);
-              const after = parts.reduce((n, part) => n + part.chunks.reduce((m, c) => m + countWords(c.text), 0), 0);
-              if (after >= before * 1.3 + 2) {
-                // Replace the short segment (its text and its words) with the re-checked pieces
-                const replaced = mapped[index];
-                mapped[index] = null;
-                if (replaced) {
-                  const [rs, re] = replaced.timestamp;
-                  for (let r = sliceRecords.length - 1; r >= 0; r--) {
-                    const st = sliceRecords[r].start;
-                    if (st >= rs - 0.05 && st < (re ?? Infinity) - 0.05) sliceRecords.splice(r, 1);
-                  }
-                }
-                for (const part of parts) {
-                  allChunks.push(...part.chunks);
-                  sliceRecords.push(...part.records);
-                }
-              }
-            } catch {
-              // best-effort
-            }
-          }
-          for (const m of mapped) if (m) allChunks.push(m);
-          allChunks.sort((a, b) => a.timestamp[0] - b.timestamp[0]);
         } else if (!usedPrompt && singleOutput?.text?.trim()) {
           allChunks.push({
             timestamp: [slice.startSec, slice.endSec],
@@ -1018,19 +972,90 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
           });
         }
 
-        // Safety net: speech that no transcribed text covers was probably dropped; transcribe it alone
-        const missed = uncoveredPieces(slice, sliceChunks ?? []);
-        for (const piece of missed) {
-          setStage(`transcribing segment ${i + 1} of ${slices.length} (recovering a missed phrase)`);
+        // Safety net, batched and capped: speech that no text covers (≥1 s), and segments with far
+        // too few words for ≥3 s of speech, are re-transcribed together in ONE extra pass at most.
+        // A re-check only replaces a segment if it keeps most of its words and adds clearly more.
+        const baseChunks = sliceChunks ?? [];
+        const sparse = slice.pieces.length > 0 ? sparseChunks(slice, baseChunks, 16000, 0.5, 3) : [];
+        const missed = slice.pieces.length > 0 ? uncoveredPieces(slice, baseChunks, 16000, 1) : [];
+        const candidates = new Map<number, { srcStart: number; srcEnd: number }>();
+        for (const sp of sparse) for (const p of sp.pieces) candidates.set(Math.round(p.srcStart * 1000), p);
+        for (const p of missed) candidates.set(Math.round(p.srcStart * 1000), p);
+        if (candidates.size > 0) {
+          setStage(`transcribing segment ${i + 1} of ${slices.length} (re-checking)`);
           try {
-            const recovered = await transcribePiece(piece);
-            allChunks.push(...recovered.chunks);
-            sliceRecords.push(...recovered.records);
+            const regions = [...candidates.values()]
+              .sort((a, b) => a.srcStart - b.srcStart)
+              .map((p) => ({ start: p.srcStart, end: p.srcEnd }));
+            const win = packSpeechWindows(req.audio, regions, 16000, SPEECH_WINDOW_SEC, 0.6)[0];
+            const rec = new TokenConfidenceRecorder();
+            rec.onStep = heartbeat(i, win.samples.length / 16000, 're-checking');
+            const promptIds = buildVocabularyPromptIds(transcriber, req.vocabulary);
+            const out = await transcriber(win.samples, {
+              return_timestamps: true,
+              max_new_tokens: maxTokensFor(win),
+              logits_processor: new RecorderLastProcessorList(rec),
+              ...(promptIds ? { decoder_input_ids: promptIds } : {}),
+            } as Parameters<AutomaticSpeechRecognitionPipeline>[1]);
+            const single = Array.isArray(out) ? out[0] : out;
+            const rel: Array<{ timestamp?: [number, number | null]; text: string }> = promptIds
+              ? chunksFromRecorder(transcriber, rec)
+              : single?.chunks ?? [];
+            if (rel.length > 0 && !looksLikeRepetitionLoop(rel.map((c) => ({ timestamp: c.timestamp ?? [0, null], text: c.text })))) {
+              const toSrc = (t: number) => packedToSourceTime(win, t);
+              const got = rel.map((c) => ({
+                timestamp: [toSrc(c.timestamp?.[0] ?? 0), c.timestamp?.[1] != null ? toSrc(c.timestamp[1]) : win.endSec] as [
+                  number,
+                  number | null,
+                ],
+                text: c.text,
+              }));
+              const gotRecords: WordRecord[] = timedWordSegmentsFromRecorder(transcriber, rec).map((seg) => ({
+                start: toSrc(seg.start),
+                end: seg.end !== null ? toSrc(seg.end) : win.endSec,
+                words: seg.words,
+              }));
+              const within = (t: number, a: number, b: number) => t >= a - 0.1 && t < b;
+              // Text already transcribed within ~8 s of a time (excluding one segment being replaced)
+              const nearbyText = (a: number, b: number, exclude?: number) =>
+                mapped
+                  .filter((m, k) => m && k !== exclude && m.timestamp[0] < b + 8 && (m.timestamp[1] ?? m.timestamp[0]) > a - 8)
+                  .map((m) => m!.text);
+              // Missed speech: add what the re-check heard there, unless those words are already in
+              // the transcript nearby (boundaries do not line up exactly; never add them twice)
+              for (const p of missed) {
+                const heard = got.filter((c) => within(c.timestamp[0], p.srcStart, p.srcEnd));
+                const fresh = heard.filter((c) => !duplicatesNearbyText(c.text, nearbyText(p.srcStart, p.srcEnd)));
+                allChunks.push(...fresh);
+                if (fresh.length > 0) {
+                  sliceRecords.push(...gotRecords.filter((r) => within(r.start, p.srcStart, p.srcEnd)));
+                }
+              }
+              // Too-short segments: replace only when the re-check keeps the original and adds words
+              for (const { index } of sparse) {
+                const orig = mapped[index];
+                if (!orig) continue;
+                const rs = orig.timestamp[0];
+                const re = orig.timestamp[1] ?? slice.endSec;
+                // Re-checked text for this segment, minus anything that repeats a neighbouring segment
+                const inSeg = got
+                  .filter((c) => within(c.timestamp[0], rs, re))
+                  .filter((c) => !duplicatesNearbyText(c.text, nearbyText(rs, re, index)));
+                if (!recheckReplaces(orig.text, inSeg.map((c) => c.text).join(' '))) continue;
+                mapped[index] = null;
+                for (let r = sliceRecords.length - 1; r >= 0; r--) {
+                  if (within(sliceRecords[r].start, rs, re)) sliceRecords.splice(r, 1);
+                }
+                allChunks.push(...inSeg);
+                sliceRecords.push(...gotRecords.filter((r) => within(r.start, rs, re)));
+              }
+            }
           } catch {
-            // best-effort
+            // best-effort: the original transcription stands
           }
         }
-        if (missed.length > 0) allChunks.sort((a, b) => a.timestamp[0] - b.timestamp[0]);
+        for (const m of mapped) if (m) allChunks.push(m);
+        allChunks.sort((a, b) => a.timestamp[0] - b.timestamp[0]);
         records.push(...sliceRecords);
 
         post({
@@ -1112,7 +1137,8 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
       const allWords = records.flatMap((r) => r.words);
       // Remove leftover repetition loops and text produced over silence
       const cleanedChunks = dropSilentChunks(collapseRepetitions(allChunks), req.audio, 16000);
-      const utterances = extractWhisperUtterances(cleanedChunks, speechRegions);
+      // Drop Whisper's stock invented phrases ("Thank you." over noise) and same-moment duplicates
+      const utterances = dropInventedUtterances(extractWhisperUtterances(cleanedChunks, speechRegions), req.audio, 16000);
       const transcript = utterances.map((u) => `[${u.timestampStr}] ${u.text}`).join('\n');
       let wordConfidence: WordConfidenceMap | undefined;
       try {

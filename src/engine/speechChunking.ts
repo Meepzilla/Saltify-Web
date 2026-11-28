@@ -297,3 +297,56 @@ export function sparseChunks(
   });
   return out;
 }
+
+const wordsOf = (t: string) =>
+  t
+    .toLowerCase()
+    .replace(/[^a-z0-9' ]+/g, ' ')
+    .split(/\s+/)
+    .filter(Boolean);
+
+/**
+ * Whether a re-checked transcription should replace the original text of a segment: it must
+ * add clearly more words AND keep most of the original's words (in order), so a re-check can
+ * fill in a skipped phrase but never trade good text for a different guess.
+ */
+export function recheckReplaces(original: string, recheck: string, minKeptShare = 0.75): boolean {
+  const a = wordsOf(original);
+  const b = wordsOf(recheck);
+  if (b.length < a.length * 1.3 + 2) return false;
+  if (a.length === 0) return true;
+  // longest common subsequence length = original words kept in order
+  const prev = new Array<number>(b.length + 1).fill(0);
+  for (let i = 1; i <= a.length; i++) {
+    let diag = 0;
+    for (let j = 1; j <= b.length; j++) {
+      const up = prev[j];
+      prev[j] = a[i - 1] === b[j - 1] ? diag + 1 : Math.max(prev[j], prev[j - 1]);
+      diag = up;
+    }
+  }
+  return prev[b.length] / a.length >= minKeptShare;
+}
+
+/**
+ * Whether re-checked text is already in the transcript nearby (its words appear, in order, in
+ * the neighbouring text). Boundaries from speech detection, Whisper's timestamps and window joins
+ * do not line up exactly, so a re-check can hear words that were already transcribed; those must
+ * not be added twice. Only re-checked text is tested, so real repetitions by the speaker stay.
+ */
+export function duplicatesNearbyText(recheck: string, nearby: string[], minShare = 0.6): boolean {
+  const a = wordsOf(recheck);
+  if (a.length === 0) return true;
+  const b = wordsOf(nearby.join(' '));
+  if (b.length === 0) return false;
+  const prev = new Array<number>(b.length + 1).fill(0);
+  for (let i = 1; i <= a.length; i++) {
+    let diag = 0;
+    for (let j = 1; j <= b.length; j++) {
+      const up = prev[j];
+      prev[j] = a[i - 1] === b[j - 1] ? diag + 1 : Math.max(prev[j], prev[j - 1]);
+      diag = up;
+    }
+  }
+  return prev[b.length] / a.length >= minShare;
+}
