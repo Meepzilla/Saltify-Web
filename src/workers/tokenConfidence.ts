@@ -17,6 +17,8 @@ import {
  */
 export class TokenConfidenceRecorder extends LogitsProcessor {
   steps: Array<{ id: number; p: number }> = [];
+  /** Called after every generated token (used as a progress heartbeat). */
+  onStep?: (stepCount: number) => void;
 
   _call(_inputIds: bigint[][], logits: Tensor) {
     const row = (logits as unknown as Record<number, { data: Float32Array }>)[0];
@@ -36,6 +38,7 @@ export class TokenConfidenceRecorder extends LogitsProcessor {
         if (v !== -Infinity) sum += Math.exp(v - max);
       }
       this.steps.push({ id: arg, p: sum > 0 ? 1 / sum : 0 });
+      this.onStep?.(this.steps.length);
     }
     return logits;
   }

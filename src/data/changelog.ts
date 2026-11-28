@@ -24,6 +24,33 @@ export const APP_VERSION: string = __APP_VERSION__;
  */
 export const CHANGELOG_RELEASES: readonly ChangelogRelease[] = [
   {
+    version: '1.14.0',
+    date: '2026-11-28',
+    title: 'Faster Whisper Small and Live Progress',
+    summary:
+      'On-device transcription can now use several processor cores, and progress updates continuously with a time-remaining estimate, so long samples no longer look stuck.',
+    changes: [
+      {
+        category: 'improved',
+        summary: 'Multi-core transcription (about 1.6× faster in testing)',
+        detail:
+          'The site now sends the security headers browsers require before letting web apps use more than one CPU core. Whisper Small transcribed a 94-second test recording in 71–76 s instead of 113 s on a 4-core machine. iPad Safari is included.',
+      },
+      {
+        category: 'improved',
+        summary: 'Progress updates while each segment is transcribed',
+        detail:
+          'The progress bar moves every couple of seconds instead of once per 30-second segment, and shows elapsed time and an estimate of the time left.',
+      },
+      {
+        category: 'added',
+        summary: 'Warning when transcription really is stuck',
+        detail:
+          'If the on-device engine reports nothing for 90 seconds, the progress bar says so and suggests cancelling and trying Moonshine or Whisper Base, which need far less memory.',
+      },
+    ],
+  },
+  {
     version: '1.13.0',
     date: '2026-11-28',
     title: 'Moonshine: A Fast-Draft Transcription Model',

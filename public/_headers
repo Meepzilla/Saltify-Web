@@ -1,2 +1,7 @@
+# Cross-origin isolation lets on-device transcription use several CPU cores (multi-threaded
+# WASM). require-corp (not credentialless) so iPad Safari gets it too. Model downloads from
+# Hugging Face and the jsDelivr fallback send CORS/CORP headers, so they still load.
 /*
   Referrer-Policy: no-referrer
+  Cross-Origin-Opener-Policy: same-origin
+  Cross-Origin-Embedder-Policy: require-corp
