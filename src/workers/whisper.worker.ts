@@ -160,6 +160,12 @@ env.fetch = async (input: string | URL, init?: RequestInit) => {
 let loadedKey: string | null = null;
 let loadedBackend: 'webgpu' | 'wasm' | null = null;
 
+function formatElapsed(sec: number): string {
+  const m = Math.floor(sec / 60);
+  const s = Math.floor(sec % 60);
+  return m > 0 ? `${m} min ${s.toString().padStart(2, '0')} s` : `${s} s`;
+}
+
 /** Recognized words of one Whisper segment, with the segment's span in recording seconds. */
 interface WordRecord {
   start: number;
@@ -741,12 +747,15 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
        * Re-transcribes one stretch of speech on its own (safety net for phrases Whisper dropped
        * from a longer window). Returns chunks in recording time.
        */
+      /** Heartbeat for safety-net re-checks (set per window). */
+      let pieceBeat: ((steps: number) => void) | undefined;
       const transcribePiece = async (piece: {
         srcStart: number;
         srcEnd: number;
       }): Promise<{ chunks: Array<{ timestamp: [number, number | null]; text: string }>; records: WordRecord[] }> => {
         const samples = req.audio.subarray(Math.floor(piece.srcStart * 16000), Math.ceil(piece.srcEnd * 16000));
         const rec = new TokenConfidenceRecorder();
+        rec.onStep = pieceBeat;
         const promptIds = buildVocabularyPromptIds(transcriber, req.vocabulary);
         const out = await transcriber(samples, {
           return_timestamps: true,
@@ -828,9 +837,38 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
           if (i + 1 < pieces.length) await yieldToEventLoop();
         }
       } else {
+      // Live progress: a heartbeat on every generated token, with smooth progress within each
+      // window and a time-remaining estimate once the speed is known.
+      const totalSpeechSec = slices.reduce((n, sl) => n + sl.samples.length / 16000, 0);
+      let doneSpeechSec = 0;
+      const startedAt = Date.now();
+      let lastBeat = 0;
+      const heartbeat = (i: number, windowSec: number, note?: string) => (steps: number) => {
+        const now = Date.now();
+        if (now - lastBeat < 1500) return;
+        lastBeat = now;
+        // ~3 tokens per second of speech; never claim a window is finished before it is
+        const within = Math.min(0.95, steps / Math.max(8, windowSec * 3));
+        const doneSec = doneSpeechSec + within * windowSec;
+        const elapsed = (now - startedAt) / 1000;
+        let eta = '';
+        if (doneSec > 5 && elapsed > 15) {
+          const left = ((totalSpeechSec - doneSec) * elapsed) / doneSec;
+          eta = left < 60 ? ' · under a minute left' : ` · about ${Math.round(left / 60)} min left`;
+        }
+        post({
+          type: 'progress',
+          jobId: req.jobId,
+          stage: `Transcribing segment ${i + 1} of ${slices.length}${note ? ` (${note})` : ''}`,
+          progress: 0.25 + (doneSec / Math.max(1, totalSpeechSec)) * (primaryEnd - 0.25),
+          detail: `${formatElapsed(elapsed)} elapsed${eta} · ${backendUsed.toUpperCase()}${
+            backendUsed === 'wasm' ? `, ${env.backends.onnx.wasm?.numThreads ?? 1} thread(s)` : ''
+          }`,
+        });
+      };
       for (let i = 0; i < slices.length; i++) {
         const slice = slices[i];
-        const baseProgress = 0.25 + (i / slices.length) * (primaryEnd - 0.25);
+        const baseProgress = 0.25 + (doneSpeechSec / Math.max(1, totalSpeechSec)) * (primaryEnd - 0.25);
         post({
           type: 'progress',
           jobId: req.jobId,
@@ -838,6 +876,8 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
           progress: baseProgress,
           detail: `Running 100% locally (${backendUsed.toUpperCase()})`,
         });
+        const beat = heartbeat(i, slice.samples.length / 16000);
+        pieceBeat = heartbeat(i, slice.samples.length / 16000, 're-checking a phrase');
 
         const segDurationSec = Math.max(0.5, slice.samples.length / 16000);
         // Cap generated tokens per segment (~6 tokens/sec max speech rate) to prevent
@@ -849,6 +889,7 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
         let usedPrompt = false;
         const runSegment = (pipe: AutomaticSpeechRecognitionPipeline, antiLoop = false) => {
           recorder = new TokenConfidenceRecorder();
+          recorder.onStep = beat;
           // The anti-loop retry drops the vocabulary prompt (prompts make loops more likely)
           const promptIds = antiLoop ? null : buildVocabularyPromptIds(pipe, req.vocabulary);
           usedPrompt = promptIds !== null;
@@ -998,6 +1039,7 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
           partialTranscript: formatWhisperChunks(collapseRepetitions(allChunks)),
         });
 
+        doneSpeechSec += slice.samples.length / 16000;
         // Yield briefly between segments so Safari GC can reclaim intermediate WASM/JS buffers
         if (i + 1 < slices.length) {
           await yieldToEventLoop();

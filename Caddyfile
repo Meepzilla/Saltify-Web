@@ -34,7 +34,7 @@
 		X-Content-Type-Options "nosniff"
 		Referrer-Policy "no-referrer"
 		Cross-Origin-Opener-Policy "same-origin"
-		Cross-Origin-Embedder-Policy "credentialless"
+		Cross-Origin-Embedder-Policy "require-corp"
 	}
 
 	# SPA fallback for all other routes

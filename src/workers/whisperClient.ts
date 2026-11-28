@@ -48,6 +48,9 @@ class CancelledError extends Error {
 }
 
 /** An error from the Whisper worker, carrying full diagnostics for the Error Log. */
+/** Warn when the worker has said nothing for this long during a job. */
+const STALL_WARNING_MS = 90_000;
+
 export class WhisperWorkerError extends Error {
   details?: string;
   constructor(message: string, details?: string) {
@@ -193,7 +196,25 @@ export class WhisperWorkerClient {
     return new Promise<T>((resolve, reject) => {
       this.activeReject = reject;
 
+      // Stall watchdog: the worker reports progress at least every few seconds while it works
+      // (a heartbeat per generated word), so long silence means the device is struggling.
+      let lastMessageAt = Date.now();
+      let lastStage = 'Working';
+      let lastProgress = 0;
+      let stallWarned = false;
+      const stallTimer = setInterval(() => {
+        if (!stallWarned && Date.now() - lastMessageAt > STALL_WARNING_MS) {
+          stallWarned = true;
+          callbacks.onProgress?.(
+            lastStage,
+            lastProgress,
+            'No progress for over 90 seconds. This device may be low on memory or busy. You can keep waiting, or cancel and try Moonshine or Whisper Base, which need far less.'
+          );
+        }
+      }, 5000);
+
       const cleanup = () => {
+        clearInterval(stallTimer);
         worker.removeEventListener('message', onMessage);
         worker.removeEventListener('error', onError);
         if (this.activeJobId === jobId) {
@@ -205,8 +226,12 @@ export class WhisperWorkerClient {
       const onMessage = (event: MessageEvent<WorkerResponse>) => {
         const msg = event.data;
         if (!msg || msg.jobId !== jobId) return;
+        lastMessageAt = Date.now();
+        stallWarned = false;
 
         if (msg.type === 'progress') {
+          lastStage = msg.stage;
+          lastProgress = msg.progress;
           callbacks.onProgress?.(msg.stage, msg.progress, msg.detail);
         } else if (msg.type === 'partial') {
           callbacks.onPartial?.(msg.partialTranscript);
