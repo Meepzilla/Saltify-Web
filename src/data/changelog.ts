@@ -24,6 +24,33 @@ export const APP_VERSION: string = __APP_VERSION__;
  */
 export const CHANGELOG_RELEASES: readonly ChangelogRelease[] = [
   {
+    version: '1.12.0',
+    date: '2026-11-28',
+    title: 'Speech-First Transcription: Fewer Lost Phrases, Real Timestamps',
+    summary:
+      'Transcription now finds the speech first and sends only speech to Whisper, re-checks anything that came back missing or too short, and times each utterance from its own stretch of speech.',
+    changes: [
+      {
+        category: 'improved',
+        summary: 'More accurate transcripts, especially with background noise',
+        detail:
+          'Silence is skipped and utterances are packed into windows of up to 28 seconds. On 13-minute, 80-utterance two-speaker test samples with background noise, word errors fell from 13.3% to 6.4%, and phrases lost dropped from 7 to none. Quiet samples were about the same (5.9% vs 6.3%).',
+      },
+      {
+        category: 'fixed',
+        summary: 'Phrases no longer silently dropped',
+        detail:
+          'Speech that comes back with no words, or far too few, is transcribed again on its own and kept when it recovers the missing words.',
+      },
+      {
+        category: 'fixed',
+        summary: 'Each utterance gets its own timestamp',
+        detail:
+          'Sentences that Whisper returned together no longer all share the first one\'s time (e.g. several lines at 0:00). This also gives automatic speaker labeling better timing.',
+      },
+    ],
+  },
+  {
     version: '1.11.0',
     date: '2026-11-27',
     title: 'IPA Models and Speech Sounds Removed',

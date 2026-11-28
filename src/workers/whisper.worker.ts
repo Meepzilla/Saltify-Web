@@ -4,7 +4,7 @@ import {
   type AutomaticSpeechRecognitionPipeline,
   type ProgressInfo,
 } from '@huggingface/transformers';
-import { sliceAudioIntoPauseAwareChunks } from '../engine/audioProcessing';
+import { buildSpeechSlices, sparseChunks, uncoveredPieces } from '../engine/speechChunking';
 import { collapseRepetitions, dropSilentChunks, looksLikeRepetitionLoop } from '../engine/hallucinationGuard';
 import { purgeHtmlModelCacheEntries } from '../engine/modelCache';
 import {
@@ -158,6 +158,12 @@ env.fetch = async (input: string | URL, init?: RequestInit) => {
 };
 let loadedKey: string | null = null;
 let loadedBackend: 'webgpu' | 'wasm' | null = null;
+
+/**
+ * Longest stretch of packed speech per Whisper window (seconds). Whisper pads every window to
+ * 30 s, so shorter windows save no memory; 28 s tested best on 10–13 minute two-speaker samples.
+ */
+const SPEECH_WINDOW_SEC = 28;
 
 function post(msg: WorkerResponse): void {
   self.postMessage(msg);
@@ -691,11 +697,11 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
         req.appBaseUrl
       );
 
-      // Pause-aware low-RAM chunking keeps iPadOS Safari & Android memory bounded
-      const lowMemory = isLowMemoryDevice();
-      const slices = lowMemory
-        ? sliceAudioIntoPauseAwareChunks(req.audio, 16000, 18, 12, 24)
-        : sliceAudioIntoPauseAwareChunks(req.audio, 16000, 26, 18, 29);
+      // Speech-first windows: find the speech, skip silence (Whisper pads every window to 30 s
+      // and invents text over silence), and pack utterances into windows joined by short
+      // stretches of background noise. Times map back to the recording.
+      const slices = buildSpeechSlices(req.audio, 16000, SPEECH_WINDOW_SEC);
+      const speechRegions = slices.flatMap((sl) => sl.pieces.map((p) => ({ start: p.srcStart, end: p.srcEnd })));
       if (slices.length === 0) {
         post({
           type: 'done',
@@ -713,8 +719,42 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
         req.compareModelId && req.compareModelId !== req.modelId ? req.compareModelId : undefined;
       // With a second opinion, the main pass uses 25–60% of the bar and the comparison 60–93%
       const primaryEnd = compareModelId ? 0.6 : 0.93;
-      const maxTokensFor = (slice: { startSec: number; endSec: number }) =>
-        Math.min(224, Math.max(64, Math.ceil(Math.max(0.5, slice.endSec - slice.startSec) * 6)));
+      const maxTokensFor = (slice: { samples: Float32Array }) =>
+        Math.min(224, Math.max(64, Math.ceil(Math.max(0.5, slice.samples.length / 16000) * 6)));
+
+      /**
+       * Re-transcribes one stretch of speech on its own (safety net for phrases Whisper dropped
+       * from a longer window). Returns chunks in recording time.
+       */
+      const transcribePiece = async (piece: {
+        srcStart: number;
+        srcEnd: number;
+      }): Promise<{ chunks: Array<{ timestamp: [number, number | null]; text: string }>; words: WordProbability[] }> => {
+        const samples = req.audio.subarray(Math.floor(piece.srcStart * 16000), Math.ceil(piece.srcEnd * 16000));
+        const rec = new TokenConfidenceRecorder();
+        const promptIds = buildVocabularyPromptIds(transcriber, req.vocabulary);
+        const out = await transcriber(samples, {
+          return_timestamps: true,
+          max_new_tokens: Math.min(224, Math.max(32, Math.ceil((piece.srcEnd - piece.srcStart) * 6))),
+          logits_processor: new RecorderLastProcessorList(rec),
+          ...(promptIds ? { decoder_input_ids: promptIds } : {}),
+        } as Parameters<AutomaticSpeechRecognitionPipeline>[1]);
+        const single = Array.isArray(out) ? out[0] : out;
+        const rel = promptIds
+          ? chunksFromRecorder(transcriber, rec)
+          : single?.chunks ?? (single?.text?.trim() ? [{ timestamp: [0, null] as [number, number | null], text: single.text }] : []);
+        if (rel.length === 0 || looksLikeRepetitionLoop(rel)) return { chunks: [], words: [] as WordProbability[] };
+        return {
+          chunks: rel.map((c: { timestamp?: [number, number | null]; text: string }) => ({
+            timestamp: [
+              Math.min(piece.srcEnd, piece.srcStart + (c.timestamp?.[0] ?? 0)),
+              c.timestamp?.[1] != null ? Math.min(piece.srcEnd, piece.srcStart + c.timestamp[1]) : piece.srcEnd,
+            ] as [number, number | null],
+            text: c.text,
+          })),
+          words: tokenSegmentsFromRecorder(transcriber, rec).flat(),
+        };
+      };
 
       for (let i = 0; i < slices.length; i++) {
         const slice = slices[i];
@@ -727,7 +767,7 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
           detail: `Running 100% locally (${backendUsed.toUpperCase()})`,
         });
 
-        const segDurationSec = Math.max(0.5, slice.endSec - slice.startSec);
+        const segDurationSec = Math.max(0.5, slice.samples.length / 16000);
         // Cap generated tokens per segment (~6 tokens/sec max speech rate) to prevent
         // Whisper 448-token hallucination loops on iPad/mobile browsers.
         const maxNewTokens = Math.min(224, Math.max(64, Math.ceil(segDurationSec * 6)));
@@ -814,23 +854,57 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
         sliceWords[i] = tokenSegmentsFromRecorder(transcriber, recorder).flat();
         const singleOutput = Array.isArray(output) ? output[0] : output;
         if (sliceChunks && sliceChunks.length > 0) {
-          for (const ch of sliceChunks) {
+          const mapped: Array<{ timestamp: [number, number | null]; text: string } | null> = sliceChunks.map((ch: { timestamp?: [number, number | null]; text: string }) => {
             const relStart = ch.timestamp?.[0] ?? 0;
             const relEnd = ch.timestamp?.[1] ?? null;
-            allChunks.push({
-              timestamp: [
-                slice.startSec + relStart,
-                relEnd !== null ? slice.startSec + relEnd : null,
-              ],
+            return {
+              timestamp: [slice.toSource(relStart), relEnd !== null ? slice.toSource(relEnd) : null] as [number, number | null],
               text: ch.text,
-            });
+            };
+          });
+          // Safety net: a segment with far too few words for its speech skipped part of a phrase.
+          // Re-transcribe each stretch of speech under it and keep that if it finds clearly more.
+          for (const { index, pieces } of sparseChunks(slice, sliceChunks)) {
+            setStage(`transcribing segment ${i + 1} of ${slices.length} (re-checking a short segment)`);
+            try {
+              const parts: Array<Awaited<ReturnType<typeof transcribePiece>>> = [];
+              for (const piece of pieces) parts.push(await transcribePiece(piece));
+              const countWords = (t: string) => t.trim().split(/\s+/).filter((w) => /[A-Za-z0-9]/.test(w)).length;
+              const before = countWords(sliceChunks[index].text);
+              const after = parts.reduce((n, part) => n + part.chunks.reduce((m, c) => m + countWords(c.text), 0), 0);
+              if (after >= before * 1.3 + 2) {
+                mapped[index] = null;
+                for (const part of parts) {
+                  allChunks.push(...part.chunks);
+                  sliceWords[i] = [...(sliceWords[i] ?? []), ...part.words];
+                }
+              }
+            } catch {
+              // best-effort
+            }
           }
+          for (const m of mapped) if (m) allChunks.push(m);
+          allChunks.sort((a, b) => a.timestamp[0] - b.timestamp[0]);
         } else if (!usedPrompt && singleOutput?.text?.trim()) {
           allChunks.push({
             timestamp: [slice.startSec, slice.endSec],
             text: singleOutput.text,
           });
         }
+
+        // Safety net: speech that no transcribed text covers was probably dropped; transcribe it alone
+        const missed = uncoveredPieces(slice, sliceChunks ?? []);
+        for (const piece of missed) {
+          setStage(`transcribing segment ${i + 1} of ${slices.length} (recovering a missed phrase)`);
+          try {
+            const recovered = await transcribePiece(piece);
+            allChunks.push(...recovered.chunks);
+            sliceWords[i] = [...(sliceWords[i] ?? []), ...recovered.words];
+          } catch {
+            // best-effort
+          }
+        }
+        if (missed.length > 0) allChunks.sort((a, b) => a.timestamp[0] - b.timestamp[0]);
 
         post({
           type: 'partial',
@@ -898,7 +972,7 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
       const allWords = sliceWords.flat();
       // Remove leftover repetition loops and text produced over silence
       const cleanedChunks = dropSilentChunks(collapseRepetitions(allChunks), req.audio, 16000);
-      const utterances = extractWhisperUtterances(cleanedChunks);
+      const utterances = extractWhisperUtterances(cleanedChunks, speechRegions);
       const transcript = utterances.map((u) => `[${u.timestampStr}] ${u.text}`).join('\n');
       let wordConfidence: WordConfidenceMap | undefined;
       try {

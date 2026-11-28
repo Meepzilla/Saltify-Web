@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { detectSpeechRegions, packSpeechWindows, packedToSourceTime } from '../speechChunking';
+import { buildSpeechSlices, detectSpeechRegions, packSpeechWindows, packedToSourceTime, sparseChunks, uncoveredPieces } from '../speechChunking';
 
 const SR = 16000;
 /** Tone bursts ("speech") at the given [start, end] seconds over faint noise. */
@@ -46,5 +46,44 @@ describe('speech chunking', () => {
   it('treats a recording with no speech/noise contrast as all speech', () => {
     const x = synth(5, [[0, 5]]);
     expect(detectSpeechRegions(x)).toEqual([{ start: 0, end: 5 }]);
+  });
+
+  it('finds speech that no transcribed text covers (dropped phrases)', () => {
+    const x = synth(40, [[1, 3], [10, 12], [20, 23]]);
+    const [slice] = buildSpeechSlices(x, SR, 28);
+    expect(slice.pieces).toHaveLength(3);
+    const third = slice.pieces[2];
+    // Whisper covered the first two pieces and stopped before the third
+    const chunks: Array<{ timestamp: [number, number | null] }> = [
+      { timestamp: [0, slice.pieces[1].packedStart + 1.5] },
+    ];
+    expect(uncoveredPieces(slice, chunks)).toEqual([third]);
+    expect(uncoveredPieces(slice, [{ timestamp: [0, null] }])).toEqual([]);
+    // Slice times map back to the recording
+    expect(slice.toSource(third.packedStart + 1)).toBeCloseTo(third.srcStart + 1, 5);
+  });
+
+  it('flags a segment whose text is too short for the speech it covers', () => {
+    const x = synth(40, [[1, 4], [10, 14], [20, 23]]);
+    const [slice] = buildSpeechSlices(x, SR, 28);
+    const end = slice.samples.length / SR;
+    const ok = [{ timestamp: [0, end] as [number, number | null], text: ' I saw a big dog at the park and it ran to me very fast today.' }];
+    expect(sparseChunks(slice, ok)).toEqual([]);
+    const skipped = [{ timestamp: [0, end] as [number, number | null], text: ' I saw a dog.' }];
+    const flagged = sparseChunks(slice, skipped);
+    expect(flagged).toHaveLength(1);
+    expect(flagged[0].pieces).toHaveLength(3);
+  });
+
+  it('ignores digital silence when judging background noise', () => {
+    // speech, exact-zero gap, 10 s of quiet room noise, exact-zero gap, speech
+    const x = new Float32Array(20 * SR);
+    for (let i = 0; i < 2 * SR; i++) x[i] = 0.3 * Math.sin(i / 7);
+    let s = 5;
+    for (let i = 4 * SR; i < 14 * SR; i++) x[i] = (((s = (s * 16807) % 2147483647) / 2147483647) - 0.5) * 0.006;
+    for (let i = 16 * SR; i < 18 * SR; i++) x[i] = 0.3 * Math.sin(i / 7);
+    const regions = detectSpeechRegions(x);
+    expect(regions).toHaveLength(2);
+    expect(regions.every((r) => r.end - r.start < 3)).toBe(true);
   });
 });

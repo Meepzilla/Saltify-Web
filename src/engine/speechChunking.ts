@@ -45,9 +45,13 @@ export function detectSpeechRegions(samples: Float32Array, sampleRate = 16000, o
     for (let i = f * size; i < (f + 1) * size; i++) sum += samples[i] * samples[i];
     db[f] = 10 * Math.log10(sum / size + 1e-10);
   }
-  const sorted = Float32Array.from(db).sort();
-  const floor = sorted[Math.floor(frames * 0.1)];
-  const peak = sorted[Math.floor(frames * 0.98)];
+  // Digital silence (exact zeros from noise gates, edits or generated audio) is not the room's
+  // background level: estimate the noise floor from audible frames only.
+  const audible = Float32Array.from(db.filter((d) => d > -80)).sort();
+  if (audible.length === 0) return [];
+  const sorted = audible.length >= frames * 0.1 ? audible : Float32Array.from(db).sort();
+  const floor = sorted[Math.floor(sorted.length * 0.1)];
+  const peak = sorted[Math.floor(sorted.length * 0.98)];
   // Recordings with no clear speech/noise contrast: treat everything as speech
   if (peak - floor < 6) return [{ start: 0, end: durationSec }];
   const threshold = floor + thresholdRatio * (peak - floor) + 3;
@@ -215,6 +219,8 @@ export interface TranscriptionSlice {
   samples: Float32Array;
   /** Maps a time within `samples` back to the original recording. */
   toSource: (t: number) => number;
+  /** The speech regions packed into this slice. */
+  pieces: PackedPiece[];
 }
 
 /**
@@ -230,5 +236,64 @@ export function buildSpeechSlices(samples: Float32Array, sampleRate = 16000, max
     endSec: w.endSec,
     samples: w.samples,
     toSource: (t: number) => packedToSourceTime(w, t),
+    pieces: w.pieces,
   }));
+}
+
+/**
+ * Speech pieces of a slice that no transcribed chunk overlaps (Whisper sometimes stops early
+ * and silently drops the last phrase of a window). Chunk times are within the slice.
+ */
+export function uncoveredPieces(
+  slice: Pick<TranscriptionSlice, 'pieces' | 'samples'>,
+  chunks: Array<{ timestamp: [number, number | null] }>,
+  sampleRate = 16000,
+  minSec = 0.5
+): PackedPiece[] {
+  const sliceEnd = slice.samples.length / sampleRate;
+  return slice.pieces.filter((p) => {
+    const a = p.packedStart;
+    const b = p.packedStart + (p.srcEnd - p.srcStart);
+    if (b - a < minSec) return false;
+    return !chunks.some((c) => {
+      const s = c.timestamp[0];
+      const e = c.timestamp[1] ?? sliceEnd;
+      return Math.min(b, e) - Math.max(a, s) >= Math.min(0.2, (b - a) / 2);
+    });
+  });
+}
+
+/**
+ * Chunks whose text is too short for the speech they cover (Whisper skipped part of a phrase
+ * inside a segment). Returns, per suspicious chunk index, the speech pieces under it. Normal
+ * speech runs ~1.5–3 words per second, even for young children; below `minWordsPerSec` over at
+ * least `minSpeechSec` of detected speech, words were probably skipped.
+ */
+export function sparseChunks(
+  slice: Pick<TranscriptionSlice, 'pieces' | 'samples'>,
+  chunks: Array<{ timestamp: [number, number | null]; text: string }>,
+  sampleRate = 16000,
+  minWordsPerSec = 0.7,
+  minSpeechSec = 2
+): Array<{ index: number; pieces: PackedPiece[] }> {
+  const sliceEnd = slice.samples.length / sampleRate;
+  const out: Array<{ index: number; pieces: PackedPiece[] }> = [];
+  chunks.forEach((c, index) => {
+    const s = c.timestamp[0];
+    const e = c.timestamp[1] ?? sliceEnd;
+    let speech = 0;
+    const under: PackedPiece[] = [];
+    for (const p of slice.pieces) {
+      const a = p.packedStart;
+      const b = p.packedStart + (p.srcEnd - p.srcStart);
+      const overlap = Math.min(b, e) - Math.max(a, s);
+      if (overlap > 0.1) {
+        speech += overlap;
+        under.push(p);
+      }
+    }
+    const words = c.text.trim().split(/\s+/).filter((w) => /[A-Za-z0-9]/.test(w)).length;
+    if (speech >= minSpeechSec && words / speech < minWordsPerSec) out.push({ index, pieces: under });
+  });
+  return out;
 }

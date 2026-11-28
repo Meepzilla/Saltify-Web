@@ -17,7 +17,23 @@ describe('transcriptFormat', () => {
       { timestamp: [0, 4.2], text: ' Hello there! How are you?' },
       { timestamp: [65.3, 70], text: ' I went to the park...' },
     ]);
-    expect(out).toBe('[0:00] Hello there!\n[0:00] How are you?\n[1:05] I went to the park');
+    expect(out).toBe('[0:00] Hello there!\n[0:02] How are you?\n[1:05] I went to the park');
+  });
+
+  it('times each sentence from its own stretch of speech when regions are known', () => {
+    const chunks: Array<{ timestamp: [number, number | null]; text: string }> = [
+      { timestamp: [0, 14], text: ' I see a dog. It is big. Can I pet it?' },
+    ];
+    const regions = [
+      { start: 0.2, end: 1.5 },
+      { start: 5.1, end: 6.4 },
+      { start: 11.8, end: 13.6 },
+    ];
+    const utts = extractWhisperUtterances(chunks, regions);
+    expect(utts.map((u) => u.timestampStr)).toEqual(['0:00', '0:05', '0:11']);
+    expect(utts[1].startSec).toBeCloseTo(5.1);
+    // Without regions, starts are estimated from sentence length (no longer all 0:00)
+    expect(extractWhisperUtterances(chunks).map((u) => u.timestampStr)).toEqual(['0:00', '0:04', '0:08']);
   });
 
   it('distributes multi-sentence Whisper chunks proportionally across [startSec, endSec]', () => {

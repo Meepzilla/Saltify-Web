@@ -94,6 +94,6 @@ describe('Whisper post-processing', () => {
       { timestamp: [0, 3], text: ' Mr. Smith has a dog. He is big!' },
       { timestamp: [4, 5], text: ' Uh.' },
     ]);
-    expect(out).toBe('[0:00] Mr Smith has a dog.\n[0:00] He is big!');
+    expect(out).toBe('[0:00] Mr Smith has a dog.\n[0:01] He is big!');
   });
 });
