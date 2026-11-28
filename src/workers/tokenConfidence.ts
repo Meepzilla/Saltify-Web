@@ -57,6 +57,29 @@ export class RecorderLastProcessorList extends LogitsProcessorList {
 }
 
 /**
+ * Each generated token's text as it appears in the decoded output (including its leading space),
+ * found by decoding the sequence cumulatively. Used for tokenizers whose single-token decode
+ * drops word-boundary markers. Costs O(n²) decoding, fine for utterance-length outputs.
+ */
+function incrementalTokenTexts(
+  tokenizer: { decode: (ids: number[], opts?: { skip_special_tokens?: boolean }) => string },
+  recorder: TokenConfidenceRecorder
+): TokenProbability[] {
+  const out: TokenProbability[] = [];
+  const ids: number[] = [];
+  let prev = '';
+  for (const step of recorder.steps) {
+    if (step.id < 0) continue;
+    ids.push(step.id);
+    const text = tokenizer.decode(ids, { skip_special_tokens: true });
+    const piece = text.startsWith(prev) ? text.slice(prev.length) : '';
+    prev = text;
+    if (piece) out.push({ text: out.length === 0 ? ` ${piece.trimStart()}` : piece, p: step.p });
+  }
+  return out;
+}
+
+/**
  * Converts recorded token probabilities into words, split into Whisper's timestamped segments
  * (a timestamp token closes a segment). Segment i corresponds to the pipeline's chunk i.
  */
@@ -70,6 +93,12 @@ export function tokenSegmentsFromRecorder(
       decode: (ids: number[], opts?: { skip_special_tokens?: boolean }) => string;
     };
     const timestampBegin = tokenizer.timestamp_begin ?? Number.MAX_SAFE_INTEGER;
+    if (tokenizer.timestamp_begin === undefined) {
+      // Not Whisper (e.g. Moonshine): no timestamp tokens, and single SentencePiece tokens decode
+      // without their word-boundary space, so take each token's text from a cumulative decode.
+      const words = groupTokensIntoWords(incrementalTokenTexts(tokenizer, recorder));
+      return words.length > 0 ? [words] : [];
+    }
     const segments: WordProbability[][] = [];
     let current: TokenProbability[] = [];
     const close = () => {
@@ -161,4 +190,52 @@ export function chunksFromRecorder(
   }
   if (ids.length) flush(null);
   return chunks;
+}
+
+/** Words of one Whisper segment with the segment's time span (seconds within the input). */
+export interface TimedWordSegment {
+  start: number;
+  end: number | null;
+  words: WordProbability[];
+}
+
+/**
+ * Like tokenSegmentsFromRecorder, but keeps each segment's timestamps so words can be located in
+ * the audio (used to re-check only the uncertain stretches with a second model).
+ */
+export function timedWordSegmentsFromRecorder(
+  pipe: AutomaticSpeechRecognitionPipeline,
+  recorder: TokenConfidenceRecorder
+): TimedWordSegment[] {
+  try {
+    const tokenizer = pipe.tokenizer as unknown as WhisperTokenizerLike;
+    const timestampBegin = tokenizer.timestamp_begin ?? Number.MAX_SAFE_INTEGER;
+    const out: TimedWordSegment[] = [];
+    let start: number | null = null;
+    let current: TokenProbability[] = [];
+    const flush = (end: number | null) => {
+      const words = groupTokensIntoWords(current);
+      if (words.length > 0) out.push({ start: start ?? 0, end, words });
+      current = [];
+    };
+    for (const step of recorder.steps) {
+      if (step.id < 0) continue;
+      if (step.id >= timestampBegin) {
+        const t = Math.round((step.id - timestampBegin) * 0.02 * 100) / 100;
+        if (start === null) {
+          start = t;
+        } else {
+          flush(t);
+          start = null;
+        }
+        continue;
+      }
+      const text = tokenizer.decode([step.id], { skip_special_tokens: true });
+      if (text) current.push({ text, p: step.p });
+    }
+    if (current.length) flush(null);
+    return out;
+  } catch {
+    return [];
+  }
 }

@@ -3,7 +3,8 @@ export type ThemeMode = 'system' | 'light' | 'dark';
 export type WhisperModelId =
   | 'onnx-community/whisper-tiny.en'
   | 'onnx-community/whisper-base.en'
-  | 'onnx-community/whisper-small.en';
+  | 'onnx-community/whisper-small.en'
+  | 'onnx-community/moonshine-base-ONNX';
 
 export type ComputeDevice = 'auto' | 'webgpu' | 'wasm';
 
@@ -17,6 +18,11 @@ export interface WhisperModelInfo {
   sizeMb: number;
   recommendedFor: string;
   description: string;
+  /**
+   * Model family. Whisper (default) pads audio to 30 s windows and supports the expected-words
+   * prompt and second opinion; Moonshine transcribes each stretch of speech at its real length.
+   */
+  family?: 'whisper' | 'moonshine';
 }
 
 export const WHISPER_MODELS: readonly WhisperModelInfo[] = [
@@ -47,7 +53,22 @@ export const WHISPER_MODELS: readonly WhisperModelInfo[] = [
     recommendedFor: 'Windows PCs & high-RAM devices (desktop Saltify parity)',
     description: 'Highest accuracy, matching the desktop Saltify small.en model. Best on Windows laptops/desktops.',
   },
+  {
+    id: 'onnx-community/moonshine-base-ONNX',
+    label: 'Moonshine Base (English, fast draft)',
+    shortLabel: 'Moonshine',
+    sizeLabel: '~65 MB',
+    sizeMb: 65,
+    recommendedFor: 'Quick drafts of long samples, especially on iPad',
+    description:
+      'About 3× faster than Whisper Small on 10–13 minute samples, with accuracy close to Whisper Base (about 9 words in 100 wrong vs 6 for Small; more in noise). Each line starts exactly where its stretch of speech begins. Expected words and Second Opinion are not used with this model.',
+    family: 'moonshine',
+  },
 ] as const;
+
+export function isMoonshineModel(modelId: string): boolean {
+  return WHISPER_MODELS.some((m) => m.id === modelId && m.family === 'moonshine');
+}
 
 
 export interface ClientInfo {

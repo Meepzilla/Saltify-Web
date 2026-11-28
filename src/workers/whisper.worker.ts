@@ -4,7 +4,7 @@ import {
   type AutomaticSpeechRecognitionPipeline,
   type ProgressInfo,
 } from '@huggingface/transformers';
-import { buildSpeechSlices, sparseChunks, uncoveredPieces } from '../engine/speechChunking';
+import { buildSpeechSlices, packSpeechWindows, sparseChunks, uncoveredPieces } from '../engine/speechChunking';
 import { collapseRepetitions, dropSilentChunks, looksLikeRepetitionLoop } from '../engine/hallucinationGuard';
 import { purgeHtmlModelCacheEntries } from '../engine/modelCache';
 import {
@@ -24,9 +24,10 @@ import {
   chunksFromRecorder,
   RecorderLastProcessorList,
   TokenConfidenceRecorder,
+  timedWordSegmentsFromRecorder,
   tokenSegmentsFromRecorder,
 } from './tokenConfidence';
-import type { ComputeDevice, ModelSource, WhisperModelId } from '../types/saltify';
+import { isMoonshineModel, type ComputeDevice, type ModelSource, type WhisperModelId } from '../types/saltify';
 
 
 // IMPORTANT: do not import speakerDiarizer / childGrammarEngine (or anything that pulls in
@@ -158,6 +159,13 @@ env.fetch = async (input: string | URL, init?: RequestInit) => {
 };
 let loadedKey: string | null = null;
 let loadedBackend: 'webgpu' | 'wasm' | null = null;
+
+/** Recognized words of one Whisper segment, with the segment's span in recording seconds. */
+interface WordRecord {
+  start: number;
+  end: number;
+  words: WordProbability[];
+}
 
 /**
  * Longest stretch of packed speech per Whisper window (seconds). Whisper pads every window to
@@ -714,9 +722,16 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
       }
 
       const allChunks: Array<{ timestamp: [number, number | null]; text: string }> = [];
-      const sliceWords: WordProbability[][] = [];
+      /** Recognized words per Whisper segment, with the segment's span in recording time. */
+      const records: WordRecord[] = [];
+      // Second opinion compares two Whisper models (Moonshine is used on its own)
       const compareModelId =
-        req.compareModelId && req.compareModelId !== req.modelId ? req.compareModelId : undefined;
+        req.compareModelId &&
+        req.compareModelId !== req.modelId &&
+        !isMoonshineModel(req.modelId) &&
+        !isMoonshineModel(req.compareModelId)
+          ? req.compareModelId
+          : undefined;
       // With a second opinion, the main pass uses 25–60% of the bar and the comparison 60–93%
       const primaryEnd = compareModelId ? 0.6 : 0.93;
       const maxTokensFor = (slice: { samples: Float32Array }) =>
@@ -729,7 +744,7 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
       const transcribePiece = async (piece: {
         srcStart: number;
         srcEnd: number;
-      }): Promise<{ chunks: Array<{ timestamp: [number, number | null]; text: string }>; words: WordProbability[] }> => {
+      }): Promise<{ chunks: Array<{ timestamp: [number, number | null]; text: string }>; records: WordRecord[] }> => {
         const samples = req.audio.subarray(Math.floor(piece.srcStart * 16000), Math.ceil(piece.srcEnd * 16000));
         const rec = new TokenConfidenceRecorder();
         const promptIds = buildVocabularyPromptIds(transcriber, req.vocabulary);
@@ -743,7 +758,7 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
         const rel = promptIds
           ? chunksFromRecorder(transcriber, rec)
           : single?.chunks ?? (single?.text?.trim() ? [{ timestamp: [0, null] as [number, number | null], text: single.text }] : []);
-        if (rel.length === 0 || looksLikeRepetitionLoop(rel)) return { chunks: [], words: [] as WordProbability[] };
+        if (rel.length === 0 || looksLikeRepetitionLoop(rel)) return { chunks: [], records: [] };
         return {
           chunks: rel.map((c: { timestamp?: [number, number | null]; text: string }) => ({
             timestamp: [
@@ -752,10 +767,67 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
             ] as [number, number | null],
             text: c.text,
           })),
-          words: tokenSegmentsFromRecorder(transcriber, rec).flat(),
+          records: timedWordSegmentsFromRecorder(transcriber, rec).map((seg) => ({
+            start: Math.min(piece.srcEnd, piece.srcStart + seg.start),
+            end: seg.end !== null ? Math.min(piece.srcEnd, piece.srcStart + seg.end) : piece.srcEnd,
+            words: seg.words,
+          })),
         };
       };
 
+      if (isMoonshineModel(req.modelId)) {
+        // Moonshine: no 30 s padding, so each stretch of speech (long ones split near 20 s) is
+        // transcribed on its own; its line starts where the speech starts.
+        const pieces = packSpeechWindows(req.audio, speechRegions, 16000, 20).flatMap((w) => w.pieces);
+        for (let i = 0; i < pieces.length; i++) {
+          const piece = pieces[i];
+          post({
+            type: 'progress',
+            jobId: req.jobId,
+            stage: `Transcribing utterance ${i + 1} of ${pieces.length}`,
+            progress: 0.25 + (i / pieces.length) * (primaryEnd - 0.25),
+            detail: `Running 100% locally (${backendUsed.toUpperCase()})`,
+          });
+          setStage(`transcribing utterance ${i + 1} of ${pieces.length}`);
+          const samples = req.audio.subarray(Math.floor(piece.srcStart * 16000), Math.ceil(piece.srcEnd * 16000));
+          const maxNew = Math.ceil((piece.srcEnd - piece.srcStart) * 6.5) + 10;
+          const runPiece = async (antiLoop: boolean) => {
+            const rec = new TokenConfidenceRecorder();
+            const out = await transcriber(samples, {
+              max_new_tokens: maxNew,
+              logits_processor: new RecorderLastProcessorList(rec),
+              ...(antiLoop ? { repetition_penalty: 1.2 } : {}),
+            } as Parameters<AutomaticSpeechRecognitionPipeline>[1]);
+            const single = Array.isArray(out) ? out[0] : out;
+            return { text: (single?.text ?? '').trim(), rec };
+          };
+          let result = await runPiece(false);
+          if (result.text && looksLikeRepetitionLoop([{ timestamp: [0, null], text: result.text }])) {
+            const retry = await runPiece(true);
+            if (!looksLikeRepetitionLoop([{ timestamp: [0, null], text: retry.text }])) result = retry;
+          }
+          if (result.text) {
+            // A stretch of speech is an utterance: end it with terminal punctuation for SALT
+            // (Moonshine often ends a piece with a comma)
+            const text = result.text.replace(/[\s,;:]+$/, '');
+            const ended = /[.!?]["')\]]*$/.test(text) ? text : `${text}.`;
+            allChunks.push({ timestamp: [piece.srcStart, piece.srcEnd], text: ` ${ended}` });
+            records.push({
+              start: piece.srcStart,
+              end: piece.srcEnd,
+              words: tokenSegmentsFromRecorder(transcriber, result.rec).flat(),
+            });
+          }
+          if (i % 4 === 3 || i + 1 === pieces.length) {
+            post({
+              type: 'partial',
+              jobId: req.jobId,
+              partialTranscript: formatWhisperChunks(collapseRepetitions(allChunks), speechRegions),
+            });
+          }
+          if (i + 1 < pieces.length) await yieldToEventLoop();
+        }
+      } else {
       for (let i = 0; i < slices.length; i++) {
         const slice = slices[i];
         const baseProgress = 0.25 + (i / slices.length) * (primaryEnd - 0.25);
@@ -851,7 +923,11 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
           }
         }
 
-        sliceWords[i] = tokenSegmentsFromRecorder(transcriber, recorder).flat();
+        const sliceRecords: WordRecord[] = timedWordSegmentsFromRecorder(transcriber, recorder).map((seg) => ({
+          start: slice.toSource(seg.start),
+          end: seg.end !== null ? slice.toSource(seg.end) : slice.endSec,
+          words: seg.words,
+        }));
         const singleOutput = Array.isArray(output) ? output[0] : output;
         if (sliceChunks && sliceChunks.length > 0) {
           const mapped: Array<{ timestamp: [number, number | null]; text: string } | null> = sliceChunks.map((ch: { timestamp?: [number, number | null]; text: string }) => {
@@ -873,10 +949,19 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
               const before = countWords(sliceChunks[index].text);
               const after = parts.reduce((n, part) => n + part.chunks.reduce((m, c) => m + countWords(c.text), 0), 0);
               if (after >= before * 1.3 + 2) {
+                // Replace the short segment (its text and its words) with the re-checked pieces
+                const replaced = mapped[index];
                 mapped[index] = null;
+                if (replaced) {
+                  const [rs, re] = replaced.timestamp;
+                  for (let r = sliceRecords.length - 1; r >= 0; r--) {
+                    const st = sliceRecords[r].start;
+                    if (st >= rs - 0.05 && st < (re ?? Infinity) - 0.05) sliceRecords.splice(r, 1);
+                  }
+                }
                 for (const part of parts) {
                   allChunks.push(...part.chunks);
-                  sliceWords[i] = [...(sliceWords[i] ?? []), ...part.words];
+                  sliceRecords.push(...part.records);
                 }
               }
             } catch {
@@ -899,12 +984,13 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
           try {
             const recovered = await transcribePiece(piece);
             allChunks.push(...recovered.chunks);
-            sliceWords[i] = [...(sliceWords[i] ?? []), ...recovered.words];
+            sliceRecords.push(...recovered.records);
           } catch {
             // best-effort
           }
         }
         if (missed.length > 0) allChunks.sort((a, b) => a.timestamp[0] - b.timestamp[0]);
+        records.push(...sliceRecords);
 
         post({
           type: 'partial',
@@ -917,9 +1003,13 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
           await yieldToEventLoop();
         }
       }
+      }
 
-      // Second opinion: run the other model over the same slices and mark where it disagrees.
+      // Second opinion: run the other model over the same windows and mark where it disagrees.
       // The transcript text stays the main model's; disagreements become review flags.
+      // (Re-checking only uncertain segments was tested and saved no time: most segments hold at
+      // least one word below the flag threshold.)
+      records.sort((a, b) => a.start - b.start);
       let secondOpinionModelId: WhisperModelId | undefined;
       if (compareModelId) {
         try {
@@ -933,6 +1023,7 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
             [primaryEnd, primaryEnd + 0.05],
             'Loading second-opinion model'
           );
+          const secondWords: WordProbability[] = [];
           for (let i = 0; i < slices.length; i++) {
             post({
               type: 'progress',
@@ -950,11 +1041,18 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
               logits_processor: new RecorderLastProcessorList(secondRecorder),
               ...(secondPrompt ? { decoder_input_ids: secondPrompt } : {}),
             } as Parameters<AutomaticSpeechRecognitionPipeline>[1]);
-            const secondWords = tokenSegmentsFromRecorder(second.transcriber, secondRecorder).flat();
-            if (sliceWords[i] && secondWords.length > 0) {
-              sliceWords[i] = annotateDisagreements(sliceWords[i], secondWords);
-            }
+            secondWords.push(...tokenSegmentsFromRecorder(second.transcriber, secondRecorder).flat());
             if (i + 1 < slices.length) await yieldToEventLoop();
+          }
+          // Both passes cover the same audio in order: align all words and write the result back
+          const primary = records.flatMap((r) => r.words);
+          if (secondWords.length > 0 && primary.length > 0) {
+            const annotated = annotateDisagreements(primary, secondWords);
+            let k = 0;
+            for (const r of records) {
+              r.words = annotated.slice(k, k + r.words.length);
+              k += r.words.length;
+            }
           }
           secondOpinionModelId = compareModelId;
         } catch (err) {
@@ -969,7 +1067,7 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
         }
       }
 
-      const allWords = sliceWords.flat();
+      const allWords = records.flatMap((r) => r.words);
       // Remove leftover repetition loops and text produced over silence
       const cleanedChunks = dropSilentChunks(collapseRepetitions(allChunks), req.audio, 16000);
       const utterances = extractWhisperUtterances(cleanedChunks, speechRegions);

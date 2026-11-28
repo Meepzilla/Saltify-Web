@@ -4,6 +4,7 @@ import {
   buildVocabularyPromptIds,
   chunksFromRecorder,
   TokenConfidenceRecorder,
+  timedWordSegmentsFromRecorder,
   tokenSegmentsFromRecorder,
 } from '../tokenConfidence';
 
@@ -64,5 +65,14 @@ describe('vocabulary prompt and chunk rebuilding', () => {
   it('keeps a final chunk that has no closing timestamp', () => {
     const rec = recorderWith([50363 + 10, 5, 6]);
     expect(chunksFromRecorder(fakePipe, rec)).toEqual([{ timestamp: [0.2, null], text: ' He sat' }]);
+  });
+
+  it('keeps each segment\'s time span with its words', () => {
+    const rec = recorderWith([50363, 1, 2, 3, 4, 50363 + 75, 50363 + 80, 5, 6, 4, 50363 + 120, 50256]);
+    const segs = timedWordSegmentsFromRecorder(fakePipe, rec);
+    expect(segs.map((s) => [s.start, s.end, s.words.map((w) => w.word).join(' ')])).toEqual([
+      [0, 1.5, 'The dog ran.'],
+      [1.6, 2.4, 'He sat.'],
+    ]);
   });
 });

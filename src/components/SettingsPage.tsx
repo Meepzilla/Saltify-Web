@@ -678,13 +678,20 @@ export function SettingsPage({
                     }
                   >
                     <option value="off">Off (main model only)</option>
-                    {WHISPER_MODELS.filter((m) => m.id !== settings.modelId).map((m) => (
+                    {WHISPER_MODELS.filter((m) => m.id !== settings.modelId && m.family !== 'moonshine').map((m) => (
                       <option key={m.id} value={m.id}>
                         {m.label} · {m.sizeLabel}
                       </option>
                     ))}
                   </select>
                 </div>
+                {settings.secondOpinionModelId !== 'off' &&
+                  WHISPER_MODELS.find((m) => m.id === settings.modelId)?.family === 'moonshine' && (
+                    <p className="settings-card-desc" style={{ marginTop: 8 }}>
+                      Second Opinion compares two Whisper models, so it does not run while Moonshine
+                      is your main model.
+                    </p>
+                  )}
                 {settings.secondOpinionModelId !== 'off' &&
                   settings.secondOpinionModelId === settings.modelId && (
                     <p className="settings-card-desc" style={{ marginTop: 8 }}>
