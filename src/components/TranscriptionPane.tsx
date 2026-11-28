@@ -125,12 +125,80 @@ export function TranscriptionPane({
    * Every flagged word opens the same fix menu: use the other model's word (when the models
    * disagreed), type your own replacement, remove the word, keep it, or listen.
    */
+  const wordsEditable = Boolean(onResolveWord) && !disabled;
+
+  /** Edit menu for any (unflagged) word: replace it, insert a word after it, remove it, listen. */
+  const editMenuFor = (lineIndex: number, wordIndex: number, token: string, node: ReactNode) => {
+    if (!onResolveWord) return node;
+    const core = token.replace(/^[^A-Za-z0-9']+|[^A-Za-z0-9']+$/g, '');
+    const items: OverflowMenuItem[] = [
+      {
+        key: 'replace',
+        label: 'Replace with…',
+        render: (close) => (
+          <ReplaceWordField
+            initial={core}
+            onSubmit={(text) => {
+              close();
+              onResolveWord(lineIndex, wordIndex, text);
+            }}
+          />
+        ),
+      },
+      {
+        key: 'insert',
+        label: 'Insert after…',
+        render: (close) => (
+          <ReplaceWordField
+            initial={core}
+            label="Insert after"
+            submitLabel="Insert"
+            placeholder={`Word(s) to add after “${core}”`}
+            onSubmit={(text) => {
+              close();
+              // Re-use replacement: "home." + "now" becomes "home now." (punctuation moves to the end)
+              onResolveWord(lineIndex, wordIndex, `${core} ${text.trim()}`);
+            }}
+          />
+        ),
+      },
+      {
+        key: 'remove',
+        label: 'Remove word',
+        icon: <Trash2 size={15} />,
+        onSelect: () => onResolveWord(lineIndex, wordIndex, ''),
+      },
+    ];
+    if (onInspectLine) {
+      items.push({
+        key: 'spectrogram',
+        label: 'Listen & spectrogram',
+        icon: <AudioLines size={15} />,
+        dividerBefore: true,
+        onSelect: () => onInspectLine(lineIndex),
+      });
+    }
+    return (
+      <OverflowMenu
+        label={`“${core}”: edit word`}
+        trigger={node}
+        triggerClassName="editable-word"
+        items={items}
+      />
+    );
+  };
+
+  /**
+   * Every word opens a menu. Flagged words get the review menu (use the other model's word,
+   * replace, remove, keep, listen); all other words get the edit menu (replace, insert, remove).
+   */
   const decorateFor = (lineIndex: number, body: string) => {
-    const flagged = flaggedWordsForLine(body, wordConfidence, thresholds);
-    if (flagged.size === 0) return undefined;
+    const flagged = showUncertain ? flaggedWordsForLine(body, wordConfidence, thresholds) : new Map();
+    if (flagged.size === 0 && !wordsEditable) return undefined;
+    const tokens = body.split(/\s+/).filter(Boolean);
     return (wordIndex: number, node: ReactNode) => {
       const f = flagged.get(wordIndex);
-      if (!f) return node;
+      if (!f) return wordsEditable ? editMenuFor(lineIndex, wordIndex, tokens[wordIndex] ?? '', node) : node;
       const pct = Math.round(f.p * 100);
       const isDisagreement = f.a !== undefined;
       const heardNothing = f.a === '';
@@ -478,9 +546,9 @@ export function TranscriptionPane({
                   ) : colorPartsOfSpeech ? (
                     <PosColoredText
                       body={line.body}
-                      decorateWord={showUncertain ? decorateFor(line.index, line.body) : undefined}
+                      decorateWord={decorateFor(line.index, line.body)}
                     />
-                  ) : showUncertain ? (
+                  ) : showUncertain || wordsEditable ? (
                     renderPlainWithDecor(line.index, line.body)
                   ) : (
                     line.body

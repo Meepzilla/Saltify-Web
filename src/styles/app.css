@@ -3958,3 +3958,23 @@ textarea.vocabulary-input {
 .norm-dot.norm-reference {
   background: var(--text-muted);
 }
+
+/* Any transcribed word can be tapped to edit it (replace / insert after / remove) */
+.editable-word {
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  color: inherit;
+  line-height: inherit;
+  cursor: pointer;
+  border-radius: 3px;
+}
+.editable-word:hover,
+.editable-word:focus-visible,
+.editable-word[aria-expanded='true'] {
+  background: var(--bg-surface-subtle);
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+}

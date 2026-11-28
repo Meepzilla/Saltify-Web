@@ -51,6 +51,9 @@ describe('second-opinion comparison', () => {
     expect(shapeLike('Wabbit,', 'rabbit')).toBe('Rabbit,');
     expect(replaceWordInBody('He saw the wabbit.', 3, 'rabbit')).toBe('He saw the rabbit.');
     expect(replaceWordInBody('He went home now.', 3, '')).toBe('He went home.');
+    // "Insert after" = replace the word with itself plus the new word(s); punctuation stays at the end
+    expect(replaceWordInBody('He went home.', 2, 'home now')).toBe('He went home now.');
+    expect(replaceWordInBody('Dog ran.', 0, 'Dog quickly')).toBe('Dog quickly ran.');
     expect(replaceWordInBody('Um he went.', 0, '')).toBe('He went.');
     expect(replaceWordInBody('i think so.', 0, 'I')).toBe('I think so.');
   });

@@ -24,6 +24,21 @@ export const APP_VERSION: string = __APP_VERSION__;
  */
 export const CHANGELOG_RELEASES: readonly ChangelogRelease[] = [
   {
+    version: '1.16.0',
+    date: '2026-11-28',
+    title: 'Tap Any Word to Edit It',
+    summary:
+      'Every word in the transcript can now be tapped to replace it, insert a word after it, or remove it, without unlocking the whole transcript for typing.',
+    changes: [
+      {
+        category: 'added',
+        summary: 'Edit menu on every transcribed word',
+        detail:
+          'Tap a word for Replace with…, Insert after… and Remove word (plus Listen & spectrogram when audio is loaded). Punctuation and capitals are kept, e.g. inserting "now" after "home." gives "home now.". Words flagged as uncertain keep their review menu with the second model\'s suggestion.',
+      },
+    ],
+  },
+  {
     version: '1.15.0',
     date: '2026-11-28',
     title: 'Fewer Re-Checks, No Duplicate or Invented Lines',
