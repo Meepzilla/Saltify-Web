@@ -162,3 +162,51 @@ export function chunksFromRecorder(
   if (ids.length) flush(null);
   return chunks;
 }
+
+/** Words of one Whisper segment with the segment's time span (seconds within the input). */
+export interface TimedWordSegment {
+  start: number;
+  end: number | null;
+  words: WordProbability[];
+}
+
+/**
+ * Like tokenSegmentsFromRecorder, but keeps each segment's timestamps so words can be located in
+ * the audio (used to re-check only the uncertain stretches with a second model).
+ */
+export function timedWordSegmentsFromRecorder(
+  pipe: AutomaticSpeechRecognitionPipeline,
+  recorder: TokenConfidenceRecorder
+): TimedWordSegment[] {
+  try {
+    const tokenizer = pipe.tokenizer as unknown as WhisperTokenizerLike;
+    const timestampBegin = tokenizer.timestamp_begin ?? Number.MAX_SAFE_INTEGER;
+    const out: TimedWordSegment[] = [];
+    let start: number | null = null;
+    let current: TokenProbability[] = [];
+    const flush = (end: number | null) => {
+      const words = groupTokensIntoWords(current);
+      if (words.length > 0) out.push({ start: start ?? 0, end, words });
+      current = [];
+    };
+    for (const step of recorder.steps) {
+      if (step.id < 0) continue;
+      if (step.id >= timestampBegin) {
+        const t = Math.round((step.id - timestampBegin) * 0.02 * 100) / 100;
+        if (start === null) {
+          start = t;
+        } else {
+          flush(t);
+          start = null;
+        }
+        continue;
+      }
+      const text = tokenizer.decode([step.id], { skip_special_tokens: true });
+      if (text) current.push({ text, p: step.p });
+    }
+    if (current.length) flush(null);
+    return out;
+  } catch {
+    return [];
+  }
+}

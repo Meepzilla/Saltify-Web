@@ -34,6 +34,8 @@ export interface WhisperModelRuntimeOptions {
   compareModelId?: WhisperModelId;
   /** Expected words (names, story vocabulary) given to Whisper as a hint. */
   vocabulary?: string;
+  /** Second opinion re-checks only stretches holding a word below this confidence. */
+  secondOpinionBelow?: number;
   device: ComputeDevice;
   modelSource: ModelSource;
   customModelBaseUrl: string;
@@ -127,6 +129,7 @@ export class WhisperWorkerClient {
         modelId: options.modelId,
         compareModelId: options.compareModelId,
         vocabulary: options.vocabulary,
+        secondOpinionBelow: options.secondOpinionBelow,
         device: options.device,
         modelSource: options.modelSource,
         customModelBaseUrl: options.customModelBaseUrl,
