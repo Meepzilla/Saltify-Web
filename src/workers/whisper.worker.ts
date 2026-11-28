@@ -4,7 +4,7 @@ import {
   type AutomaticSpeechRecognitionPipeline,
   type ProgressInfo,
 } from '@huggingface/transformers';
-import { buildSpeechSlices, sparseChunks, uncoveredPieces } from '../engine/speechChunking';
+import { buildSpeechSlices, packSpeechWindows, sparseChunks, uncoveredPieces } from '../engine/speechChunking';
 import { collapseRepetitions, dropSilentChunks, looksLikeRepetitionLoop } from '../engine/hallucinationGuard';
 import { purgeHtmlModelCacheEntries } from '../engine/modelCache';
 import {
@@ -27,7 +27,7 @@ import {
   timedWordSegmentsFromRecorder,
   tokenSegmentsFromRecorder,
 } from './tokenConfidence';
-import type { ComputeDevice, ModelSource, WhisperModelId } from '../types/saltify';
+import { isMoonshineModel, type ComputeDevice, type ModelSource, type WhisperModelId } from '../types/saltify';
 
 
 // IMPORTANT: do not import speakerDiarizer / childGrammarEngine (or anything that pulls in
@@ -724,8 +724,14 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
       const allChunks: Array<{ timestamp: [number, number | null]; text: string }> = [];
       /** Recognized words per Whisper segment, with the segment's span in recording time. */
       const records: WordRecord[] = [];
+      // Second opinion compares two Whisper models (Moonshine is used on its own)
       const compareModelId =
-        req.compareModelId && req.compareModelId !== req.modelId ? req.compareModelId : undefined;
+        req.compareModelId &&
+        req.compareModelId !== req.modelId &&
+        !isMoonshineModel(req.modelId) &&
+        !isMoonshineModel(req.compareModelId)
+          ? req.compareModelId
+          : undefined;
       // With a second opinion, the main pass uses 25–60% of the bar and the comparison 60–93%
       const primaryEnd = compareModelId ? 0.6 : 0.93;
       const maxTokensFor = (slice: { samples: Float32Array }) =>
@@ -769,6 +775,59 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
         };
       };
 
+      if (isMoonshineModel(req.modelId)) {
+        // Moonshine: no 30 s padding, so each stretch of speech (long ones split near 20 s) is
+        // transcribed on its own; its line starts where the speech starts.
+        const pieces = packSpeechWindows(req.audio, speechRegions, 16000, 20).flatMap((w) => w.pieces);
+        for (let i = 0; i < pieces.length; i++) {
+          const piece = pieces[i];
+          post({
+            type: 'progress',
+            jobId: req.jobId,
+            stage: `Transcribing utterance ${i + 1} of ${pieces.length}`,
+            progress: 0.25 + (i / pieces.length) * (primaryEnd - 0.25),
+            detail: `Running 100% locally (${backendUsed.toUpperCase()})`,
+          });
+          setStage(`transcribing utterance ${i + 1} of ${pieces.length}`);
+          const samples = req.audio.subarray(Math.floor(piece.srcStart * 16000), Math.ceil(piece.srcEnd * 16000));
+          const maxNew = Math.ceil((piece.srcEnd - piece.srcStart) * 6.5) + 10;
+          const runPiece = async (antiLoop: boolean) => {
+            const rec = new TokenConfidenceRecorder();
+            const out = await transcriber(samples, {
+              max_new_tokens: maxNew,
+              logits_processor: new RecorderLastProcessorList(rec),
+              ...(antiLoop ? { repetition_penalty: 1.2 } : {}),
+            } as Parameters<AutomaticSpeechRecognitionPipeline>[1]);
+            const single = Array.isArray(out) ? out[0] : out;
+            return { text: (single?.text ?? '').trim(), rec };
+          };
+          let result = await runPiece(false);
+          if (result.text && looksLikeRepetitionLoop([{ timestamp: [0, null], text: result.text }])) {
+            const retry = await runPiece(true);
+            if (!looksLikeRepetitionLoop([{ timestamp: [0, null], text: retry.text }])) result = retry;
+          }
+          if (result.text) {
+            // A stretch of speech is an utterance: end it with terminal punctuation for SALT
+            // (Moonshine often ends a piece with a comma)
+            const text = result.text.replace(/[\s,;:]+$/, '');
+            const ended = /[.!?]["')\]]*$/.test(text) ? text : `${text}.`;
+            allChunks.push({ timestamp: [piece.srcStart, piece.srcEnd], text: ` ${ended}` });
+            records.push({
+              start: piece.srcStart,
+              end: piece.srcEnd,
+              words: tokenSegmentsFromRecorder(transcriber, result.rec).flat(),
+            });
+          }
+          if (i % 4 === 3 || i + 1 === pieces.length) {
+            post({
+              type: 'partial',
+              jobId: req.jobId,
+              partialTranscript: formatWhisperChunks(collapseRepetitions(allChunks), speechRegions),
+            });
+          }
+          if (i + 1 < pieces.length) await yieldToEventLoop();
+        }
+      } else {
       for (let i = 0; i < slices.length; i++) {
         const slice = slices[i];
         const baseProgress = 0.25 + (i / slices.length) * (primaryEnd - 0.25);
@@ -943,6 +1002,7 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
         if (i + 1 < slices.length) {
           await yieldToEventLoop();
         }
+      }
       }
 
       // Second opinion: run the other model over the same windows and mark where it disagrees.

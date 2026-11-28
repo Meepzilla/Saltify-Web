@@ -9,7 +9,7 @@ https://saltify-web.devinllewis-git.workers.dev/
 Every step of the clinical workflow executes **100% locally in the browser** — no audio recordings, transcripts, or client metadata are ever sent to an external server:
 
 - **Audio Recording & Processing:** Captured via Web Audio / MediaRecorder (adaptive MP4/AAC for iPadOS Safari, WebM/Opus for Android/Windows, with raw PCM WAV fallback), normalized locally, and stored in IndexedDB.
-- **On-Device Speech Recognition:** Powered by OpenAI Whisper (`whisper-tiny.en`, `whisper-base.en`, `whisper-small.en`) via [`@huggingface/transformers`](https://huggingface.co/docs/transformers.js) in a dedicated Web Worker (WebGPU acceleration with automatic universal WASM fallback). Model weights download once and remain cached in browser Cache Storage for **fully offline use**.
+- **On-Device Speech Recognition:** Powered by OpenAI Whisper (`whisper-tiny.en`, `whisper-base.en`, `whisper-small.en`) and Moonshine Base (a ~3× faster draft model) via [`@huggingface/transformers`](https://huggingface.co/docs/transformers.js) in a dedicated Web Worker (WebGPU acceleration with automatic universal WASM fallback). Model weights download once and remain cached in browser Cache Storage for **fully offline use**.
 - **SALT Grammar & Bound Morpheme Engine:** Pure TypeScript NLP (`wink-pos-tagger` + `wink-lemmatizer` + pediatric SLP rule engine) with zero Java/LanguageTool/Python server dependencies.
 - **Client-Side Exports:** Generates Microsoft Word (`.docx`), SALT Software (`.slt`), plain text (`.txt`), 16-bit PCM audio (`.wav`), Print sheets, and portable `.saltify.json` session backups entirely on-device.
 

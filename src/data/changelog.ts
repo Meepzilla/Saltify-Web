@@ -24,6 +24,30 @@ export const APP_VERSION: string = __APP_VERSION__;
  */
 export const CHANGELOG_RELEASES: readonly ChangelogRelease[] = [
   {
+    version: '1.13.0',
+    date: '2026-11-28',
+    title: 'Moonshine: A Fast-Draft Transcription Model',
+    summary:
+      'Moonshine Base is now available as a fourth model. It transcribes long samples about 3× faster than Whisper Small, with accuracy close to Whisper Base.',
+    changes: [
+      {
+        category: 'added',
+        summary: 'Moonshine Base model (~65 MB)',
+        detail:
+          'Unlike Whisper, Moonshine does not pad audio to 30-second windows, so each stretch of speech is transcribed at its real length. On 13-minute, 80-utterance test samples it took 53 s vs 154 s for Whisper Small, with about 9 words in 100 wrong vs 6 (more in background noise). Every line starts exactly where its speech starts. Uncertain-word flags work; Expected words and Second Opinion are not used with this model.',
+      },
+      {
+        category: 'improved',
+        summary: 'Recovered phrases keep their place for confidence flags',
+        detail: 'Words from phrases recovered by the safety net now stay in time order, so they cannot shift the flags of later words.',
+      },
+      {
+        category: 'improved',
+        summary: 'Self-hosting: Moonshine can be downloaded with npm run models:download -- --models=moonshine',
+      },
+    ],
+  },
+  {
     version: '1.12.0',
     date: '2026-11-28',
     title: 'Speech-First Transcription: Fewer Lost Phrases, Real Timestamps',

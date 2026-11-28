@@ -221,9 +221,10 @@ export function extractWhisperUtterances(
  * Splits multi-sentence segments into utterances and codes fillers/repetitions as SALT mazes.
  */
 export function formatWhisperChunks(
-  chunks: Array<{ timestamp: [number, number | null]; text: string }>
+  chunks: Array<{ timestamp: [number, number | null]; text: string }>,
+  speechRegions?: Array<{ start: number; end: number }>
 ): string {
-  return extractWhisperUtterances(chunks)
+  return extractWhisperUtterances(chunks, speechRegions)
     .map((u) => `[${u.timestampStr}] ${u.text}`)
     .join('\n');
 }

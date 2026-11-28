@@ -6,7 +6,7 @@
  *
  * Usage:
  *   npm run models:download                     # downloads tiny + base (~112 MB)
- *   npm run models:download -- --all            # downloads tiny + base + small (~350 MB)
+ *   npm run models:download -- --all            # downloads tiny + base + small + moonshine (~415 MB)
  *   npm run models:download -- --models=tiny    # downloads only whisper-tiny.en (~39 MB)
  *   npm run models:download -- --models=tiny,base --webgpu  # also fetch WebGPU fp32/q4 weights
  */
@@ -23,6 +23,19 @@ const MODEL_MAP = {
   tiny: 'onnx-community/whisper-tiny.en',
   base: 'onnx-community/whisper-base.en',
   small: 'onnx-community/whisper-small.en',
+  moonshine: 'onnx-community/moonshine-base-ONNX',
+};
+
+/** Moonshine repos ship a smaller set of tokenizer/config files than Whisper's. */
+const ROOT_FILES_OVERRIDE = {
+  moonshine: [
+    'config.json',
+    'generation_config.json',
+    'preprocessor_config.json',
+    'special_tokens_map.json',
+    'tokenizer.json',
+    'tokenizer_config.json',
+  ],
 };
 
 const REQUIRED_ROOT_FILES = [
@@ -56,7 +69,7 @@ function parseArgs(argv) {
 
   for (const arg of argv) {
     if (arg === '--all') {
-      selected = ['tiny', 'base', 'small'];
+      selected = ['tiny', 'base', 'small', 'moonshine'];
     } else if (arg === '--webgpu') {
       includeWebGpu = true;
     } else if (arg === '--force') {
@@ -72,8 +85,8 @@ function parseArgs(argv) {
 
 Usage:
   npm run models:download                       Download tiny.en + base.en (default, ~112 MB)
-  npm run models:download -- --all              Download tiny.en + base.en + small.en (~350 MB)
-  npm run models:download -- --models=tiny      Download specific models (comma-separated: tiny,base,small)
+  npm run models:download -- --all              Download tiny.en + base.en + small.en + Moonshine Base (~415 MB)
+  npm run models:download -- --models=tiny      Download specific models (comma-separated: tiny,base,small,moonshine)
   npm run models:download -- --webgpu           Also download larger fp32/q4 weights for WebGPU acceleration
   npm run models:download -- --force            Re-download existing files
 `);
@@ -83,7 +96,7 @@ Usage:
 
   for (const key of selected) {
     if (!MODEL_MAP[key]) {
-      console.error(`Unknown model "${key}". Valid choices: tiny, base, small.`);
+      console.error(`Unknown model "${key}". Valid choices: tiny, base, small, moonshine.`);
       process.exit(1);
     }
   }
@@ -155,8 +168,8 @@ function rebuildManifest() {
 
 async function main() {
   const { selected, includeWebGpu, force } = parseArgs(process.argv.slice(2));
-  const filesToFetch = [
-    ...REQUIRED_ROOT_FILES,
+  const filesFor = (key) => [
+    ...(ROOT_FILES_OVERRIDE[key] ?? REQUIRED_ROOT_FILES),
     ...WASM_Q8_FILES,
     ...(includeWebGpu ? WEBGPU_FILES : []),
   ];
@@ -172,7 +185,7 @@ async function main() {
     console.log(`==> ${repoId}`);
     let modelBytes = 0;
 
-    for (const relPath of filesToFetch) {
+    for (const relPath of filesFor(key)) {
       const url = `https://huggingface.co/${repoId}/resolve/main/${relPath}`;
       const destPath = path.join(modelsRoot, ...repoId.split('/'), relPath);
       const label = relPath.padEnd(44, ' ');
