@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildSpeechSlices, detectSpeechRegions, packSpeechWindows, packedToSourceTime, sparseChunks, uncoveredPieces } from '../speechChunking';
+import { buildSpeechSlices, detectSpeechRegions, packSpeechWindows, packedToSourceTime, recheckReplaces, sparseChunks, uncoveredPieces } from '../speechChunking';
 
 const SR = 16000;
 /** Tone bursts ("speech") at the given [start, end] seconds over faint noise. */
@@ -85,5 +85,14 @@ describe('speech chunking', () => {
     const regions = detectSpeechRegions(x);
     expect(regions).toHaveLength(2);
     expect(regions.every((r) => r.end - r.start < 3)).toBe(true);
+  });
+
+  it('lets a re-check fill in a skipped phrase but never swap good text for a different guess', () => {
+    // fills in the skipped middle, keeps the original words
+    expect(recheckReplaces('I saw a dog.', 'I saw a big brown dog at the park.')).toBe(true);
+    // more words, but mostly different ones: keep the original
+    expect(recheckReplaces('I saw a dog.', 'Why so the frog went over there today?')).toBe(false);
+    // not clearly more words
+    expect(recheckReplaces('I saw a dog.', 'I saw a big dog.')).toBe(false);
   });
 });

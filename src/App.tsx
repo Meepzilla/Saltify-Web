@@ -852,6 +852,7 @@ export default function App() {
               ? settings.secondOpinionModelId
               : undefined,
           vocabulary: activeSession.vocabulary,
+          chunking: settings.transcriptionMethod,
           device: settings.device,
           modelSource: settings.modelSource,
           customModelBaseUrl: settings.customModelBaseUrl,
@@ -926,6 +927,7 @@ export default function App() {
     resetGrammarReview,
     settings.modelId,
     settings.secondOpinionModelId,
+    settings.transcriptionMethod,
     settings.device,
     settings.modelSource,
     settings.customModelBaseUrl,

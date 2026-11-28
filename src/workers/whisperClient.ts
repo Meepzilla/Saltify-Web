@@ -34,6 +34,8 @@ export interface WhisperModelRuntimeOptions {
   compareModelId?: WhisperModelId;
   /** Expected words (names, story vocabulary) given to Whisper as a hint. */
   vocabulary?: string;
+  /** 'speech-first' (default) or 'classic' (pre-1.12 fixed chunks, no re-checks). */
+  chunking?: 'speech-first' | 'classic';
   device: ComputeDevice;
   modelSource: ModelSource;
   customModelBaseUrl: string;
@@ -130,6 +132,7 @@ export class WhisperWorkerClient {
         modelId: options.modelId,
         compareModelId: options.compareModelId,
         vocabulary: options.vocabulary,
+        chunking: options.chunking,
         device: options.device,
         modelSource: options.modelSource,
         customModelBaseUrl: options.customModelBaseUrl,

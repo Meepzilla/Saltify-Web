@@ -650,6 +650,38 @@ export function SettingsPage({
                 </div>
               </div>
 
+              {/* Transcription method: speech-first (default) or classic chunks */}
+              <div className="settings-card">
+                <div className="settings-card-header">
+                  <h3 className="settings-card-title">Transcription Method</h3>
+                </div>
+                <p className="settings-card-desc">
+                  <strong>Speech-first</strong> finds the speech, skips silence and re-checks phrases that
+                  look missed (at most one extra pass per segment). <strong>Classic</strong> sends the
+                  whole recording in fixed ~26-second chunks with no re-checks, as before version 1.12.
+                  If a recording comes out with missing words or takes much longer than expected, try
+                  the other method and compare.
+                </p>
+                <div className="form-field">
+                  <label className="form-label" htmlFor="setting-transcription-method">
+                    Method
+                  </label>
+                  <select
+                    id="setting-transcription-method"
+                    className="field-select"
+                    value={settings.transcriptionMethod}
+                    onChange={(e) =>
+                      onUpdateSettings({
+                        transcriptionMethod: e.target.value as AppSettings['transcriptionMethod'],
+                      })
+                    }
+                  >
+                    <option value="speech-first">Speech-first (recommended)</option>
+                    <option value="classic">Classic (pre-1.12)</option>
+                  </select>
+                </div>
+              </div>
+
               {/* Second opinion: compare with another model during transcription */}
               <div className="settings-card">
                 <div className="settings-card-header">
