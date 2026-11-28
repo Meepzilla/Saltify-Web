@@ -247,10 +247,12 @@ export interface AppSettings {
   /** Second model to compare against during transcription ('off' = single model). */
   secondOpinionModelId: WhisperModelId | 'off';
   /**
-   * 'speech-first' (default): detect speech, skip silence, re-check missed phrases.
-   * 'classic': fixed ~26 s chunks with silence included and no re-checks (pre-1.12 behavior).
+   * 'classic' (default): fixed ~26 s chunks with silence included and no re-checks (pre-1.12).
+   * 'speech-first': detect speech, skip silence, re-check missed phrases.
    */
   transcriptionMethod: 'speech-first' | 'classic';
+  /** True once the user picked a method in Settings (otherwise the current default applies). */
+  transcriptionMethodChosen: boolean;
   /** Transcribe in the background while recording (when the model is already downloaded). */
   transcribeWhileRecording: boolean;
   /** Allow the Cloudflare-hosted model (audio leaves the device). Off by default. */
@@ -279,7 +281,8 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   showIpaTranscription: false,
   highlightUncertainWords: true,
   secondOpinionModelId: 'off',
-  transcriptionMethod: 'speech-first',
+  transcriptionMethod: 'classic',
+  transcriptionMethodChosen: false,
   transcribeWhileRecording: true,
   cloudTranscriptionEnabled: false,
   cloudAccessKey: '',

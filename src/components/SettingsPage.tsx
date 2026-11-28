@@ -662,11 +662,12 @@ export function SettingsPage({
                   <h3 className="settings-card-title">Transcription Method</h3>
                 </div>
                 <p className="settings-card-desc">
-                  <strong>Speech-first</strong> finds the speech, skips silence and re-checks phrases that
-                  look missed (at most one extra pass per segment). <strong>Classic</strong> sends the
-                  whole recording in fixed ~26-second chunks with no re-checks, as before version 1.12.
-                  If a recording comes out with missing words or takes much longer than expected, try
-                  the other method and compare.
+                  <strong>Classic</strong> (recommended) sends the whole recording in fixed ~26-second
+                  chunks, as before version 1.12; it worked best on real language samples.
+                  <strong> Speech-first</strong> finds the speech, skips silence and re-checks phrases that
+                  look missed (at most one extra pass per segment). If a recording comes out with missing
+                  words or takes much longer than expected, try the other method and compare. The cloud
+                  model follows this setting too.
                 </p>
                 <div className="form-field">
                   <label className="form-label" htmlFor="setting-transcription-method">
@@ -679,11 +680,12 @@ export function SettingsPage({
                     onChange={(e) =>
                       onUpdateSettings({
                         transcriptionMethod: e.target.value as AppSettings['transcriptionMethod'],
+                        transcriptionMethodChosen: true,
                       })
                     }
                   >
-                    <option value="speech-first">Speech-first (recommended)</option>
-                    <option value="classic">Classic (pre-1.12)</option>
+                    <option value="classic">Classic (recommended)</option>
+                    <option value="speech-first">Speech-first</option>
                   </select>
                 </div>
                 <label className="settings-toggle-row" htmlFor="setting-live-transcribe" style={{ marginTop: 12 }}>

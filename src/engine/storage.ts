@@ -112,6 +112,9 @@ export function loadAppSettings(): AppSettings {
     if (parsed.secondOpinionModelId !== undefined && parsed.secondOpinionModelId !== 'off' && !known(parsed.secondOpinionModelId)) {
       delete parsed.secondOpinionModelId;
     }
+    // Classic became the default again (it worked better on real samples): apply it unless the
+    // user chose a method themselves
+    if (!parsed.transcriptionMethodChosen) delete parsed.transcriptionMethod;
     return {
       ...DEFAULT_APP_SETTINGS,
       ...parsed,

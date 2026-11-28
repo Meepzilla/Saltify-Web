@@ -26,10 +26,16 @@ export const CHANGELOG_RELEASES: readonly ChangelogRelease[] = [
   {
     version: '1.18.0',
     date: '2026-11-28',
-    title: 'Optional Cloud Transcription (Whisper Large v3 Turbo)',
+    title: 'Classic Transcription by Default; Optional Cloud Transcription',
     summary:
-      'A much larger Whisper model can now run on your Cloudflare account instead of the device. It is off by default and needs a server access key, because audio leaves the device.',
+      'Classic transcription is the default again, and a much larger Whisper model can now run on your Cloudflare account instead of the device (off by default; needs a server access key, because audio leaves the device).',
     changes: [
+      {
+        category: 'improved',
+        summary: 'Classic transcription method is the default again',
+        detail:
+          'Classic (fixed ~26-second chunks, as before 1.12) worked better than Speech-first on real language samples, so every device switches to it unless Speech-first was picked in Settings. Speech-first stays available in Settings → Transcription Method, and the cloud model follows the same setting.',
+      },
       {
         category: 'added',
         summary: 'Whisper Large v3 Turbo on Cloudflare Workers AI',

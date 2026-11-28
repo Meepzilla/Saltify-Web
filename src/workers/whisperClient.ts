@@ -221,7 +221,12 @@ export class WhisperWorkerClient {
     try {
       return await cloudTranscribeRaw(
         audio16k,
-        { accessKey: options.cloudAccessKey ?? '', vocabulary: options.vocabulary, signal: controller.signal },
+        {
+          accessKey: options.cloudAccessKey ?? '',
+          vocabulary: options.vocabulary,
+          signal: controller.signal,
+          chunking: options.chunking,
+        },
         callbacks.onProgress
       );
     } catch (err) {

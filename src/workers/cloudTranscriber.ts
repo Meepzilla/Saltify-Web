@@ -5,7 +5,8 @@
  */
 import { encodeWavBlob } from '../engine/audioProcessing';
 import { collapseRepetitions, dropInventedUtterances, dropSilentChunks } from '../engine/hallucinationGuard';
-import { buildSpeechSlices } from '../engine/speechChunking';
+import { sliceAudioIntoPauseAwareChunks } from '../engine/audioProcessing';
+import { buildSpeechSlices, type TranscriptionSlice } from '../engine/speechChunking';
 import { extractWhisperUtterances } from '../engine/transcriptFormat';
 import { buildWordConfidenceMap, STORE_CONFIDENCE_BELOW, type WordProbability } from '../engine/wordConfidence';
 
@@ -48,14 +49,28 @@ function explain(status: number, message: string): string {
  */
 export async function cloudTranscribeRaw(
   audio16k: Float32Array,
-  options: { accessKey: string; vocabulary?: string; signal?: AbortSignal; endpoint?: string },
+  options: {
+    accessKey: string;
+    vocabulary?: string;
+    signal?: AbortSignal;
+    endpoint?: string;
+    /** 'classic' (default): fixed ~26 s chunks; 'speech-first': speech-only windows. */
+    chunking?: 'speech-first' | 'classic';
+  },
   onProgress?: (stage: string, progress: number, detail?: string) => void
 ): Promise<CloudRawResult> {
   if (!options.accessKey.trim()) {
     throw new CloudTranscriptionError('Cloud transcription needs the access key: Settings → Cloud Transcription.');
   }
-  const slices = buildSpeechSlices(audio16k, 16000, 28);
-  const regions = slices.flatMap((s) => s.pieces.map((p) => ({ start: p.srcStart, end: p.srcEnd })));
+  const classic = options.chunking !== 'speech-first';
+  const slices: TranscriptionSlice[] = classic
+    ? sliceAudioIntoPauseAwareChunks(audio16k, 16000, 26, 18, 29).map((c) => ({
+        ...c,
+        toSource: (t: number) => c.startSec + t,
+        pieces: [],
+      }))
+    : buildSpeechSlices(audio16k, 16000, 28);
+  const regions = classic ? undefined : slices.flatMap((s) => s.pieces.map((p) => ({ start: p.srcStart, end: p.srcEnd })));
   const perSlice: Array<{ chunks: Array<{ timestamp: [number, number | null]; text: string }>; words: WordProbability[] }> =
     slices.map(() => ({ chunks: [], words: [] }));
   let done = 0;

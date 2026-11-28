@@ -82,7 +82,7 @@ export type WorkerRequest =
       compareModelId?: WhisperModelId;
       /** Expected words (names, story vocabulary) given to Whisper as a prompt hint. */
       vocabulary?: string;
-      /** 'speech-first' (default): skip silence, safety-net re-checks. 'classic': pre-1.12 chunks. */
+      /** 'classic' (default): pre-1.12 fixed chunks. 'speech-first': skip silence, safety-net re-checks. */
       chunking?: 'speech-first' | 'classic';
       device: ComputeDevice;
       modelSource: ModelSource;
@@ -733,7 +733,7 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
       // stretches of background noise. Times map back to the recording.
       // Classic (pre-1.12): fixed pause-aware chunks with silence included, no speech detection
       // and no re-checks. Moonshine always needs the detected speech.
-      const classic = req.chunking === 'classic' && !isMoonshineModel(req.modelId);
+      const classic = req.chunking !== 'speech-first' && !isMoonshineModel(req.modelId);
       const slices: TranscriptionSlice[] = classic
         ? (isLowMemoryDevice()
             ? sliceAudioIntoPauseAwareChunks(req.audio, 16000, 18, 12, 24)

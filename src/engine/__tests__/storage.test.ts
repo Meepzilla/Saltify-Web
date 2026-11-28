@@ -70,6 +70,19 @@ describe('app settings storage', () => {
     expect(loaded.defaultSpeakerAliases).toEqual({ speaker1: 'C', speaker2: 'E' });
   });
 
+  it('moves to the Classic method unless the user chose one', () => {
+    globalThis.localStorage.setItem(
+      'saltify-web-settings-v1',
+      JSON.stringify({ transcriptionMethod: 'speech-first' })
+    );
+    expect(loadAppSettings().transcriptionMethod).toBe('classic');
+    globalThis.localStorage.setItem(
+      'saltify-web-settings-v1',
+      JSON.stringify({ transcriptionMethod: 'speech-first', transcriptionMethodChosen: true })
+    );
+    expect(loadAppSettings().transcriptionMethod).toBe('speech-first');
+  });
+
   it('falls back from retired models to supported ones', () => {
     globalThis.localStorage.setItem(
       'saltify-web-settings-v1',
